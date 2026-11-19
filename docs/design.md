@@ -190,12 +190,16 @@ yes/no question at once, each with a calibrated probability:
 | `paid_by_card` | yes/no | |
 | `has_seats` | yes/no | |
 | `has_usage` | yes/no | |
+| `about_money` | yes/no | Added in M3; decides routing. The definitions come from receipt-forwarder. |
 
 Routing (as built in M3):
 
-- `document_type` is `other` with at least the threshold's probability
-  (default 0.85) → stop. No extraction. This is most of an inbox, at
-  roughly $0.0001 per message.
+- `about_money` (yes/no: is this a financial document?) is no with at
+  least the threshold's probability (default 0.85) → stop. No extraction.
+  This is most of an inbox, at roughly $0.0001 per message. A yes/no gives
+  a much sharper probability than `other` among seven document types: on
+  Clef-flash, `other` scored 0.72–0.88 on obvious non-receipts, while
+  `about_money` scored 0.02–0.09 on them and 0.94–0.97 on 29 real receipts.
 - Otherwise → extract, with the answers as hints in a `<first-model>` block
   ("has seats and usage: expect both kinds of line"). An unsure first model
   needs no separate LLM fallback: the extractor answers the same questions

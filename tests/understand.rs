@@ -47,6 +47,7 @@ impl Extractor for Fake {
 struct FakeDecider {
     kind: (&'static str, f64),
     billing: (&'static str, f64),
+    about_money: f64,
 }
 
 #[async_trait]
@@ -84,6 +85,13 @@ impl Decider for FakeDecider {
         decision
             .answers
             .insert("billing_model".to_string(), choice(self.billing));
+
+        decision.answers.insert(
+            "about_money".to_string(),
+            Answer::YesNo {
+                yes: self.about_money,
+            },
+        );
 
         decision.model = "fake-decider-1".to_string();
         decision.usage = Usage {
@@ -254,6 +262,7 @@ async fn a_sure_first_model_skips_the_extractor() {
     let decider = FakeDecider {
         kind: ("other", 0.97),
         billing: ("unknown", 0.9),
+        about_money: 0.04,
     };
 
     let result = understand(&document, &pipeline(&fake, Some(&decider)))
@@ -278,6 +287,7 @@ async fn an_unsure_first_model_hands_over_with_hints() {
     let decider = FakeDecider {
         kind: ("other", 0.6),
         billing: ("mixed", 0.9),
+        about_money: 0.5,
     };
 
     let result = understand(&document, &pipeline(&fake, Some(&decider)))
@@ -317,6 +327,7 @@ async fn a_sure_first_model_that_disagrees_is_flagged() {
     let decider = FakeDecider {
         kind: ("renewal_notice", 0.95),
         billing: ("subscription", 0.95),
+        about_money: 0.9,
     };
 
     let result = understand(&document, &pipeline(&fake, Some(&decider)))

@@ -46,9 +46,20 @@ pub struct Pipeline<'a> {
     pub threshold: f64,
 }
 
-/// Document types that never need the extractor when the first model is
-/// sure of them.
-const NOT_ABOUT_MONEY: &[&str] = &["other"];
+/// How likely the first model thinks it is that a document is not about
+/// money: from its yes/no `about_money` answer, or from `document_type`
+/// being `other` when there is no such answer.
+fn not_about_money(decision: &decide::Decision) -> Option<f64> {
+    if let Some(yes) = decision.yes("about_money") {
+        return Some(1.0 - yes);
+    }
+
+    match decision.choice("document_type") {
+        Some(("other", probability)) => Some(probability),
+        Some(_) => Some(0.0),
+        None => None,
+    }
+}
 
 /// Reads what `document` says about money, then checks the answer.
 ///
@@ -82,11 +93,10 @@ pub async fn understand(
     };
 
     if let Some(decision) = &decision
-        && let Some((kind, certainty)) = decision.choice("document_type")
-        && NOT_ABOUT_MONEY.contains(&kind)
-        && certainty >= pipeline.threshold
+        && let Some(not_money) = not_about_money(decision)
+        && not_money >= pipeline.threshold
     {
-        let mut result = result::not_about_money(DocumentType::Other, certainty);
+        let mut result = result::not_about_money(DocumentType::Other, not_money);
 
         result.warnings = warnings;
 
