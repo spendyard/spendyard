@@ -654,6 +654,9 @@ mod merchant_tests {
             ("POSTMARKAPP.COM, CHICAGO, US", "postmarkapp.com"),
             ("MICROSOFTÄG014841462, MSBILL.INFO, IE", "microsoft.com"),
             ("MICROSOFT G016820300, MSBILL.INFO, IE", "microsoft.com"),
+            ("DOCKER.INV-B7D0B995-7C, PALO ALTO, US", "docker.com"),
+            ("DOCKER:INV-FA479FC4-B3, PALO ALTO, US", "docker.com"),
+            ("XATA.IO, SAN FRANCISCO, US", "xata.io"),
         ];
 
         for (merchant, id) in cases {
