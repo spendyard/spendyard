@@ -65,6 +65,53 @@ enum Command {
         concurrency: usize,
     },
 
+    /// Draft an expected answer for each document in a folder that has
+    /// none, with a careful model, for a person to review.
+    Label {
+        dir: PathBuf,
+
+        /// The model to draft with. Default: anthropic/claude-opus-5-5.
+        #[arg(long, short)]
+        extractor: Option<String>,
+
+        /// Draft at most this many.
+        #[arg(long)]
+        limit: Option<usize>,
+
+        #[arg(long, default_value_t = 4)]
+        concurrency: usize,
+    },
+
+    /// Score model combinations against the expected answers in a folder:
+    /// accuracy per field, routing, flags, cost and time.
+    Eval {
+        dir: PathBuf,
+
+        /// First models to compare, comma-separated; `none` for no first
+        /// model. Default: the config.
+        #[arg(long, short)]
+        decider: Option<String>,
+
+        /// Extractors to compare, comma-separated. Default: the config.
+        #[arg(long, short)]
+        extractor: Option<String>,
+
+        /// Only the first this many documents.
+        #[arg(long)]
+        limit: Option<usize>,
+
+        #[arg(long, default_value_t = 6)]
+        concurrency: usize,
+
+        /// List every wrong field.
+        #[arg(long)]
+        wrong: bool,
+
+        /// One JSON line per combination.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// List what's in a document: the email body, attachments, forwarded
     /// emails. No model calls.
     Parts {
@@ -98,8 +145,19 @@ enum ConfigAction {
     Init,
 }
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
+    // Before the async runtime starts any threads: this sets variables.
+    let env_files = cli::env_files::load();
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("an async runtime");
+
+    runtime.block_on(run(env_files))
+}
+
+async fn run(env_files: Vec<PathBuf>) -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command {
@@ -153,6 +211,44 @@ async fn main() -> ExitCode {
             })
         }
 
+        Command::Label {
+            dir,
+            extractor,
+            limit,
+            concurrency,
+        } => {
+            let options = cli::eval::LabelOptions {
+                dir,
+                extractor,
+                limit,
+                concurrency,
+            };
+
+            cli::eval::label(options).await.map(|()| ExitCode::SUCCESS)
+        }
+
+        Command::Eval {
+            dir,
+            decider,
+            extractor,
+            limit,
+            concurrency,
+            wrong,
+            json,
+        } => {
+            let options = cli::eval::EvalOptions {
+                dir,
+                deciders: decider,
+                extractors: extractor,
+                limit,
+                concurrency,
+                wrong,
+                json,
+            };
+
+            cli::eval::run(options).await.map(|()| ExitCode::SUCCESS)
+        }
+
         Command::Parts { input, json, text } => {
             cli::parts::run(&input, json, text).map(|()| ExitCode::SUCCESS)
         }
@@ -160,7 +256,7 @@ async fn main() -> ExitCode {
         Command::Config { action } => {
             let done = match action {
                 Some(ConfigAction::Init) => cli::config_command::init(),
-                None => cli::config_command::show(),
+                None => cli::config_command::show(&env_files),
             };
 
             done.map(|()| ExitCode::SUCCESS)

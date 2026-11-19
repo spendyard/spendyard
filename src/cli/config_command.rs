@@ -33,7 +33,7 @@ model = "claude-haiku-5-5"
 # base_url = "http://localhost:11434/v1"
 "#;
 
-pub fn show() -> Result<()> {
+pub fn show(env_files: &[std::path::PathBuf]) -> Result<()> {
     let path = config::home().join("config.toml");
 
     let exists = path.exists();
@@ -45,6 +45,11 @@ pub fn show() -> Result<()> {
     };
 
     println!("config  {}{note}", path.display());
+
+    for file in env_files {
+        println!("env     {} (loaded)", file.display());
+    }
+
     println!();
 
     let config = config::load()?;

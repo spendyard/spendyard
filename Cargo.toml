@@ -13,6 +13,7 @@ async-trait = "0.1"
 base64 = "0.23"
 cfb = "0.16"
 clap = { version = "4", features = ["derive"] }
+dotenvy = "0.15"
 html2text = "0.17"
 lopdf = { version = "0.47", default-features = false }
 mail-parser = "1"

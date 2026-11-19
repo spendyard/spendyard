@@ -8,6 +8,7 @@
 
 pub mod decide;
 pub mod document;
+pub mod eval;
 pub mod extract;
 pub mod format;
 pub mod money;

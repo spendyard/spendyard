@@ -46,7 +46,12 @@ spendyard decide *.eml -d jev              # only the first model's answers
 spendyard parts message.eml --text         # what's inside, no model
 spendyard config                           # settings in effect, and which keys are set
 spendyard config init                      # write a commented ~/.spendyard/config.toml
+spendyard label ./eval                     # draft expected answers with a careful model
+spendyard eval ./eval -d none,clef-flash   # score model combinations against them
 ```
+
+API keys come from the environment, or from `.env.local` / `.env` in the
+current folder or `~/.spendyard/.env`; variables already set win.
 
 Settings live in `~/.spendyard/config.toml`; keys come from the environment:
 

@@ -669,6 +669,41 @@ spendyard eval ./testdata \
   and processor vs vendor.
 - Any change to prompts, the schema or defaults comes with an `eval` run.
 
+**As built (M4).** `spendyard label <dir>` drafts `<file>.expected.json`
+for every document without one, with `claude-opus-5-5` by default, marked
+`"reviewed": false` until a person has checked it. Expected answers are
+flat and easy to edit:
+
+```json
+{ "reviewed": true, "about_money": true, "type": "receipt", "status": "paid",
+  "vendor_id": "slack.com", "vendor_name": "Slack", "total": "173.25",
+  "currency": "EUR", "last4": ["8239"], "billing_model": "subscription",
+  "interval": "month", "invoice_number": "SBIE-3281007", "seats": 21 }
+```
+
+A field left out isn't scored; `null` or `[]` means the document has none.
+Amounts compare as decimals, names and numbers by letters and digits,
+vendor names by containment ("Slack" matches "Slack Technologies
+Limited"), card digits as sets. `spendyard eval <dir> -d none,clef-flash
+-e anthropic/claude-haiku-5-5,…` runs every combination and reports
+accuracy per field, routing (skipped, and receipts missed), flags, and
+cost and time per document; `--wrong` lists every miss, `--json` gives one
+line per combination.
+
+**First run (2026-11-19, 26 documents: 20 real receipts and 6 made-up
+non-receipts, drafted by Opus, not yet reviewed).** Haiku alone and
+Clef-flash → Haiku both got receipt-or-not, type, status, total, currency
+and card digits right on every document; billing model and interval
+86–91%, invoice number 82%. Clef-flash skipped the extractor on the four
+made-up non-receipts and on no receipt. Most invoice-number misses are
+Stripe receipts carrying both a receipt number and an invoice number,
+where the models (Opus included) pick either: the schema needs a rule, or
+a separate `receipt_number`.
+
+The real eval set stays private (`private-receipts/eval/`, next to the
+repo): it is the user's own mail. A public set in `testdata/` comes from
+made-up receipts later.
+
 ## 11. Spendyard Cloud
 
 The binary is complete for one person: it reads, scans, keeps and reports.
@@ -742,7 +777,7 @@ document before launch.
 | **M1: Read** | `Document` from eml, msg, PDF (text layer), images, HTML and text; `spendyard parts`. Pick the PDF crates and the HEIC approach. |
 | **M2: Extract** | `Extractor` trait; `anthropic`, `openai`, `gemini` and `openai-compatible`; output schema; validation and evidence checks; `spendyard read`. Done: run end to end with a local model; the hosted providers still need a first real run. |
 | **M3: Decide** | `Decider` trait; `clef-flash`, `clef`, `jev`, `systemone`; routing and thresholds; LLM fallback. Built, with the extractor as the fallback; `spendyard decide`, `spendyard config`. Not yet run against a real decision model (no key). |
-| **M4: Eval** | `spendyard eval`, first 200 labelled documents, defaults chosen from the results. |
+| **M4: Eval** | `spendyard eval`, first 200 labelled documents, defaults chosen from the results. Built: `spendyard label` and `spendyard eval`; a first private set of 26. Still to do: grow it to 200 with real non-receipts from an inbox, review the drafts, then set the threshold and default models from it. |
 | **M5: Serve and MCP** | `spendyard serve` and `spendyard mcp`; `exec` provider. |
 | **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; `scan_mailbox` MCP tool; Gmail setup guide. |
 | **M5c: Store and reports** | `~/.spendyard` with SQLite (`rusqlite`, SQLite compiled in); `read` and `scan` store results; `report`, `subscriptions`, `receipts`, `edit`; exchange rates. Could come before M5b, fed by `read` on files. |
