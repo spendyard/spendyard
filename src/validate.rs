@@ -294,6 +294,28 @@ fn check_evidence(result: &mut ReadResult, document: &Document, flags: &mut Vec<
 
     let has_any_text = texts.iter().any(Option::is_some);
 
+    // The model also sees the email headers, and may quote them (a vendor's
+    // domain from the From address).
+    let headers = document
+        .headers
+        .as_ref()
+        .map(|headers| {
+            let fields = [
+                ("From", &headers.from),
+                ("To", &headers.to),
+                ("Subject", &headers.subject),
+                ("Date", &headers.date),
+            ];
+
+            let joined: Vec<String> = fields
+                .iter()
+                .filter_map(|(name, value)| value.as_ref().map(|value| format!("{name}: {value}")))
+                .collect();
+
+            normalize_for_search(&joined.join(" "))
+        })
+        .unwrap_or_default();
+
     for (field, evidence) in result.evidence.iter_mut() {
         let quote = normalize_for_search(&evidence.quote);
 
@@ -306,7 +328,9 @@ fn check_evidence(result: &mut ReadResult, document: &Document, flags: &mut Vec<
             .and_then(Option::as_ref)
             .is_some_and(|text| text.contains(&quote));
 
-        let anywhere = in_part || texts.iter().flatten().any(|text| text.contains(&quote));
+        let anywhere = in_part
+            || headers.contains(&quote)
+            || texts.iter().flatten().any(|text| text.contains(&quote));
 
         evidence.checked = anywhere;
 
@@ -389,33 +413,15 @@ fn quote_contains(quote: &str, value: &str) -> bool {
     normalize_for_search(quote).contains(&normalize_for_search(value))
 }
 
-/// Lowercase, with all kinds of spaces collapsed to one.
+/// Letters and digits only, lowercased. Models copy quotes with small
+/// changes in spacing and punctuation ("PENNYSYR 0096" for
+/// "PENNYSYR-0096", a line break for a space); those shouldn't count as
+/// made up, while different words or numbers still do.
 fn normalize_for_search(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-
-    let mut last_was_space = true;
-
-    for c in text.chars() {
-        if c.is_whitespace() || c == '\u{a0}' || c == '\u{202f}' || c == '\u{2009}' {
-            if !last_was_space {
-                out.push(' ');
-            }
-
-            last_was_space = true;
-
-            continue;
-        }
-
-        if matches!(c, '\u{200b}' | '\u{200c}' | '\u{200d}' | '\u{feff}') {
-            continue;
-        }
-
-        out.extend(c.to_lowercase());
-
-        last_was_space = false;
-    }
-
-    out.trim_end().to_string()
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 #[cfg(test)]
@@ -441,10 +447,20 @@ mod tests {
     }
 
     #[test]
-    fn search_ignores_case_and_spacing() {
+    fn search_ignores_case_spacing_and_punctuation() {
         assert_eq!(
             normalize_for_search("Amount\n  paid\u{a0}$112.40 "),
-            "amount paid $112.40"
+            normalize_for_search("amount paid 112,40")
+        );
+
+        assert_eq!(
+            normalize_for_search("PENNYSYR 0096"),
+            normalize_for_search("PENNYSYR-0096")
+        );
+        assert_eq!(normalize_for_search("Beløp"), "beløp");
+        assert_ne!(
+            normalize_for_search("$112.40"),
+            normalize_for_search("$121.40")
         );
     }
 }

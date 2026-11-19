@@ -31,8 +31,9 @@ products.
 (1234.50). Dates are YYYY-MM-DD. Currencies are ISO 4217 codes.
 - When the document doesn't say, use an empty string (or null where the schema allows it). Never guess a card's last four digits, an invoice \
 number or an amount.
-- For every value you fill in, add an evidence entry with text copied exactly from the document \
-and the index of the part it is in.
+- For every value you fill in, add an evidence entry: text copied exactly from the document that \
+shows the value itself with its label (\"Amount paid $112.40\", not just \"Amount paid\"), and the \
+index of the part it is in.
 - confidence is how sure you are of the whole reading, from 0 to 1.";
 
 /// One piece of what the model is given.
