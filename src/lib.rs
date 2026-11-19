@@ -22,12 +22,16 @@ mod tests {
     fn schema_version_is_a_date() {
         let parts: Vec<&str> = SCHEMA_VERSION.split('-').collect();
 
-        assert_eq!(parts.len(), 3);
-        assert_eq!(parts[0].len(), 4);
-        assert!(
-            parts
-                .iter()
-                .all(|part| part.chars().all(|c| c.is_ascii_digit()))
-        );
+        assert_eq!(parts.len(), 3, "{SCHEMA_VERSION} is not YYYY-MM-DD");
+
+        let year = parts[0];
+
+        assert_eq!(year.len(), 4, "{SCHEMA_VERSION} has no four-digit year");
+
+        for part in &parts {
+            let is_number = part.chars().all(|c| c.is_ascii_digit());
+
+            assert!(is_number, "{part} in {SCHEMA_VERSION} is not a number");
+        }
     }
 }

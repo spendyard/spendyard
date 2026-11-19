@@ -20,13 +20,15 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Version => {
-            println!("spendyard {}", spendyard::VERSION);
-            println!("schema {}", spendyard::SCHEMA_VERSION);
-        }
+        Command::Version => print_version(),
     }
 
     ExitCode::SUCCESS
+}
+
+fn print_version() {
+    println!("spendyard {}", spendyard::VERSION);
+    println!("schema {}", spendyard::SCHEMA_VERSION);
 }
 
 #[cfg(test)]
