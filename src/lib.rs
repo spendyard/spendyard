@@ -6,6 +6,14 @@
 //! the library: it moves into its own WebAssembly-ready crate when the cloud
 //! work starts.
 
+pub mod document;
+pub mod format;
+pub mod read;
+pub mod text;
+
+pub use document::{Document, EmailHeaders, Format, Part, PartKind};
+pub use read::{ReadError, read};
+
 /// The version of this crate, reported as `meta.spendyard_version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

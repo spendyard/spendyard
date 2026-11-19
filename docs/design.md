@@ -70,9 +70,7 @@ The binary is written in Rust.
 - **One static binary** per platform (musl on Linux), with no runtime to
   install.
 - **Better document libraries.** `mail-parser` (from Stalwart) handles
-  real-world MIME well. There are pure-Rust crates for PDF text extraction
-  and rendering (hayro and others, to evaluate in M1), which could let us
-  rasterize scanned PDFs without bundling pdfium.
+  real-world MIME well, and there are pure-Rust crates for PDFs (§3.1).
 - **WebAssembly.** The core (reading, validation, model calls over HTTP)
   can compile to `wasm32` and run in a Cloudflare Worker. The cloud can then
   run the exact same code that people run locally. Until the cloud work
@@ -85,8 +83,38 @@ The binary is written in Rust.
 The cost is slower development than Go, which Stagd uses. We accept that for
 the single binary and for running the same core in the cloud.
 
-HEIC decoding usually needs libheif (C). Options: build it in statically,
-or let vision models that accept HEIC take it directly. To decide in M1.
+### 3.1 Reading decisions (M1)
+
+| Input | Crate | Notes |
+|---|---|---|
+| Email | `mail-parser` | Bodies, attachments and forwarded emails, 41 character sets. |
+| Outlook `.msg` | `cfb`, plus our own property reading (~300 lines) | The `.msg` crates are thin and unmaintained. We read only what receipts need. RTF-only bodies are not read yet. |
+| HTML | `html2text` | Wide lines, no table borders, so a table row stays on one line. |
+| PDF text | `lopdf` (no default features) | See below. |
+
+**PDF text.** Compared on a Chrome-printed invoice (embedded subset fonts,
+like most SaaS invoices):
+
+- `pdf-extract` split words at kerning: "$1 12.40", "V isa". It changes
+  amounts, so it is out.
+- `pdf_oxide` gave the nicest text (table rows on one line) but pulls in
+  169 crates, including `libc` and a logger, and is at 0.3.
+- `lopdf` got every value right, puts each table cell on its own line, has
+  a small dependency tree and is mature. **Chosen.** Cells on separate lines
+  are fine for models and for the quote check (§4.5).
+
+Revisit with real receipts in the test set. The choice sits behind
+`read::pdf`, so swapping is local.
+
+**No PDF rendering yet.** A PDF without a text layer is returned without
+text and with a warning. Models that read PDFs (Anthropic, OpenAI, Gemini)
+take it as it is (§4.4). Rendering pages to images, with `hayro` (pure Rust),
+is only needed for extractors that take images but not PDFs. Decide in M2.
+
+**HEIC: detected, not decoded.** Decoding needs libheif (C), which breaks
+the plain static build. HEIC goes as it is to models that accept it
+(Gemini); for the others the error says to convert to JPEG. Revisit if
+phone photos turn out to be common.
 
 ## 4. Pipeline
 
@@ -572,9 +600,8 @@ document before launch.
 ## 12. Open questions
 
 - Name and home on GitHub (organization, crate name).
-- The PDF crates: is a pure-Rust renderer good enough for scanned
-  receipts, or do we bundle pdfium?
-- HEIC: libheif built in, or vision models only?
+- Does `lopdf` hold up on real receipts (§3.1)?
+- Rendering PDF pages with `hayro`: needed in M2, or not at all?
 - Is JEV still in early access, and on what retention terms?
 - Gmail for the CLI: is "bring your own OAuth client" acceptable to
   startups, or is it worth paying for Google's verification early?
