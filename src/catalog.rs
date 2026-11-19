@@ -683,6 +683,7 @@ mod merchant_tests {
             ("WWW.SYNCFUSION.COM, MORRISVILLE, US", "bolddesk.com"),
             ("DASHO, NEW YORK, US", "dash0.com"),
             ("DOKPLOY TECHNOLOGY INC, DOVER, US", "dokploy.com"),
+            ("POLYMER.CO, WILMINGTON, US", "polymer.co"),
         ];
 
         for (merchant, id) in cases {
