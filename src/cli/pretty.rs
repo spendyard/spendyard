@@ -60,6 +60,18 @@ pub fn print_result(name: &str, result: &ReadResult) {
         row("Total", text.trim_end());
     }
 
+    let numbers: Vec<String> = [
+        ("invoice", &result.invoice_number),
+        ("receipt", &result.receipt_number),
+    ]
+    .iter()
+    .filter_map(|(label, number)| number.as_ref().map(|number| format!("{label} {number}")))
+    .collect();
+
+    if !numbers.is_empty() {
+        row("Number", &numbers.join(", "));
+    }
+
     for payment in &result.payments {
         let mut text = word(&payment.method).replace('_', " ");
 

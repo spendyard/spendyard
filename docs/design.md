@@ -697,8 +697,9 @@ and card digits right on every document; billing model and interval
 86–91%, invoice number 82%. Clef-flash skipped the extractor on the four
 made-up non-receipts and on no receipt. Most invoice-number misses are
 Stripe receipts carrying both a receipt number and an invoice number,
-where the models (Opus included) pick either: the schema needs a rule, or
-a separate `receipt_number`.
+where the models (Opus included) pick either. Fixed the same day with a
+separate `receipt_number` and a rule in the prompt: invoice numbers went
+from 82% to 95.5% and receipt numbers are 100% on the same set.
 
 The real eval set stays private (`private-receipts/eval/`, next to the
 repo): it is the user's own mail. A public set in `testdata/` comes from
@@ -738,6 +739,24 @@ pays.
 The core compiles to WebAssembly and runs in a Cloudflare Worker, so the
 cloud reads documents with exactly the code that is open. The cloud uses its
 own model keys and bills for usage.
+
+### Bring your own keys? Not at first
+
+Measured cost per document is about $0.0015 (Clef-flash first, Haiku
+extracting). A startup's inbox of a few thousand messages a month, most of
+them skipped by the first model, costs a few dollars of model use: too
+little to be worth a customer managing keys, and easy to fold into the
+subscription. Our own keys also keep the models, prompts and thresholds the
+ones `eval` measured, one agreement with each provider (zero retention,
+logging off), and one place to handle rate limits and outages.
+
+Bring-your-own-keys is still worth having later, for a different reason:
+compliance. A company that wants its documents processed under its own
+agreement with Anthropic, OpenAI, Google or Azure (or on its own models)
+could set keys per organization in the cloud, stored encrypted, used only
+for that organization, and shown as theirs in the results. Until then, such
+a company runs the open binary with its own keys and pushes only results
+(below), which already gives it that.
 
 ### Sending from the CLI to the cloud (later)
 

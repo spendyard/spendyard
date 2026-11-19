@@ -35,6 +35,9 @@ pub struct ReadResult {
     pub invoice_number: Option<String>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipt_number: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub issued: Option<String>,
 
     /// The quote behind each value, keyed by field path, and whether it was
@@ -213,6 +216,7 @@ pub fn not_about_money(kind: DocumentType, certainty: f64) -> ReadResult {
         billing: None,
         lines: Vec::new(),
         invoice_number: None,
+        receipt_number: None,
         issued: None,
         evidence: BTreeMap::new(),
         flags: Vec::new(),
@@ -277,6 +281,7 @@ pub fn assemble(
         billing,
         lines,
         invoice_number: present(output.invoice_number),
+        receipt_number: present(output.receipt_number),
         issued: present(output.issued),
         evidence,
         flags: Vec::new(),

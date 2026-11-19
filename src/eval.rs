@@ -17,6 +17,7 @@
 //!   "billing_model": "subscription",
 //!   "interval": "month",
 //!   "invoice_number": "SBIE-3281007",
+//!   "receipt_number": null,
 //!   "seats": 21
 //! }
 //! ```
@@ -52,6 +53,7 @@ pub const FIELDS: &[&str] = &[
     "billing_model",
     "interval",
     "invoice_number",
+    "receipt_number",
     "seats",
 ];
 
@@ -132,6 +134,7 @@ pub fn flatten(result: &ReadResult) -> Map<String, Value> {
     fields.insert("interval".to_string(), json!(interval));
 
     fields.insert("invoice_number".to_string(), json!(result.invoice_number));
+    fields.insert("receipt_number".to_string(), json!(result.receipt_number));
 
     let seat_lines: Vec<f64> = result
         .lines
@@ -250,8 +253,8 @@ fn same(field: &str, expected: &Value, got: &Value) -> bool {
             !a.is_empty() && !b.is_empty() && (a.contains(&b) || b.contains(&a))
         }
 
-        "invoice_number" | "vendor_id" | "currency" | "type" | "status" | "billing_model"
-        | "interval" => letters(expected) == letters(got),
+        "invoice_number" | "receipt_number" | "vendor_id" | "currency" | "type" | "status"
+        | "billing_model" | "interval" => letters(expected) == letters(got),
 
         _ => expected == got,
     }

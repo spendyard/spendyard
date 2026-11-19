@@ -37,8 +37,14 @@ pub struct ModelOutput {
     /// Every line item, including discounts and credits. Tax is not a line.
     pub lines: Vec<Line>,
 
-    /// The invoice or receipt number.
+    /// The number labelled as the invoice number ("Invoice number",
+    /// "Invoice #", "Fakturanummer"). Not the receipt number.
     pub invoice_number: Option<String>,
+
+    /// The number labelled as the receipt number ("Receipt number",
+    /// "Receipt #", "Kvitteringsnummer"). Stripe receipts carry both a
+    /// receipt number and an invoice number; record each in its own field.
+    pub receipt_number: Option<String>,
 
     /// The date the document was issued, as YYYY-MM-DD.
     pub issued: Option<String>,

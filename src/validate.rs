@@ -447,6 +447,10 @@ fn key_values(result: &ReadResult) -> Vec<(String, String)> {
         values.push(("invoice_number".to_string(), number.clone()));
     }
 
+    if let Some(number) = &result.receipt_number {
+        values.push(("receipt_number".to_string(), number.clone()));
+    }
+
     values
 }
 

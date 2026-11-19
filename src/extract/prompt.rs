@@ -27,6 +27,8 @@ is often just a cover note. Set source_part to the part you read the details fro
 overage, tokens and requests are kind usage. Sum seats per product line as written; don't merge \
 products.
 - A forwarded email: read the forwarded receipt, not the note from the person forwarding it.
+- Invoice numbers and receipt numbers are different fields. Take each from the number labelled \
+as such; many receipts (Stripe's in particular) show both. Never put one in the other's field.
 - Amounts are plain decimals with a dot and no thousands separators or currency symbols \
 (1234.50). Dates are YYYY-MM-DD. Currencies are ISO 4217 codes.
 - When the document doesn't say, use an empty string (or null where the schema allows it). Never guess a card's last four digits, an invoice \
