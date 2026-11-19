@@ -135,17 +135,23 @@ fn text_start(bytes: &[u8]) -> Option<String> {
 
 /// The input starts with a block of email headers.
 fn looks_like_email(start: &str) -> bool {
-    let header_block = start
-        .split("\n\n")
-        .next()
-        .unwrap_or_default()
-        .split("\r\n\r\n")
-        .next()
-        .unwrap_or_default();
+    let normalized = start.replace("\r\n", "\n");
+
+    let ends_within_start = normalized.contains("\n\n");
+
+    let header_block = normalized.split("\n\n").next().unwrap_or_default();
+
+    let mut lines: Vec<&str> = header_block.lines().collect();
+
+    // Real headers often run past the sniffed start (Exchange adds kilobytes
+    // of them). Then the last line is cut off mid-header; ignore it.
+    if !ends_within_start {
+        lines.pop();
+    }
 
     let mut known = 0;
 
-    for line in header_block.lines() {
+    for line in lines {
         let is_continuation = line.starts_with(' ') || line.starts_with('\t');
 
         if is_continuation || line.is_empty() {
@@ -212,6 +218,19 @@ mod tests {
         let email = b"Received: from mx.example.com\r\nFrom: Acme <billing@acme.example>\r\nSubject: Your receipt\r\n\r\nThanks!";
 
         assert_eq!(detect(email), Format::Email);
+    }
+
+    #[test]
+    fn detects_email_with_headers_longer_than_the_sniffed_start() {
+        let mut email = String::from("Received: from mx.example.com\r\nSubject: Your invoice\r\n");
+
+        while email.len() < SNIFF_LEN * 2 {
+            email.push_str("X-MS-Exchange-Organization-Network-Message-Id: 0123456789abcdef\r\n");
+        }
+
+        email.push_str("\r\nBody");
+
+        assert_eq!(detect(email.as_bytes()), Format::Email);
     }
 
     #[test]
