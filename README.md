@@ -10,7 +10,7 @@ own model API keys. Nothing is sent anywhere except to the
 model providers you configure.
 
 > **Status:** early development. `parts`, `read`, `decide`, `config`, `label`,
-> `eval` and `mcp` work;
+> `eval`, `mcp`, and `login`/`scan` for Outlook work;
 > mailboxes and the store come next. The design is in
 > [docs/design.md](docs/design.md).
 
@@ -80,11 +80,20 @@ threshold = 0.85
 base_url = "http://localhost:11434/v1"
 ```
 
+Outlook and Microsoft 365, straight from the mailbox:
+
+```bash
+spendyard login outlook --client-id <app> --tenant <tenant>   # a code to enter in the browser
+spendyard scan outlook --dry-run          # what it would read
+spendyard scan outlook -d clef-flash      # read new mail since the last scan
+spendyard scan outlook --folder Receipts --since 2026-01-01 --save ./receipts
+spendyard accounts
+```
+
 ### Coming later
 
 ```bash
 spendyard login gmail
-spendyard scan gmail --since 2026-01-01   # kept in ~/.spendyard
 spendyard report --by vendor --months 12
 spendyard subscriptions
 ```

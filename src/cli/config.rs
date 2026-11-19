@@ -20,6 +20,20 @@ pub struct Config {
     /// Per provider: `[providers.openai-compatible]`.
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderConfig>,
+
+    /// Per mailbox: `[mailboxes.outlook]`.
+    #[serde(default)]
+    pub mailboxes: BTreeMap<String, MailboxConfig>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MailboxConfig {
+    /// The OAuth app (client) ID to sign in with.
+    pub client_id: Option<String>,
+
+    /// Microsoft tenant: an ID, a domain, or `organizations` (the default).
+    pub tenant: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

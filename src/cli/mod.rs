@@ -8,6 +8,8 @@ pub mod env_files;
 pub mod eval;
 pub mod exec;
 pub mod input;
+pub mod mailbox;
+pub mod mailbox_commands;
 pub mod mcp;
 pub mod models;
 pub mod parts;

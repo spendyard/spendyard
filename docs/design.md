@@ -545,6 +545,37 @@ How a scan works:
    link) go to the store (§8), so `--new` reads only new mail and a message
    is never read twice.
 
+**As built for Outlook (M5b).** `spendyard login outlook` signs in with a
+device code (`--client-id`, `--tenant`, or `[mailboxes.outlook]` in the
+config); the address and app go in `~/.spendyard/accounts.json`, the
+refresh token in the OS keychain (or `~/.spendyard/tokens.json`, mode 0600,
+when there is no keychain), rotated on every use. `spendyard scan outlook`:
+
+1. lists messages newest first since the last scan (default 30 days ago;
+   `--since`, `--folder`, `--limit`) with subject, sender, preview and
+   attachments only;
+2. keeps the likely ones with a local pre-filter, no model: money words in
+   eight languages, billing senders and processors, or an attachment plus
+   an amount (`--all` skips it);
+3. downloads only those as MIME and runs the normal pipeline, so the first
+   model (if configured) skips most of what's left;
+4. prints one JSON line per message with a `source` (account, Message-ID,
+   date, sender, subject), or summaries with `--pretty`; `--save` keeps the
+   `.eml` files and `--dry-run` only lists;
+5. remembers the newest message seen in `~/.spendyard/scans.json` (until
+   the store exists), unless `--since` was given or `--limit` cut the
+   listing short.
+
+Run on the first real mailbox (2026-11-19): the pre-filter kept 91 of the
+400 newest messages; of 14 kept among the newest 60, Clef-flash skipped 7
+(newsletters, a security alert, a support thread, internal mail) and Haiku
+read 7 failed payments and unpaid invoices. 19 seconds in all.
+
+`spendyard accounts` and `spendyard logout` manage sign-ins, and MCP has a
+`scan_mailbox` tool. Until Spendyard registers its own Entra app, Outlook
+needs an app ID of the user's own (delegated `Mail.Read`, public client
+flows allowed).
+
 Providers:
 
 | Mailbox | API | Sign-in | Permission |
@@ -827,7 +858,7 @@ document before launch.
 | **M3: Decide** | `Decider` trait; `clef-flash`, `clef`, `jev`, `systemone`; routing and thresholds; LLM fallback. Built, with the extractor as the fallback; `spendyard decide`, `spendyard config`. Not yet run against a real decision model (no key). |
 | **M4: Eval** | `spendyard eval`, first 200 labelled documents, defaults chosen from the results. Built: `spendyard label` and `spendyard eval`; a first private set of 26. Still to do: grow it to 200 with real non-receipts from an inbox, review the drafts, then set the threshold and default models from it. |
 | **M5: MCP and exec** | `spendyard mcp`; `exec` provider. Done; `serve` was dropped (the HTTP API is the cloud's). |
-| **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; `scan_mailbox` MCP tool; Gmail setup guide. |
+| **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; `scan_mailbox` MCP tool; Gmail setup guide. Outlook done and run on a real mailbox; still to do: Gmail, IMAP, registering Spendyard's own Entra app. |
 | **M5c: Store and reports** | `~/.spendyard` with SQLite (`rusqlite`, SQLite compiled in); `read` and `scan` store results; `report`, `subscriptions`, `receipts`, `edit`; exchange rates. Could come before M5b, fed by `read` on files. |
 | **M6: Vendor catalog** | First 200 vendors, AI tools first; processor rules. |
 | **M7: Public release** | Docs, Homebrew, crates.io, announcement. |

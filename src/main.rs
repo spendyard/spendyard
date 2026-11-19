@@ -138,6 +138,79 @@ enum Command {
         decider: Option<String>,
     },
 
+    /// Sign in to a mailbox. Outlook signs in with a code you enter in the
+    /// browser; the token goes to the OS keychain.
+    Login {
+        /// outlook
+        provider: String,
+
+        /// The OAuth app to sign in with. Default: the config.
+        #[arg(long)]
+        client_id: Option<String>,
+
+        /// Microsoft tenant ID or domain. Default: the config, then
+        /// `organizations`.
+        #[arg(long)]
+        tenant: Option<String>,
+    },
+
+    /// Sign out of a mailbox and delete its token.
+    Logout {
+        /// The address, or provider:address.
+        account: String,
+    },
+
+    /// List signed-in mailboxes.
+    Accounts,
+
+    /// Read receipts straight from a mailbox: list messages since the last
+    /// scan, keep the ones likely about money, and read those.
+    Scan {
+        /// outlook
+        provider: String,
+
+        /// Which signed-in account, when there are several.
+        #[arg(long)]
+        account: Option<String>,
+
+        /// A folder name such as Inbox or Receipts. Default: all folders.
+        #[arg(long)]
+        folder: Option<String>,
+
+        /// YYYY-MM-DD. Default: where the last scan stopped, or 30 days ago.
+        #[arg(long)]
+        since: Option<String>,
+
+        /// Look at most at this many messages, newest first.
+        #[arg(long, default_value_t = 500)]
+        limit: usize,
+
+        /// Read every message, not only the ones that look like money.
+        #[arg(long)]
+        all: bool,
+
+        /// List what would be read, without downloading or calling models.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Also save every message read as .eml in this folder.
+        #[arg(long)]
+        save: Option<PathBuf>,
+
+        #[arg(long, short)]
+        extractor: Option<String>,
+
+        #[arg(long, short)]
+        decider: Option<String>,
+
+        /// Print readable summaries instead of JSON lines.
+        #[arg(long)]
+        pretty: bool,
+
+        #[arg(long, default_value_t = 4)]
+        concurrency: usize,
+    },
+
     /// Show where the config lives, the models in effect and which keys
     /// are set.
     Config {
@@ -261,6 +334,64 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
 
         Command::Parts { input, json, text } => {
             cli::parts::run(&input, json, text).map(|()| ExitCode::SUCCESS)
+        }
+
+        Command::Login {
+            provider,
+            client_id,
+            tenant,
+        } => cli::mailbox_commands::login(&provider, client_id, tenant)
+            .await
+            .map(|()| ExitCode::SUCCESS),
+
+        Command::Logout { account } => {
+            cli::mailbox_commands::logout(&account).map(|()| ExitCode::SUCCESS)
+        }
+
+        Command::Accounts => cli::mailbox_commands::list_accounts().map(|()| ExitCode::SUCCESS),
+
+        Command::Scan {
+            provider,
+            account,
+            folder,
+            since,
+            limit,
+            all,
+            dry_run,
+            save,
+            extractor,
+            decider,
+            pretty,
+            concurrency,
+        } => {
+            let command = cli::mailbox_commands::ScanCommand {
+                provider,
+                options: cli::mailbox::ScanOptions {
+                    account,
+                    folder,
+                    since,
+                    limit,
+                    all,
+                    dry_run,
+                    save,
+                    concurrency,
+                },
+                extractor,
+                decider,
+                pretty,
+            };
+
+            cli::mailbox_commands::scan(command)
+                .await
+                .map(|(found, errors)| {
+                    if errors > 0 {
+                        ExitCode::from(2)
+                    } else if found > 0 || dry_run {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::from(1)
+                    }
+                })
         }
 
         Command::Mcp { extractor, decider } => {
