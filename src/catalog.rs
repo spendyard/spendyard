@@ -685,6 +685,14 @@ mod merchant_tests {
             ("DOKPLOY TECHNOLOGY INC, DOVER, US", "dokploy.com"),
             ("POLYMER.CO, WILMINGTON, US", "polymer.co"),
             ("LIVESTORM* LIVESTORM, LYON, FR", "livestorm.co"),
+            ("NAME-CHEAP.COM* WAG9R5, PHOENIX, US", "namecheap.com"),
+            ("MONGODBCLOUD FIELDNODE, DUBLIN, IE", "mongodb.com"),
+            ("SCW* C-1475, PARIS, FR", "scaleway.com"),
+            ("DOMENESHOP.NO, OSLO, NO", "domeneshop.no"),
+            ("SIMPLEBACKUPS, WOLUWE SAINT, BE", "simplebackups.com"),
+            ("REETRO APS, GREVE, DK", "reetro.app"),
+            ("EB HACKERX-OSLO FULL-, 8014137200, US", "hackerx.org"),
+            ("LEMSQZY* ANTFORFIGMA, SALT LAKE CIT, US", "antforfigma.com"),
         ];
 
         for (merchant, id) in cases {

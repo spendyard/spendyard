@@ -2,3 +2,4 @@ name = "Namecheap"
 aliases = ["Namecheap, Inc."]
 category = "infrastructure"
 pricing = ["one_time"]
+descriptors = ["NAME-CHEAP.COM"]

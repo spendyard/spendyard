@@ -3,3 +3,4 @@ aliases = ["Scaleway SAS", "Scaleway S.A.S."]
 domains = ["scaleway.net"]
 category = "infrastructure"
 pricing = ["usage"]
+descriptors = ["SCW*"]   # Scaleway on card statements

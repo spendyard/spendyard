@@ -1,0 +1,4 @@
+name = "Domeneshop"
+aliases = ["Domeneshop AS"]
+category = "infrastructure"
+pricing = ["plan"]

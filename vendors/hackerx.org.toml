@@ -1,0 +1,4 @@
+name = "HackerX"
+category = "hr"
+pricing = ["one_time"]
+descriptors = ["EB HACKERX"]   # tickets sold through Eventbrite

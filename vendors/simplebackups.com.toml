@@ -1,0 +1,3 @@
+name = "SimpleBackups"
+category = "infrastructure"
+pricing = ["plan"]
