@@ -1,0 +1,4 @@
+name = "Xata"
+aliases = ["Xata.io"]
+category = "data"
+pricing = ["usage", "plan"]
