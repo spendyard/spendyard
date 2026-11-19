@@ -37,7 +37,9 @@ document ──▶ read ──▶ locate ──▶ decide ──▶ extract ─�
 spendyard read invoice.pdf
 spendyard read message.eml --pretty
 spendyard login gmail
-spendyard scan gmail --since 2026-01-01 --jsonl
+spendyard scan gmail --since 2026-01-01   # kept in ~/.spendyard
+spendyard report --by vendor --months 12
+spendyard subscriptions
 spendyard serve
 spendyard mcp
 ```

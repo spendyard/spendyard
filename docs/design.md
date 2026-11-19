@@ -4,14 +4,15 @@ Status: draft, 2026-11-19.
 
 Spendyard has two parts:
 
-1. **`spendyard`, an open-source binary** (Apache 2.0). It reads one
+1. **`spendyard`, an open-source binary** (Apache 2.0). It reads a
    document — an email, PDF, image or text — and works out whether it is a
    receipt or invoice, who the vendor is, how it was paid, what it cost and
-   how it is billed. It runs as a CLI, as an HTTP API and as MCP tools for
-   agents, using the user's own model API keys.
-2. **Spendyard Cloud, a SaaS spend dashboard** for startups. It runs the
-   same binary over a company's receipts, over time and across people, and
-   shows its subscriptions, renewals, seats, AI tool spend and who pays for
+   how it is billed. It scans Gmail and Outlook, keeps what it finds in a
+   local store, and reports one person's spending. It runs as a CLI, as an
+   HTTP API and as MCP tools for agents, using the user's own model API keys.
+2. **Spendyard Cloud, a SaaS spend dashboard** for startups. The same store,
+   shared by a company: everyone's receipts, over time and across people,
+   with its subscriptions, renewals, seats, AI tool spend and who pays for
    what.
 
 The principle behind both: **deterministic where possible, a model where
@@ -51,13 +52,17 @@ their company.
 - Pluggable models; the user brings their own keys. Nothing phones home.
 - One self-contained binary per platform.
 - A built-in way to compare models on labelled data (`spendyard eval`).
+- A local store that is simply there: results are kept in `~/.spendyard`
+  without any setup, and `spendyard report` turns them into spending per
+  vendor and month and a list of subscriptions (§8).
 
 ### Non-goals (binary v1)
 
 - Customer-defined extraction schemas. Spendyard is about spend, not
   generic document extraction.
-- Anything spanning several documents (subscriptions, renewals,
-  duplicates). That is the cloud's job (§10).
+- Sharing, teams and alerts: a company-wide store, edits by several
+  people, cards matched to people, renewal alerts. That is the cloud's job
+  (§11).
 - Its own OCR engine. Text layers are read directly; images and scanned
   pages go to models that can see.
 - Receipts other than software and services (groceries, restaurants,
@@ -162,7 +167,7 @@ Decide which part holds the receipt.
 - Otherwise the first model chooses (§4.3), and if it is unsure, the
   extractor gets every candidate part, labelled, and says which one it used.
 
-The vendor hint comes from the From domain and the vendor catalog (§8), not
+The vendor hint comes from the From domain and the vendor catalog (§9), not
 from a model.
 
 ### 4.3 Decide (cheap first model)
@@ -263,7 +268,7 @@ vendor). JEV is a supported alternative that `eval` measures against it.
 
 ### 5.3 Configuration and keys
 
-`~/.config/spendyard/config.toml`, overridable per run with flags and
+`~/.spendyard/config.toml` (§8), overridable per run with flags and
 environment variables:
 
 ```toml
@@ -368,14 +373,13 @@ Notes:
   still works.
 - **`billing.model`** comes from the lines: subscription lines only →
   `subscription`; usage only → `usage`; both → `mixed`.
-- **`vendor.id`** is the canonical domain from the vendor catalog (§8), so the
+- **`vendor.id`** is the canonical domain from the vendor catalog (§9), so the
   cloud can group by it. `processor` is set when a payment processor (Stripe,
   Paddle, Lemon Squeezy, …) sent the receipt for the real vendor.
 - **`vendor.account`** holds what can tell two subscriptions with the same
   vendor apart.
-- **No content is written to disk.** Neither the input nor the result is
-  logged unless `--debug` is given. The only local state is the mailbox scan
-  cursors (§7, Mailboxes).
+- **Nothing is logged.** Neither the input nor the result is logged unless
+  `--debug` is given. Results are kept only in the store (§8).
 
 The JSON Schema for this output is generated from the Rust types and
 published with every release. `schema_version` changes whenever the output
@@ -394,7 +398,7 @@ cat receipt.txt | spendyard read -
 spendyard read ./inbox/*.eml --jsonl     # one result per line, run in parallel
 spendyard decide message.eml             # first model only
 spendyard parts message.eml              # list what's in the document, no model calls
-spendyard eval ./testdata                # §9
+spendyard eval ./testdata                # §10
 spendyard vendors lookup stripe.com      # vendor catalog
 ```
 
@@ -428,7 +432,7 @@ spendyard login gmail                    # opens the browser; token goes to the 
 spendyard login outlook                  # device code: open a URL, type the code
 spendyard accounts                       # signed-in mailboxes
 
-spendyard scan gmail --since 2026-01-01 --jsonl > receipts.jsonl
+spendyard scan gmail --since 2026-01-01   # results go to the store
 spendyard scan outlook --folder Receipts
 spendyard scan gmail --new               # only messages since the last scan
 spendyard scan imap://mail.example.com   # anything else, over IMAP
@@ -439,15 +443,15 @@ How a scan works:
 1. **Filter on the server first.** Search for likely receipts so most mail
    is never downloaded: Gmail's `q` (`newer_than:1y (receipt OR invoice OR
    faktura OR kvittering OR has:attachment)`), Microsoft Graph's `$search`,
-   and From addresses from the vendor catalog (§8).
+   and From addresses from the vendor catalog (§9).
 2. **Decide on headers and a snippet** where that is enough, then download
    the full message (raw MIME) only for likely receipts.
 3. **Run the normal pipeline**, one result per message, with `source`
    naming the mailbox and message ID.
-4. **Remember what was scanned.** Message IDs and the mailbox's change
-   cursor (Gmail `historyId`, Graph delta link) go to
-   `~/.local/share/spendyard/state.db`, so `--new` reads only new mail. No
-   message content or results are stored there.
+4. **Keep the results and remember what was scanned.** Results, message
+   IDs and the mailbox's change cursor (Gmail `historyId`, Graph delta
+   link) go to the store (§8), so `--new` reads only new mail and a message
+   is never read twice.
 
 Providers:
 
@@ -481,7 +485,87 @@ The MCP server gets a `scan_mailbox` tool on top of the same code, so an
 agent can ask for "receipts from the last month" without handling MIME
 itself.
 
-## 8. Vendor catalog
+## 8. The store
+
+Everything Spendyard finds is kept in one place, with no setup:
+
+```
+~/.spendyard/
+  config.toml        # models, thresholds, mailboxes (§5.3)
+  spendyard.db       # SQLite: documents, results, receipts, scan cursors
+  files/ab/abcd….pdf # originals, only with keep_files = true, named by SHA-256
+```
+
+- **It's just there.** The first command that needs it creates it. Nobody
+  has to pass `--store`.
+- **Somewhere else:** `SPENDYARD_HOME=/path`, or `--home /path` for one
+  run. A project folder or a shared drive works the same way.
+- **Tokens are not in it.** Mailbox and cloud tokens stay in the OS keychain
+  (§7), so the folder can be copied or backed up without leaking access.
+
+### What writes to it
+
+| Command | Stores? |
+|---|---|
+| `spendyard scan …` | Always. That's the point of scanning. |
+| `spendyard read file…` | Yes. `--no-store` for a one-off look. |
+| `spendyard parts`, `decide` | No. They only look. |
+| `spendyard serve`, `mcp` | No, unless the config says `store = true`. They answer other programs and agents, which shouldn't fill your store by surprise. |
+| `spendyard eval` | No. It uses a temporary store. |
+
+### What's in it
+
+SQLite, because the cloud runs on Cloudflare D1, which is SQLite too. The
+local store and the cloud share one schema and the same queries, and moving
+data between them is moving rows.
+
+| Table | Holds |
+|---|---|
+| `documents` | One row per input: SHA-256 of the bytes, source (file path, or mailbox and message ID), format, when it was seen. The SHA-256 and the message ID keep a receipt from being counted twice, however often it is scanned or forwarded. |
+| `results` | The full JSON from §6 for a document, with the Spendyard version, schema version and models used. Re-running with a better model adds a new result; the newest one counts. |
+| `receipts` | The fields reports need, as columns: vendor ID, document type, status, date, total, tax, currency, billing model, interval, period, next renewal, card brand and last four digits. |
+| `lines`, `payments` | Line items (kind, product, quantity, unit price, amount) and payment methods. |
+| `rates` | Exchange rates per day, from the European Central Bank's free daily feed, so spending can be added up in one currency. |
+| `scans` | Mailbox cursors and which messages were already read. |
+| `edits` | Corrections by hand: a fixed vendor, a receipt marked personal or ignored. They win over the model's result and survive re-runs. |
+
+Re-extracting never needs the mailbox again when originals are kept
+(`keep_files`). Without them, `spendyard rescan` fetches the messages again
+by ID.
+
+### Reports
+
+```bash
+spendyard report                          # this month and last, per vendor
+spendyard report --by vendor --months 12
+spendyard report --by month --currency NOK
+spendyard subscriptions                   # vendor, plan, interval, seats, last amount, next renewal, card
+spendyard receipts --vendor cursor.com    # the receipts behind a number
+spendyard edit <receipt> --personal       # leave it out of the company's spend
+```
+
+Each command prints a table, or JSON with `--json`. Reports are plain SQL
+over the store, and the SQL is documented, so `sqlite3 ~/.spendyard/spendyard.db`
+works for anything the commands don't cover.
+
+Subscriptions are worked out from receipts: the same vendor and account
+(`vendor.account`, §6) billed at a regular interval is one subscription. A
+price per seat that changes between two receipts is a price change.
+
+### To the cloud and back
+
+```bash
+spendyard login cloud
+spendyard push                # new and changed rows since the last push
+spendyard push --with-files   # originals too
+spendyard pull                # edits made in the cloud, such as fixed vendors
+```
+
+Rows are matched by document SHA-256 and message ID, so pushing twice, or
+two people pushing the same forwarded receipt, adds it once. Details in
+§11.
+
+## 9. Vendor catalog
 
 A data file in the repo (`vendors/*.toml`), compiled into the binary:
 
@@ -504,7 +588,7 @@ It covers:
 The catalog sets the vendor hint before any model call and makes `vendor.id`
 consistent. Contributions improve results for everyone.
 
-## 9. Evaluation
+## 10. Evaluation
 
 ```bash
 spendyard eval ./testdata \
@@ -522,22 +606,23 @@ spendyard eval ./testdata \
   and processor vs vendor.
 - Any change to prompts, the schema or defaults comes with an `eval` run.
 
-## 10. Spendyard Cloud
+## 11. Spendyard Cloud
 
-The dashboard does what needs many documents over time. The binary does
-everything about a single document.
+The binary is complete for one person: it reads, scans, keeps and reports.
+The cloud sells **sharing, teams and always-on scanning**, not the
+arithmetic. A founder alone gets real value for free, which is how
+Spendyard spreads; a company that wants everyone's receipts in one place
+pays.
 
 | Open binary | Cloud |
 |---|---|
-| Reading every format | Receipt sources: a forwarding address, a shared inbox, Gmail and Microsoft 365 |
-| Decide and extract | Receipt storage and search |
-| Validation and evidence | Subscriptions put together from receipts (vendor, account, plan, interval) |
-| Vendor catalog | Renewal calendar and alerts ("Linear renews yearly in 14 days") |
-| CLI, `serve`, `mcp`, `eval` | Price changes ("Cursor went from $20 to $40 a seat") |
-| | AI tool spend: seats vs usage month by month, per tool |
-| | Cards' last four digits matched to people; spend per person and team |
-| | Duplicates across forwarded copies; overlapping tools |
-| | Expense exports for accounting (Fiken, Tripletex, Xero, QuickBooks) |
+| Reading every format; decide and extract | A shared store for the company: everyone's receipts, duplicates across people removed |
+| Validation and evidence; vendor catalog | Edits by several people, with history |
+| Gmail, Outlook and IMAP scans from your machine | Scanning around the clock on the server; a forwarding address; shared inboxes |
+| One person's store (§8) | Cards' last four digits matched to people; spend per person and team |
+| Spending per vendor and month; subscriptions; price changes | Renewal calendar and alerts ("Linear renews yearly in 14 days"); the weekly email |
+| `push` and `pull` | AI tool spend for the whole company: seats vs usage per tool and month |
+| CLI, `serve`, `mcp`, `eval` | Expense exports for accounting (Fiken, Tripletex, Xero, QuickBooks) |
 | | Later: seats paid for vs used, by connecting Google Workspace, Microsoft 365 or GitHub |
 
 ### Cloud v1 for startups
@@ -563,14 +648,19 @@ own, and send results to the cloud:
 
 ```bash
 spendyard login cloud                    # device code: open a URL, type the code
-spendyard scan gmail --new --push        # read locally, send results
-spendyard push receipts.jsonl            # send results produced earlier
-spendyard push invoice.pdf --with-file   # also store the original in the cloud
+spendyard scan gmail --new --push        # scan into the local store, then push
+spendyard push                           # new and changed rows from the store (§8)
+spendyard push --with-files              # originals too
+spendyard pull                           # edits made in the cloud
 ```
 
-- By default only **results** are sent. Documents stay where they are,
-  which suits companies that won't hand their mailbox to a SaaS.
-- `--with-file` also uploads the original, so the cloud can show it.
+- By default only **rows** are sent: results, receipts, lines and edits.
+  Documents stay where they are, which suits companies that won't hand
+  their mailbox to a SaaS.
+- `--with-files` also uploads the originals, so the cloud can show them.
+- The cloud's database uses the store's schema (both are SQLite), so a push
+  is rows going from one to the other, matched by document SHA-256 and
+  message ID.
 - The cloud might also run some of the work for the CLI: its own model keys
   (no need to bring your own), a vendor catalog newer than the binary's, or
   receipts stored for search. These are services the CLI calls when you are
@@ -581,7 +671,7 @@ Not part of v1; the API for it is designed with Cloud C1.
 Cloud data handling (retention, deletion, subprocessors) gets its own
 document before launch.
 
-## 11. Milestones
+## 12. Milestones
 
 | Milestone | Scope |
 |---|---|
@@ -591,13 +681,14 @@ document before launch.
 | **M3: Decide** | `Decider` trait; `clef-flash`, `clef`, `jev`, `systemone`; routing and thresholds; LLM fallback. |
 | **M4: Eval** | `spendyard eval`, first 200 labelled documents, defaults chosen from the results. |
 | **M5: Serve and MCP** | `spendyard serve` and `spendyard mcp`; `exec` provider. |
-| **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; scan state; `scan_mailbox` MCP tool; Gmail setup guide. |
+| **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; `scan_mailbox` MCP tool; Gmail setup guide. |
+| **M5c: Store and reports** | `~/.spendyard` with SQLite (`rusqlite`, SQLite compiled in); `read` and `scan` store results; `report`, `subscriptions`, `receipts`, `edit`; exchange rates. Could come before M5b, fed by `read` on files. |
 | **M6: Vendor catalog** | First 200 vendors, AI tools first; processor rules. |
 | **M7: Public release** | Docs, Homebrew, crates.io, announcement. |
 | **Cloud C1** | Forwarding address, storage, subscriptions, renewals, AI spend, weekly email. |
-| **Cloud C2** | `spendyard login cloud` and `push`; cloud services the CLI can call (models, catalog, storage); a verified Google app for the cloud. |
+| **Cloud C2** | `spendyard login cloud`, `push` and `pull` against the shared store; cloud services the CLI can call (models, catalog, storage); a verified Google app for the cloud. |
 
-## 12. Open questions
+## 13. Open questions
 
 - Name and home on GitHub (organization, crate name).
 - Does `lopdf` hold up on real receipts (§3.1)?
@@ -606,5 +697,7 @@ document before launch.
 - Gmail for the CLI: is "bring your own OAuth client" acceptable to
   startups, or is it worth paying for Google's verification early?
 - Default thresholds per question, set from the `eval` results.
+- Where the line goes between free reports and the cloud: is "price
+  changes" free, and is the weekly email a cloud-only feature?
 - Cloud stack: Cloudflare Workers with the WebAssembly core is the
   assumption. Confirm when Cloud C1 starts.

@@ -2,7 +2,7 @@
 
 An open-source Rust binary that reads receipts and invoices, plus (later) a
 SaaS spend dashboard. The design is in [docs/design.md](docs/design.md);
-milestones are in §11 there.
+milestones are in §12 there.
 
 ## Layout
 
