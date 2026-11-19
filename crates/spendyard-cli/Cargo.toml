@@ -1,0 +1,19 @@
+[package]
+name = "spendyard"
+description = "Reads receipts and invoices from emails, PDFs, images, text and mailboxes, and works out what you're paying for."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "spendyard"
+path = "src/main.rs"
+
+[dependencies]
+spendyard-core.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true
