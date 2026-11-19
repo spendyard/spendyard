@@ -1,0 +1,4 @@
+name = "Redis"
+aliases = ["Redis Ltd", "Redis Labs"]
+category = "data"
+pricing = ["usage"]

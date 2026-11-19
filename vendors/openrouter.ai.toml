@@ -1,0 +1,4 @@
+name = "OpenRouter"
+aliases = ["OpenRouter, Inc."]
+category = "ai"
+pricing = ["usage"]

@@ -1,0 +1,4 @@
+name = "AccessOwl"
+domains = ["accessowl.io"]
+category = "security"
+pricing = ["seat"]

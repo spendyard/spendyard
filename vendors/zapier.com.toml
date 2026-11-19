@@ -1,0 +1,4 @@
+name = "Zapier"
+aliases = ["Zapier, Inc."]
+category = "productivity"
+pricing = ["plan", "usage"]

@@ -1,0 +1,4 @@
+name = "Expo"
+aliases = ["650 Industries, Inc."]
+category = "dev-tools"
+pricing = ["plan", "usage"]

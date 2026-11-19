@@ -1,0 +1,5 @@
+name = "Gitpod"
+aliases = ["Gitpod GmbH"]
+domains = ["ona.com"]
+category = "dev-tools"
+pricing = ["usage"]

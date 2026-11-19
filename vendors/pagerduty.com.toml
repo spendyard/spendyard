@@ -1,0 +1,4 @@
+name = "PagerDuty"
+aliases = ["PagerDuty, Inc."]
+category = "observability"
+pricing = ["seat"]

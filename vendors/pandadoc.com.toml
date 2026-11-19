@@ -1,0 +1,4 @@
+name = "PandaDoc"
+aliases = ["PandaDoc Inc."]
+category = "sales"
+pricing = ["seat"]

@@ -1,0 +1,4 @@
+name = "xAI"
+aliases = ["X.AI Corp", "X.AI LLC"]
+category = "ai"
+pricing = ["usage"]

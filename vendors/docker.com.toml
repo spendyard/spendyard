@@ -1,0 +1,4 @@
+name = "Docker"
+aliases = ["Docker, Inc."]
+category = "dev-tools"
+pricing = ["seat"]

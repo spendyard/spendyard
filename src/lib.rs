@@ -6,6 +6,7 @@
 //! the library: it moves into its own WebAssembly-ready crate when the cloud
 //! work starts.
 
+pub mod catalog;
 pub mod decide;
 pub mod document;
 pub mod eval;
@@ -120,6 +121,10 @@ pub async fn understand(
         return Err(ExtractError::NothingToRead(reason));
     }
 
+    if let Some(note) = known_sender(document) {
+        prompt.add_note("known-sender", &note);
+    }
+
     if let Some(decision) = &decision {
         prompt.add_hints(&decision.hints());
     }
@@ -147,6 +152,25 @@ pub async fn understand(
     result.meta.ms = started.elapsed().as_millis() as u64;
 
     Ok(result)
+}
+
+/// "Anthropic (anthropic.com, ai)" when the email's sender is a vendor the
+/// catalog knows and not a payment processor.
+fn known_sender(document: &Document) -> Option<String> {
+    let from = document.headers.as_ref()?.from.as_deref()?;
+
+    let catalog = catalog::catalog();
+
+    if catalog.processor(from).is_some() {
+        return None;
+    }
+
+    let vendor = catalog.by_domain(from)?;
+
+    Some(format!(
+        "{} ({}, {})",
+        vendor.name, vendor.id, vendor.category
+    ))
 }
 
 fn attach_decision(result: &mut ReadResult, decision: &decide::Decision, pipeline: &Pipeline<'_>) {

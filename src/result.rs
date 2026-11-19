@@ -80,12 +80,25 @@ pub struct DocumentSummary {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Vendor {
-    /// The vendor's domain, the key the store and the cloud group by. The
-    /// vendor catalog makes this canonical later (M6).
+    /// The vendor's ID: its catalog ID when the catalog knows it, else the
+    /// domain the receipt shows. The key the store and the cloud group by.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
 
+    /// The catalog's name when known, else the name on the receipt.
     pub name: String,
+
+    /// The name as the receipt prints it, when it differs from `name`:
+    /// "RealtimeBoard Inc. dba Miro" for Miro.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legal_name: Option<String>,
+
+    /// The catalog's category: ai, dev-tools, infrastructure, …
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+
+    /// Whether the vendor was found in the catalog.
+    pub known: bool,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub processor: Option<String>,
@@ -275,7 +288,7 @@ pub fn assemble(
 
     ReadResult {
         document: summary,
-        vendor: vendor(output.vendor),
+        vendor: vendor(output.vendor, sender(document).as_deref()),
         payments: output.payments.into_iter().map(normalize_payment).collect(),
         amount: normalize_amount(output.amount),
         billing,
@@ -346,12 +359,53 @@ fn billing(billing: crate::extract::schema::Billing, lines: &[Line]) -> Option<B
 }
 
 /// `None` when the model found no vendor.
-fn vendor(vendor: crate::extract::schema::Vendor) -> Option<Vendor> {
+/// The email's sender address, if the document is an email.
+fn sender(document: &Document) -> Option<String> {
+    document
+        .headers
+        .as_ref()
+        .and_then(|headers| headers.from.clone())
+}
+
+/// The vendor, made canonical with the catalog: by the domain the model
+/// read, then the name, then the sender's domain (unless the sender is a
+/// payment processor sending for someone else).
+fn vendor(vendor: crate::extract::schema::Vendor, sender: Option<&str>) -> Option<Vendor> {
     let name = present(Some(vendor.name))?;
 
+    let domain = present(vendor.domain);
+
+    let catalog = crate::catalog::catalog();
+
+    let sender_vendor = sender
+        .filter(|sender| catalog.processor(sender).is_none())
+        .and_then(|sender| catalog.by_domain(sender));
+
+    let known = catalog
+        .find(domain.as_deref(), Some(&name))
+        .or(sender_vendor);
+
+    let (id, display_name, legal_name, category) = match known {
+        Some(entry) => {
+            let legal_name = (name != entry.name).then(|| name.clone());
+
+            (
+                Some(entry.id.clone()),
+                entry.name.clone(),
+                legal_name,
+                Some(entry.category.clone()),
+            )
+        }
+
+        None => (domain.as_deref().and_then(vendor_id), name, None, None),
+    };
+
     let vendor = Vendor {
-        id: present(vendor.domain).as_deref().and_then(vendor_id),
-        name,
+        id,
+        name: display_name,
+        legal_name,
+        category,
+        known: known.is_some(),
         processor: present(vendor.processor),
         account: Account {
             email: present(vendor.account_email),

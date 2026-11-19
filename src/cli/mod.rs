@@ -17,3 +17,4 @@ pub mod pretty;
 pub mod read;
 pub mod reports;
 pub mod store;
+pub mod vendors;

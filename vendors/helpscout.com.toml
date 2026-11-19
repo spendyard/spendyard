@@ -1,0 +1,4 @@
+name = "Help Scout"
+aliases = ["Help Scout PBC"]
+category = "support"
+pricing = ["seat"]

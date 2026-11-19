@@ -1,0 +1,4 @@
+name = "Brex"
+aliases = ["Brex Inc."]
+category = "finance"
+pricing = ["plan"]

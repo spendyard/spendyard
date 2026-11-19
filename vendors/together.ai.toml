@@ -1,0 +1,4 @@
+name = "Together AI"
+aliases = ["Together Computer, Inc."]
+category = "ai"
+pricing = ["usage"]

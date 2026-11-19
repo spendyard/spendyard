@@ -1,0 +1,4 @@
+name = "Twilio"
+aliases = ["Twilio Inc.", "Twilio Ireland Limited"]
+category = "communication"
+pricing = ["usage"]

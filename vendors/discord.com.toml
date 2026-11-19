@@ -1,0 +1,4 @@
+name = "Discord"
+aliases = ["Discord Inc."]
+category = "communication"
+pricing = ["plan"]

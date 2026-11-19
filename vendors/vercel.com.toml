@@ -1,0 +1,4 @@
+name = "Vercel"
+aliases = ["Vercel Inc."]
+category = "infrastructure"
+pricing = ["seat", "usage"]

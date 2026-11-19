@@ -1,0 +1,4 @@
+name = "Honeycomb"
+aliases = ["Hound Technology, Inc."]
+category = "observability"
+pricing = ["usage"]

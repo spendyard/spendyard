@@ -1,0 +1,4 @@
+name = "Mixpanel"
+aliases = ["Mixpanel, Inc."]
+category = "analytics"
+pricing = ["usage"]

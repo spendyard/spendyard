@@ -1,0 +1,5 @@
+name = "GitHub"
+aliases = ["GitHub, Inc."]
+domains = ["githubusercontent.com", "npmjs.com"]
+category = "dev-tools"
+pricing = ["seat", "usage"]

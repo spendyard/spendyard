@@ -1,0 +1,5 @@
+name = "Lambda"
+aliases = ["Lambda, Inc.", "Lambda Labs"]
+domains = ["lambdalabs.com"]
+category = "ai"
+pricing = ["usage"]

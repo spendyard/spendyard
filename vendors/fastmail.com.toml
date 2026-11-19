@@ -1,0 +1,4 @@
+name = "Fastmail"
+aliases = ["Fastmail Pty Ltd"]
+category = "communication"
+pricing = ["seat"]

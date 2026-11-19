@@ -1,0 +1,4 @@
+name = "Hugging Face"
+aliases = ["Hugging Face, Inc."]
+category = "ai"
+pricing = ["seat", "usage"]

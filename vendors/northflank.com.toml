@@ -1,0 +1,4 @@
+name = "Northflank"
+aliases = ["Northflank Ltd"]
+category = "infrastructure"
+pricing = ["usage"]

@@ -1,0 +1,5 @@
+name = "Postman"
+aliases = ["Postman, Inc."]
+domains = ["getpostman.com"]
+category = "dev-tools"
+pricing = ["seat"]

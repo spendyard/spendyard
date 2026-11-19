@@ -1,0 +1,4 @@
+name = "Civo"
+aliases = ["Civo Ltd", "Civo Limited"]
+category = "infrastructure"
+pricing = ["usage"]

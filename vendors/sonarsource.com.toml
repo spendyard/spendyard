@@ -1,0 +1,5 @@
+name = "SonarSource"
+aliases = ["SonarSource SA"]
+domains = ["sonarcloud.io"]
+category = "dev-tools"
+pricing = ["plan"]

@@ -1,0 +1,4 @@
+name = "Proton"
+aliases = ["Proton AG"]
+category = "communication"
+pricing = ["seat"]

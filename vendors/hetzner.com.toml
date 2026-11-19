@@ -1,0 +1,5 @@
+name = "Hetzner"
+aliases = ["Hetzner Online GmbH"]
+domains = ["hetzner.de"]
+category = "infrastructure"
+pricing = ["usage"]

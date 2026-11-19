@@ -1,0 +1,4 @@
+name = "Make"
+aliases = ["Celonis", "Integromat"]
+category = "productivity"
+pricing = ["plan", "usage"]

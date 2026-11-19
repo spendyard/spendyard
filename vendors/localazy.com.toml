@@ -1,0 +1,4 @@
+name = "Localazy"
+aliases = ["Localazy s.r.o."]
+category = "dev-tools"
+pricing = ["plan"]

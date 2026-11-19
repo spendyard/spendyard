@@ -1,0 +1,5 @@
+name = "Freshworks"
+aliases = ["Freshworks Inc."]
+domains = ["freshdesk.com"]
+category = "support"
+pricing = ["seat"]

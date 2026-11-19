@@ -1,0 +1,4 @@
+name = "Namespace"
+aliases = ["Namespace Labs"]
+category = "dev-tools"
+pricing = ["usage"]

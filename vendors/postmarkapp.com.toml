@@ -1,0 +1,4 @@
+name = "Postmark"
+aliases = ["Wildbit, LLC"]
+category = "dev-tools"
+pricing = ["plan", "usage"]

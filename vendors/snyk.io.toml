@@ -1,0 +1,4 @@
+name = "Snyk"
+aliases = ["Snyk Ltd"]
+category = "security"
+pricing = ["seat"]

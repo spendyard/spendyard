@@ -1,0 +1,4 @@
+name = "Linode"
+aliases = ["Akamai Technologies, Inc."]
+category = "infrastructure"
+pricing = ["usage"]

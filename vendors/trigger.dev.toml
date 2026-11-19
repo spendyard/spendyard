@@ -1,0 +1,4 @@
+name = "Trigger.dev"
+aliases = ["Trigger.dev Inc."]
+category = "dev-tools"
+pricing = ["usage", "plan"]

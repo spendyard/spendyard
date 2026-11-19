@@ -1,0 +1,4 @@
+name = "Calendly"
+aliases = ["Calendly LLC"]
+category = "productivity"
+pricing = ["seat"]

@@ -1,0 +1,4 @@
+name = "Ramp"
+aliases = ["Ramp Business Corporation"]
+category = "finance"
+pricing = ["plan"]

@@ -1,0 +1,4 @@
+name = "Snowflake"
+aliases = ["Snowflake Inc."]
+category = "data"
+pricing = ["usage"]

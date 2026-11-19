@@ -1,0 +1,4 @@
+name = "Metabase"
+aliases = ["Metabase Inc"]
+category = "analytics"
+pricing = ["seat", "plan"]

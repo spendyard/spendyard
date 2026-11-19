@@ -1,0 +1,4 @@
+name = "Zendesk"
+aliases = ["Zendesk, Inc."]
+category = "support"
+pricing = ["seat"]

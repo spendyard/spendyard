@@ -1,0 +1,4 @@
+name = "Knock"
+aliases = ["Knock Labs Inc."]
+category = "dev-tools"
+pricing = ["usage"]

@@ -1,0 +1,4 @@
+name = "Fivetran"
+aliases = ["Fivetran Inc."]
+category = "data"
+pricing = ["usage"]

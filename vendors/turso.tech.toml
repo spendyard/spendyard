@@ -1,0 +1,4 @@
+name = "Turso"
+aliases = ["ChiselStrike, Inc."]
+category = "data"
+pricing = ["usage", "plan"]

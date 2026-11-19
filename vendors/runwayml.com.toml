@@ -1,0 +1,4 @@
+name = "Runway"
+aliases = ["Runway AI, Inc."]
+category = "ai"
+pricing = ["plan", "usage"]

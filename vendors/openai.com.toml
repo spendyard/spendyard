@@ -1,0 +1,5 @@
+name = "OpenAI"
+aliases = ["OpenAI, LLC", "OpenAI OpCo, LLC", "OpenAI Ireland Ltd"]
+domains = ["chatgpt.com"]
+category = "ai"
+pricing = ["usage", "seat"]

@@ -1,0 +1,4 @@
+name = "SigNoz"
+aliases = ["SigNoz Inc."]
+category = "observability"
+pricing = ["usage"]

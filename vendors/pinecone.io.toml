@@ -1,0 +1,4 @@
+name = "Pinecone"
+aliases = ["Pinecone Systems, Inc."]
+category = "data"
+pricing = ["usage"]

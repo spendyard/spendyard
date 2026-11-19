@@ -1,0 +1,4 @@
+name = "Replit"
+aliases = ["Replit, Inc."]
+category = "ai"
+pricing = ["plan", "usage"]

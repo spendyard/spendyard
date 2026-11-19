@@ -1,0 +1,5 @@
+name = "Anthropic"
+aliases = ["Anthropic, PBC"]
+domains = ["claude.com", "claude.ai"]
+category = "ai"
+pricing = ["usage", "seat"]

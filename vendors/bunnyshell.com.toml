@@ -1,0 +1,4 @@
+name = "Bunnyshell"
+aliases = ["Bunnyshell SRL"]
+category = "infrastructure"
+pricing = ["usage"]

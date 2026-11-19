@@ -1,0 +1,4 @@
+name = "UpCloud"
+aliases = ["UpCloud Ltd"]
+category = "infrastructure"
+pricing = ["usage"]

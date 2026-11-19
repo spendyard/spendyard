@@ -1,0 +1,4 @@
+name = "Databricks"
+aliases = ["Databricks, Inc."]
+category = "data"
+pricing = ["usage"]

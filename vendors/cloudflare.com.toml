@@ -1,0 +1,4 @@
+name = "Cloudflare"
+aliases = ["Cloudflare, Inc.", "Cloudflare Ltd"]
+category = "infrastructure"
+pricing = ["plan", "usage"]

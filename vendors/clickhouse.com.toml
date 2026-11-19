@@ -1,0 +1,4 @@
+name = "ClickHouse"
+aliases = ["ClickHouse, Inc."]
+category = "data"
+pricing = ["usage"]

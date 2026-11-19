@@ -1,0 +1,4 @@
+name = "Tripletex"
+aliases = ["Tripletex AS"]
+category = "finance"
+pricing = ["plan"]

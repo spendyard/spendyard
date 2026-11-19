@@ -1,0 +1,4 @@
+name = "Chromatic"
+aliases = ["Chroma Software, Inc."]
+category = "dev-tools"
+pricing = ["plan", "usage"]

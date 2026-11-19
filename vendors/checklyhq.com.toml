@@ -1,0 +1,4 @@
+name = "Checkly"
+aliases = ["Checkly Inc."]
+category = "observability"
+pricing = ["usage"]

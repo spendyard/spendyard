@@ -1,0 +1,5 @@
+name = "Front"
+aliases = ["FrontApp, Inc."]
+domains = ["frontapp.com"]
+category = "support"
+pricing = ["seat"]

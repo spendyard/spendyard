@@ -1,0 +1,4 @@
+name = "Render"
+aliases = ["Render Services, Inc"]
+category = "infrastructure"
+pricing = ["usage", "seat"]

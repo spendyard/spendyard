@@ -1,0 +1,4 @@
+name = "LinkedIn"
+aliases = ["LinkedIn Ireland Unlimited Company", "LinkedIn Corporation"]
+category = "sales"
+pricing = ["seat", "usage"]

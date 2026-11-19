@@ -1,0 +1,4 @@
+name = "PlanetScale"
+aliases = ["PlanetScale, Inc."]
+category = "data"
+pricing = ["usage", "plan"]

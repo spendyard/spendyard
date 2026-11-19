@@ -1,0 +1,4 @@
+name = "Fiken"
+aliases = ["Fiken AS"]
+category = "finance"
+pricing = ["plan"]

@@ -1,0 +1,4 @@
+name = "Buildkite"
+aliases = ["Buildkite Pty Ltd"]
+category = "dev-tools"
+pricing = ["seat", "usage"]

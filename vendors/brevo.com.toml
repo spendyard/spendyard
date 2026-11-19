@@ -1,0 +1,5 @@
+name = "Brevo"
+aliases = ["Sendinblue"]
+domains = ["sendinblue.com"]
+category = "marketing"
+pricing = ["plan"]

@@ -1,0 +1,4 @@
+name = "ElevenLabs"
+aliases = ["Eleven Labs Inc."]
+category = "ai"
+pricing = ["plan", "usage"]

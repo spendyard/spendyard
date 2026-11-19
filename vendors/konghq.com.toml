@@ -1,0 +1,5 @@
+name = "Kong"
+aliases = ["Kong Inc."]
+domains = ["insomnia.rest"]
+category = "dev-tools"
+pricing = ["seat", "usage"]

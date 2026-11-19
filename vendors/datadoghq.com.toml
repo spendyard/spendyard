@@ -1,0 +1,5 @@
+name = "Datadog"
+aliases = ["Datadog, Inc."]
+domains = ["datadog.com"]
+category = "observability"
+pricing = ["usage"]

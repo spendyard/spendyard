@@ -1,0 +1,5 @@
+name = "Encore"
+aliases = ["Encore Technologies"]
+domains = ["encore.cloud"]
+category = "infrastructure"
+pricing = ["usage", "seat"]

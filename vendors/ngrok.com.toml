@@ -1,0 +1,4 @@
+name = "ngrok"
+aliases = ["ngrok Inc."]
+category = "dev-tools"
+pricing = ["seat", "usage"]

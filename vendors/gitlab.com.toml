@@ -1,0 +1,4 @@
+name = "GitLab"
+aliases = ["GitLab Inc."]
+category = "dev-tools"
+pricing = ["seat"]

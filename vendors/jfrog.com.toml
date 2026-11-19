@@ -1,0 +1,4 @@
+name = "JFrog"
+aliases = ["JFrog Ltd"]
+category = "dev-tools"
+pricing = ["usage"]

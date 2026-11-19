@@ -1,0 +1,4 @@
+name = "CodeRabbit"
+aliases = ["CodeRabbit Inc."]
+category = "ai"
+pricing = ["seat"]

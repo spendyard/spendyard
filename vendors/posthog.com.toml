@@ -1,0 +1,4 @@
+name = "PostHog"
+aliases = ["PostHog Inc."]
+category = "analytics"
+pricing = ["usage"]

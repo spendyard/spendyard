@@ -1,0 +1,4 @@
+name = "DocuSign"
+aliases = ["DocuSign, Inc."]
+category = "legal"
+pricing = ["seat"]

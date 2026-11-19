@@ -1,0 +1,5 @@
+name = "Windsurf"
+aliases = ["Exafunction, Inc.", "Codeium"]
+domains = ["codeium.com"]
+category = "ai"
+pricing = ["seat"]

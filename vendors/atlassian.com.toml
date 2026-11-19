@@ -1,0 +1,5 @@
+name = "Atlassian"
+aliases = ["Atlassian Pty Ltd", "Atlassian Corporation", "Atlassian US, Inc."]
+domains = ["atlassian.net", "trello.com", "bitbucket.org", "statuspage.io", "opsgenie.com"]
+category = "productivity"
+pricing = ["seat"]

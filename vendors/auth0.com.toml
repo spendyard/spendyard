@@ -1,0 +1,3 @@
+name = "Auth0"
+category = "security"
+pricing = ["usage", "plan"]

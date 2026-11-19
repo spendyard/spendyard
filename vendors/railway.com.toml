@@ -1,0 +1,5 @@
+name = "Railway"
+aliases = ["Railway Corporation"]
+domains = ["railway.app"]
+category = "infrastructure"
+pricing = ["usage", "seat"]

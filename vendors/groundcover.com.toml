@@ -1,0 +1,4 @@
+name = "groundcover"
+aliases = ["groundcover inc"]
+category = "observability"
+pricing = ["usage"]

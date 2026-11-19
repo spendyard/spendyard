@@ -1,0 +1,4 @@
+name = "Fly.io"
+aliases = ["Fly dot io, Inc.", "Fly.io, Inc."]
+category = "infrastructure"
+pricing = ["usage"]

@@ -1,0 +1,4 @@
+name = "LangChain"
+aliases = ["LangChain, Inc."]
+category = "ai"
+pricing = ["seat", "usage"]

@@ -1,0 +1,4 @@
+name = "MongoDB"
+aliases = ["MongoDB, Inc.", "MongoDB Limited"]
+category = "data"
+pricing = ["usage"]

@@ -1,0 +1,4 @@
+name = "BrowserStack"
+aliases = ["BrowserStack Inc.", "BrowserStack Limited"]
+category = "dev-tools"
+pricing = ["seat"]

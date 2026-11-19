@@ -1,0 +1,4 @@
+name = "Groq"
+aliases = ["Groq, Inc."]
+category = "ai"
+pricing = ["usage"]

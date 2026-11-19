@@ -1,0 +1,5 @@
+name = "OVHcloud"
+aliases = ["OVH SAS", "OVH Hosting"]
+domains = ["ovh.com", "ovh.net"]
+category = "infrastructure"
+pricing = ["usage"]

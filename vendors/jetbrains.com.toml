@@ -1,0 +1,4 @@
+name = "JetBrains"
+aliases = ["JetBrains s.r.o."]
+category = "dev-tools"
+pricing = ["seat"]

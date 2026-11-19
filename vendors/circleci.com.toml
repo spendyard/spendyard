@@ -1,0 +1,4 @@
+name = "CircleCI"
+aliases = ["Circle Internet Services, Inc."]
+category = "dev-tools"
+pricing = ["usage", "plan"]

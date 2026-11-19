@@ -1,0 +1,4 @@
+name = "Pulumi"
+aliases = ["Pulumi Corporation"]
+category = "infrastructure"
+pricing = ["usage", "seat"]

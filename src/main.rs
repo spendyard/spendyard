@@ -302,6 +302,13 @@ enum Command {
         note: Option<String>,
     },
 
+    /// The vendor catalog: lookups, lists, and vendors in your store it
+    /// doesn't know yet.
+    Vendors {
+        #[command(subcommand)]
+        action: Option<VendorsAction>,
+    },
+
     /// Show where the config lives, the models in effect and which keys
     /// are set.
     Config {
@@ -311,6 +318,21 @@ enum Command {
 
     /// Print version details.
     Version,
+}
+
+#[derive(Subcommand)]
+enum VendorsAction {
+    /// Find a vendor by name, domain or email address.
+    Lookup { query: String },
+
+    /// List vendors, optionally of one category.
+    List {
+        #[arg(long)]
+        category: Option<String>,
+    },
+
+    /// Vendors on receipts in your store that the catalog lacks.
+    Unknown,
 }
 
 #[derive(Subcommand)]
@@ -569,6 +591,32 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
             };
 
             mcp.await.map(|()| ExitCode::SUCCESS)
+        }
+
+        Command::Vendors { action } => {
+            let done = match action {
+                None => {
+                    cli::vendors::summary();
+
+                    Ok(())
+                }
+
+                Some(VendorsAction::Lookup { query }) => {
+                    cli::vendors::lookup(&query);
+
+                    Ok(())
+                }
+
+                Some(VendorsAction::List { category }) => {
+                    cli::vendors::list(category.as_deref());
+
+                    Ok(())
+                }
+
+                Some(VendorsAction::Unknown) => cli::vendors::unknown(),
+            };
+
+            done.map(|()| ExitCode::SUCCESS)
         }
 
         Command::Config { action } => {

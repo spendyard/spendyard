@@ -1,0 +1,5 @@
+name = "Supabase"
+aliases = ["Supabase Pte. Ltd.", "Supabase Inc."]
+domains = ["supabase.io"]
+category = "data"
+pricing = ["plan", "usage"]

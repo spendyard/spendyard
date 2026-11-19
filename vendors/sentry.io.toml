@@ -1,0 +1,5 @@
+name = "Sentry"
+aliases = ["Functional Software, Inc."]
+domains = ["getsentry.com"]
+category = "observability"
+pricing = ["plan", "usage"]

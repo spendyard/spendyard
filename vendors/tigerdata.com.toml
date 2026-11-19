@@ -1,0 +1,5 @@
+name = "Tiger Data"
+aliases = ["Timescale, Inc."]
+domains = ["timescale.com"]
+category = "data"
+pricing = ["usage"]

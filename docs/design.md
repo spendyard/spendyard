@@ -462,7 +462,7 @@ spendyard read ./inbox/*.eml --jsonl     # one result per line, run in parallel
 spendyard decide message.eml             # first model only
 spendyard parts message.eml              # list what's in the document, no model calls
 spendyard eval ./testdata                # §10
-spendyard vendors lookup stripe.com      # vendor catalog
+spendyard vendors lookup stripe.com      # vendor catalog (§9)
 ```
 
 Exit codes: 0 receipt or invoice found, 1 none found, 2 error.
@@ -706,26 +706,49 @@ two people pushing the same forwarded receipt, adds it once. Details in
 
 ## 9. Vendor catalog
 
-A data file in the repo (`vendors/*.toml`), compiled into the binary:
+One file per vendor in `vendors/`, named by the vendor's ID (its main
+domain), compiled into the binary by `build.rs`:
 
 ```toml
-[cursor]
-id      = "cursor.com"
-name    = "Cursor"
-domains = ["cursor.com", "cursor.sh", "anysphere.inc"]
-category = "ai-dev-tools"
-pricing = ["seat", "usage"]
+# vendors/anthropic.com.toml
+name = "Anthropic"
+aliases = ["Anthropic, PBC"]
+domains = ["claude.com", "claude.ai"]
+category = "ai"
+pricing = ["usage", "seat"]
 ```
 
-It covers:
+One file per vendor keeps contributions small and conflict-free. Payment
+processors and billing platforms (Stripe, Paddle, Lemon Squeezy, Orb,
+Chargebee, Apple, …) are in `vendors/_processors.toml`: their domains never
+identify a vendor. If the catalog grows its own crowd of contributors, it
+can move to its own repo without changing the format.
 
-- vendors: canonical ID, name, domains, aliases and category
-- payment processors (Stripe, Paddle, Lemon Squeezy, FastSpring, Chargebee,
-  Apple, Google Play) and how to find the real vendor on their receipts
-- the From addresses each vendor sends receipts from
+**As built (M6).** 248 vendors (AI tools first, then every vendor on the
+first real mailbox, then common SaaS) and 18 processors. It is used in
+three places:
 
-The catalog sets the vendor hint before any model call and makes `vendor.id`
-consistent. Contributions improve results for everyone.
+- **Results.** `vendor.id` becomes the catalog ID, found by the domain the
+  model read, then the name (ignoring legal suffixes, and using the trading
+  name after "dba" or "t/a"), then the sender's domain unless the sender is
+  a processor. `vendor.name` becomes the catalog's name, the name as
+  printed is kept as `vendor.legal_name`, and `vendor.category` and
+  `vendor.known` are added.
+- **The prompt.** When the email's sender is a known vendor, the extractor
+  gets a `<known-sender>` note.
+- **Reports.** Receipts group by catalog ID, already-stored ones included
+  (the lookup happens when reporting, so nothing needs reading again).
+  Names the catalog doesn't know group by their cleaned-up name.
+
+`spendyard vendors` summarizes the catalog, `vendors lookup <name, domain
+or address>` finds one, `vendors list --category ai` lists, and `vendors
+unknown` lists vendors on stored receipts the catalog lacks: the to-do list
+for contributions. On the first real store it found 5, none of them SaaS.
+
+**Logos** aren't stored. A vendor's ID is its domain, so the dashboard
+fetches its icon from `https://www.google.com/s2/favicons?domain={id}&sz={size}`.
+In the cloud that goes through our own cached proxy, so viewers' browsers
+don't tell Google which vendors a company uses.
 
 ## 10. Evaluation
 
@@ -876,7 +899,7 @@ document before launch.
 | **M5: MCP and exec** | `spendyard mcp`; `exec` provider. Done; `serve` was dropped (the HTTP API is the cloud's). |
 | **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; `scan_mailbox` MCP tool; Gmail setup guide. Outlook done and run on a real mailbox; still to do: Gmail, IMAP, registering Spendyard's own Entra app. |
 | **M5c: Store and reports** | `~/.spendyard` with SQLite (`rusqlite`, SQLite compiled in); `read` and `scan` store results; `report`, `subscriptions`, `receipts`, `edit`; exchange rates. Done; still to do: grouping by account, price changes. |
-| **M6: Vendor catalog** | First 200 vendors, AI tools first; processor rules. |
+| **M6: Vendor catalog** | First 200 vendors, AI tools first; processor rules. Done: 248 vendors, 18 processors, `spendyard vendors`. |
 | **M7: Public release** | Docs, Homebrew, crates.io, announcement. |
 | **Cloud C1** | Forwarding address, storage, subscriptions, renewals, AI spend, weekly email. |
 | **Cloud C2** | `spendyard login cloud`, `push` and `pull` against the shared store; cloud services the CLI can call (models, catalog, storage); a verified Google app for the cloud. |

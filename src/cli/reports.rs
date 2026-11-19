@@ -44,28 +44,44 @@ fn rows(store: &Store) -> Result<Vec<Row>> {
     let mut statement = store.connection.prepare(
         "SELECT d.id, coalesce(r.date, substr(d.received, 1, 10), ''), coalesce(r.type, ''), coalesce(r.status, ''),
                 coalesce(r.is_receipt, 0),
-                '',
-                coalesce(e.vendor_name, r.vendor_name, ''),
+                r.vendor_id,
+                coalesce(r.vendor_name, ''),
                 r.total, r.currency, r.billing_model, r.interval, r.next_renewal,
                 coalesce(r.invoice_number, r.receipt_number),
                 CASE WHEN r.card_last4 IS NOT NULL THEN coalesce(r.card_brand, 'card') || ' ' || r.card_last4 END,
                 r.seats, coalesce(r.flags, 0),
-                coalesce(e.personal, 0), coalesce(e.ignored, 0), d.name
+                coalesce(e.personal, 0), coalesce(e.ignored, 0), d.name, e.vendor_name
          FROM documents d
          JOIN receipts r ON r.document_id = d.id
          LEFT JOIN edits e ON e.document_id = d.id
          ORDER BY 2 DESC, d.id DESC",
     )?;
 
+    let catalog = spendyard::catalog::catalog();
+
     let mapped = statement.query_map([], |row| {
+        let vendor_id: Option<String> = row.get(5)?;
+        let read_name: String = row.get(6)?;
+        let edited_name: Option<String> = row.get(19)?;
+
+        // An edit wins; then the catalog, by ID or name; then the name.
+        let (vendor_key, vendor_name) = match edited_name {
+            Some(edited) => (catalog_key(catalog, None, &edited), edited),
+
+            None => match catalog.find(vendor_id.as_deref(), Some(&read_name)) {
+                Some(vendor) => (vendor.id.clone(), vendor.name.clone()),
+                None => (spendyard::catalog::name_key(&read_name), read_name),
+            },
+        };
+
         Ok(Row {
             id: row.get(0)?,
             date: row.get(1)?,
             kind: row.get(2)?,
             status: row.get(3)?,
             is_receipt: row.get::<_, i64>(4)? != 0,
-            vendor_key: vendor_key(&row.get::<_, String>(6)?),
-            vendor_name: row.get(6)?,
+            vendor_key,
+            vendor_name,
             total: row.get(7)?,
             currency: row.get(8)?,
             billing_model: row.get(9)?,
@@ -84,77 +100,13 @@ fn rows(store: &Store) -> Result<Vec<Row>> {
     Ok(mapped.collect::<Result<_, _>>()?)
 }
 
-/// Legal and generic words that differ between receipts from the same
-/// vendor: "Neon, LLC" and "Neon Inc." are one vendor.
-const NAME_NOISE: &[&str] = &[
-    "inc",
-    "llc",
-    "ltd",
-    "limited",
-    "pbc",
-    "sas",
-    "srl",
-    "sro",
-    "s",
-    "r",
-    "o",
-    "gmbh",
-    "ag",
-    "as",
-    "asa",
-    "ab",
-    "oy",
-    "bv",
-    "nv",
-    "plc",
-    "pte",
-    "pty",
-    "corp",
-    "corporation",
-    "co",
-    "company",
-    "the",
-    "technologies",
-    "technology",
-    "software",
-    "labs",
-    "studio",
-    "studios",
-    "services",
-    "products",
-    "systems",
-    "holdings",
-    "group",
-    "international",
-    "emea",
-    "europe",
-    "norge",
-    "unlimited",
-];
-
-/// The key receipts are grouped under: the vendor's name without legal
-/// suffixes and punctuation, and the trading name after "dba" or "t/a".
-/// A stand-in until the vendor catalog (M6) gives canonical IDs.
-fn vendor_key(name: &str) -> String {
-    let lower = name.to_lowercase();
-
-    let trading = [" dba ", " d/b/a ", " t/a ", " trading as "]
-        .iter()
-        .find_map(|marker| lower.split_once(marker).map(|(_, after)| after.to_string()))
-        .unwrap_or(lower);
-
-    let words: Vec<String> = trading
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|word| !word.is_empty())
-        .filter(|word| !NAME_NOISE.contains(word))
-        .map(str::to_string)
-        .collect();
-
-    if words.is_empty() {
-        return trading.trim().to_string();
+/// The grouping key for a name: the catalog ID when the catalog knows the
+/// name, else the name without legal suffixes.
+fn catalog_key(catalog: &spendyard::catalog::Catalog, id: Option<&str>, name: &str) -> String {
+    match catalog.find(id, Some(name)) {
+        Some(vendor) => vendor.id.clone(),
+        None => spendyard::catalog::name_key(name),
     }
-
-    words.join(" ")
 }
 
 /// Paid receipts that count as spend, each once.
@@ -871,22 +823,6 @@ mod tests {
         assert_eq!(shift_date("2026-01-31", 1, 0), "2026-02-28");
         assert_eq!(shift_date("2026-11-19", -12, 0), "2025-11-19");
         assert_eq!(shift_date("2026-03-03", 0, -7), "2026-02-24");
-    }
-
-    #[test]
-    fn vendor_keys_ignore_legal_names() {
-        assert_eq!(vendor_key("Neon, LLC"), vendor_key("Neon Inc."));
-        assert_eq!(
-            vendor_key("Slack Technologies Limited"),
-            vendor_key("Slack")
-        );
-        assert_eq!(vendor_key("RealtimeBoard Inc. dba Miro"), "miro");
-        assert_eq!(
-            vendor_key("Supabase Pte. Ltd."),
-            vendor_key("Supabase Pte Ltd")
-        );
-        assert_eq!(vendor_key("Anthropic, PBC"), "anthropic");
-        assert_ne!(vendor_key("Microsoft"), vendor_key("Metabase Inc"));
     }
 
     #[test]

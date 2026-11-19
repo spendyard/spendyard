@@ -1,0 +1,4 @@
+name = "Better Stack"
+aliases = ["Better Stack, Inc."]
+category = "observability"
+pricing = ["usage", "plan"]

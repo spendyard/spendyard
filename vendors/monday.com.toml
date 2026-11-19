@@ -1,0 +1,4 @@
+name = "monday.com"
+aliases = ["monday.com Ltd"]
+category = "productivity"
+pricing = ["seat"]

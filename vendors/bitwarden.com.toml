@@ -1,0 +1,4 @@
+name = "Bitwarden"
+aliases = ["Bitwarden Inc."]
+category = "security"
+pricing = ["seat"]

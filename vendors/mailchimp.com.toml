@@ -1,0 +1,4 @@
+name = "Mailchimp"
+aliases = ["The Rocket Science Group, LLC"]
+category = "marketing"
+pricing = ["plan"]

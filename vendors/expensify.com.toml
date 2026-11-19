@@ -1,0 +1,4 @@
+name = "Expensify"
+aliases = ["Expensify, Inc."]
+category = "finance"
+pricing = ["seat"]

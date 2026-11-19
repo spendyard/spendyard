@@ -1,0 +1,5 @@
+name = "AWS"
+aliases = ["Amazon Web Services", "Amazon Web Services, Inc.", "Amazon Web Services EMEA SARL"]
+domains = ["amazonaws.com"]
+category = "infrastructure"
+pricing = ["usage"]

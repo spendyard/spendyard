@@ -1,0 +1,4 @@
+name = "DigitalOcean"
+aliases = ["DigitalOcean LLC", "DigitalOcean, Inc."]
+category = "infrastructure"
+pricing = ["usage"]

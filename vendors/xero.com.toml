@@ -1,0 +1,4 @@
+name = "Xero"
+aliases = ["Xero Limited"]
+category = "finance"
+pricing = ["plan"]

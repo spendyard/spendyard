@@ -1,0 +1,4 @@
+name = "Grammarly"
+aliases = ["Grammarly, Inc."]
+category = "ai"
+pricing = ["seat"]

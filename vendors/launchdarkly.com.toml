@@ -1,0 +1,4 @@
+name = "LaunchDarkly"
+aliases = ["Catamorphic Co."]
+category = "dev-tools"
+pricing = ["seat", "usage"]

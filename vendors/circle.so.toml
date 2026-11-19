@@ -1,0 +1,4 @@
+name = "Circle"
+aliases = ["CircleCo Inc.", "Circle.so"]
+category = "communication"
+pricing = ["plan"]

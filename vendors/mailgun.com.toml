@@ -1,0 +1,4 @@
+name = "Mailgun"
+aliases = ["Mailgun Technologies, Inc.", "Sinch Mailgun"]
+category = "dev-tools"
+pricing = ["plan", "usage"]

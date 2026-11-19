@@ -1,0 +1,4 @@
+name = "Customer.io"
+aliases = ["Peaberry Software, Inc."]
+category = "marketing"
+pricing = ["plan", "usage"]

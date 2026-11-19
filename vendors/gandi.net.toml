@@ -1,0 +1,4 @@
+name = "Gandi"
+aliases = ["Gandi SAS"]
+category = "infrastructure"
+pricing = ["one_time"]

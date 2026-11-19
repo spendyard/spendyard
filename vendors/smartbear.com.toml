@@ -1,0 +1,5 @@
+name = "SmartBear"
+aliases = ["SmartBear Software"]
+domains = ["bugsnag.com", "stoplight.io"]
+category = "dev-tools"
+pricing = ["seat"]

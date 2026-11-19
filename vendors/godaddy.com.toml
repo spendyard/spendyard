@@ -1,0 +1,4 @@
+name = "GoDaddy"
+aliases = ["GoDaddy.com, LLC"]
+category = "infrastructure"
+pricing = ["one_time"]

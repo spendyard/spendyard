@@ -1,0 +1,4 @@
+name = "WorkOS"
+aliases = ["WorkOS, Inc."]
+category = "security"
+pricing = ["usage"]

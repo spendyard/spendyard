@@ -1,0 +1,4 @@
+name = "Polar"
+aliases = ["Polar Software Inc"]
+category = "finance"
+pricing = ["usage"]

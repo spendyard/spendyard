@@ -1,0 +1,4 @@
+name = "Algolia"
+aliases = ["Algolia, Inc.", "Algolia SAS"]
+category = "dev-tools"
+pricing = ["usage"]

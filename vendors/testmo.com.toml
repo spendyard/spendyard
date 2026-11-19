@@ -1,0 +1,4 @@
+name = "Testmo"
+aliases = ["Testmo GmbH"]
+category = "dev-tools"
+pricing = ["seat"]

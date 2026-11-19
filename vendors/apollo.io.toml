@@ -1,0 +1,4 @@
+name = "Apollo"
+aliases = ["Apollo.io"]
+category = "sales"
+pricing = ["seat"]

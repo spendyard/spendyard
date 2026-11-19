@@ -1,0 +1,4 @@
+name = "New Relic"
+aliases = ["New Relic, Inc."]
+category = "observability"
+pricing = ["usage", "seat"]

@@ -1,0 +1,5 @@
+name = "Cursor"
+aliases = ["Anysphere, Inc.", "Anysphere"]
+domains = ["cursor.sh", "anysphere.inc"]
+category = "ai"
+pricing = ["seat", "usage"]

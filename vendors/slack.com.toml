@@ -1,0 +1,5 @@
+name = "Slack"
+aliases = ["Slack Technologies Limited", "Slack Technologies, LLC"]
+domains = ["slackhq.com"]
+category = "communication"
+pricing = ["seat"]

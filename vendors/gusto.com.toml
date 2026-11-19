@@ -1,0 +1,4 @@
+name = "Gusto"
+aliases = ["Gusto, Inc."]
+category = "hr"
+pricing = ["seat"]

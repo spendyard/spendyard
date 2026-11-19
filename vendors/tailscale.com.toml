@@ -1,0 +1,4 @@
+name = "Tailscale"
+aliases = ["Tailscale US Inc.", "Tailscale Inc."]
+category = "security"
+pricing = ["seat"]

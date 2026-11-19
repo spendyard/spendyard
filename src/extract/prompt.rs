@@ -37,6 +37,8 @@ number or an amount.
 shows the value itself with its label (\"Amount paid $112.40\", not just \"Amount paid\"), and the \
 index of the part it is in.
 - confidence is how sure you are of the whole reading, from 0 to 1.
+- A <known-sender> block, when there is one, names the vendor the sender's address belongs to. \
+Forwarded mail and receipts sent by a payment processor can still be from someone else.
 - A <first-model> block, when there is one, is a quicker model's reading with probabilities. Use \
 it as a hint; where the document says otherwise, the document wins.";
 
@@ -80,6 +82,13 @@ pub struct Prompt {
 }
 
 impl Prompt {
+    /// Adds a note for the extractor after the document, such as which
+    /// known vendor sent it.
+    pub fn add_note(&mut self, tag: &str, text: &str) {
+        self.blocks
+            .push(Block::Text(format!("<{tag}>\n{text}\n</{tag}>")));
+    }
+
     /// Adds a first model's answers, for the extractor to weigh. They go
     /// last, after the document.
     pub fn add_hints(&mut self, hints: &str) {

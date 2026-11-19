@@ -1,0 +1,5 @@
+name = "Intercom"
+aliases = ["Intercom R&D Unlimited Company", "Intercom, Inc."]
+domains = ["intercom.io"]
+category = "support"
+pricing = ["seat", "usage"]

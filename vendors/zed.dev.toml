@@ -1,0 +1,4 @@
+name = "Zed"
+aliases = ["Zed Industries, Inc."]
+category = "dev-tools"
+pricing = ["seat"]

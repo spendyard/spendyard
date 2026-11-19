@@ -1,0 +1,3 @@
+name = "SendGrid"
+category = "dev-tools"
+pricing = ["plan", "usage"]

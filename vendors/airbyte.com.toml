@@ -1,0 +1,5 @@
+name = "Airbyte"
+aliases = ["Airbyte, Inc."]
+domains = ["airbyte.io"]
+category = "data"
+pricing = ["usage"]

@@ -1,0 +1,4 @@
+name = "Mirantis"
+aliases = ["Mirantis, Inc."]
+category = "infrastructure"
+pricing = ["seat"]

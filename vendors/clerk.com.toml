@@ -1,0 +1,5 @@
+name = "Clerk"
+aliases = ["Clerk, Inc."]
+domains = ["clerk.dev"]
+category = "security"
+pricing = ["usage", "plan"]

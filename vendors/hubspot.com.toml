@@ -1,0 +1,4 @@
+name = "HubSpot"
+aliases = ["HubSpot, Inc.", "HubSpot Ireland Limited"]
+category = "sales"
+pricing = ["seat", "plan"]

@@ -1,0 +1,4 @@
+name = "Framer"
+aliases = ["Framer B.V."]
+category = "design"
+pricing = ["seat", "plan"]

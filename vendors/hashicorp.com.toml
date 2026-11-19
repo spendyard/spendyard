@@ -1,0 +1,5 @@
+name = "HashiCorp"
+aliases = ["HashiCorp, Inc."]
+domains = ["terraform.io"]
+category = "infrastructure"
+pricing = ["usage", "seat"]

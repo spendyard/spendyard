@@ -1,0 +1,4 @@
+name = "Netlify"
+aliases = ["Netlify, Inc."]
+category = "infrastructure"
+pricing = ["seat", "usage"]

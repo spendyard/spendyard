@@ -1,0 +1,4 @@
+name = "incident.io"
+aliases = ["Incident Industries Ltd"]
+category = "observability"
+pricing = ["seat"]

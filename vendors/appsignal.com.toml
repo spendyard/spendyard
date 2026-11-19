@@ -1,0 +1,4 @@
+name = "AppSignal"
+aliases = ["AppSignal B.V."]
+category = "observability"
+pricing = ["plan"]

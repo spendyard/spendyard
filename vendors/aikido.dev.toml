@@ -1,0 +1,4 @@
+name = "Aikido Security"
+aliases = ["Aikido", "Aikido Security BV"]
+category = "security"
+pricing = ["seat", "plan"]

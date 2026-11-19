@@ -1,0 +1,5 @@
+name = "Personio"
+aliases = ["Personio SE & Co. KG"]
+domains = ["personio.de"]
+category = "hr"
+pricing = ["seat"]

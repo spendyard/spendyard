@@ -1,0 +1,4 @@
+name = "Vultr"
+aliases = ["The Constant Company, LLC"]
+category = "infrastructure"
+pricing = ["usage"]

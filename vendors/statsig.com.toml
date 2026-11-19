@@ -1,0 +1,4 @@
+name = "Statsig"
+aliases = ["Statsig, Inc."]
+category = "dev-tools"
+pricing = ["usage"]

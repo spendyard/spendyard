@@ -1,0 +1,4 @@
+name = "Webflow"
+aliases = ["Webflow, Inc."]
+category = "design"
+pricing = ["plan", "seat"]

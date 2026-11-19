@@ -1,0 +1,75 @@
+# Payment processors and billing platforms that send receipts for other
+# vendors. A receipt from one names the real vendor in its text.
+
+[[processor]]
+name = "Stripe"
+domains = ["stripe.com"]
+
+[[processor]]
+name = "Paddle"
+domains = ["paddle.com", "paddle.net"]
+
+[[processor]]
+name = "Lemon Squeezy"
+domains = ["lemonsqueezy.com", "lemonsqueezy-mail.com"]
+
+[[processor]]
+name = "FastSpring"
+domains = ["fastspring.com"]
+
+[[processor]]
+name = "Chargebee"
+domains = ["chargebee.com"]
+
+[[processor]]
+name = "Orb"
+domains = ["withorb.com"]
+
+[[processor]]
+name = "Recurly"
+domains = ["recurly.com"]
+
+[[processor]]
+name = "Apple"
+domains = ["apple.com", "itunes.com"]
+
+[[processor]]
+name = "PayPal"
+domains = ["paypal.com"]
+
+[[processor]]
+name = "Hyperline"
+domains = ["hyperline.co"]
+
+[[processor]]
+name = "Taxamo"
+domains = ["taxamo.com"]
+
+[[processor]]
+name = "Freemius"
+domains = ["freemius.com"]
+
+[[processor]]
+name = "Eventbrite"
+domains = ["eventbrite.com"]
+
+[[processor]]
+name = "Chargify"
+domains = ["chargify.com", "maxio.com"]
+
+[[processor]]
+name = "Zuora"
+domains = ["zuora.com"]
+
+[[processor]]
+name = "Braintree"
+domains = ["braintreegateway.com", "braintreepayments.com"]
+
+[[processor]]
+name = "Adyen"
+domains = ["adyen.com"]
+
+[[processor]]
+name = "Gumroad"
+domains = ["gumroad.com"]
+

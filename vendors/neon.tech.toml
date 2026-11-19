@@ -1,0 +1,5 @@
+name = "Neon"
+aliases = ["Neon Inc.", "Neon, LLC", "Neon Database"]
+domains = ["neon.com"]
+category = "data"
+pricing = ["usage", "plan"]

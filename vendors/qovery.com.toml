@@ -1,0 +1,4 @@
+name = "Qovery"
+aliases = ["Qovery SAS"]
+category = "infrastructure"
+pricing = ["usage", "seat"]

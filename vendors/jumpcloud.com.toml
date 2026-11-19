@@ -1,0 +1,4 @@
+name = "JumpCloud"
+aliases = ["JumpCloud Inc."]
+category = "security"
+pricing = ["seat"]

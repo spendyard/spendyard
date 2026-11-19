@@ -1,0 +1,4 @@
+name = "Okta"
+aliases = ["Okta, Inc."]
+category = "security"
+pricing = ["seat"]

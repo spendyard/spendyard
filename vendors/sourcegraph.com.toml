@@ -1,0 +1,5 @@
+name = "Sourcegraph"
+aliases = ["Sourcegraph, Inc."]
+domains = ["ampcode.com"]
+category = "ai"
+pricing = ["seat"]

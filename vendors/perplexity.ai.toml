@@ -1,0 +1,4 @@
+name = "Perplexity"
+aliases = ["Perplexity AI, Inc."]
+category = "ai"
+pricing = ["seat", "usage"]

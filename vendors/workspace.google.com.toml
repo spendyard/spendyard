@@ -1,0 +1,4 @@
+name = "Google Workspace"
+aliases = ["Google Workspace"]
+category = "productivity"
+pricing = ["seat"]

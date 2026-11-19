@@ -1,0 +1,4 @@
+name = "Elastic"
+aliases = ["Elasticsearch B.V."]
+category = "observability"
+pricing = ["usage"]

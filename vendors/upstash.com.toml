@@ -1,0 +1,4 @@
+name = "Upstash"
+aliases = ["Upstash, Inc."]
+category = "data"
+pricing = ["usage"]

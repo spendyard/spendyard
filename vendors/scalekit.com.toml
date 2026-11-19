@@ -1,0 +1,4 @@
+name = "Scalekit"
+aliases = ["ScaleKit Inc."]
+category = "security"
+pricing = ["usage", "plan"]

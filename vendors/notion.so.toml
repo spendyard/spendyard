@@ -1,0 +1,5 @@
+name = "Notion"
+aliases = ["Notion Labs, Inc."]
+domains = ["notion.com", "makenotion.com"]
+category = "productivity"
+pricing = ["seat"]

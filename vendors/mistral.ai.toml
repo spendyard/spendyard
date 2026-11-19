@@ -1,0 +1,4 @@
+name = "Mistral AI"
+aliases = ["Mistral AI SAS"]
+category = "ai"
+pricing = ["usage", "seat"]
