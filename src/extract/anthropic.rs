@@ -6,8 +6,8 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
 use super::{
-    Accepts, Block, DEFAULT_ANTHROPIC_MODEL, DEFAULT_MAX_TOKENS, ExtractError, Extraction,
-    Extractor, Prompt, Settings, Usage, base64, http, parse_output, schema,
+    Accepts, Block, DEFAULT_ANTHROPIC_MODEL, DEFAULT_MAX_TOKENS, ExtractError, Extractor,
+    OutputFormat, Prompt, Reply, Settings, Usage, base64, http,
 };
 
 const DEFAULT_URL: &str = "https://api.anthropic.com";
@@ -104,13 +104,13 @@ impl Anthropic {
         headers
     }
 
-    fn body(&self, prompt: &Prompt) -> Value {
+    fn body(&self, prompt: &Prompt, format: &OutputFormat) -> Value {
         let content: Vec<Value> = prompt.blocks.iter().map(content_block).collect();
 
         let mut output_config = json!({
             "format": {
                 "type": "json_schema",
-                "schema": schema::model_output_schema(),
+                "schema": format.schema.clone(),
             }
         });
 
@@ -147,9 +147,14 @@ impl Extractor for Anthropic {
         }
     }
 
-    async fn extract(&self, prompt: &Prompt) -> Result<Extraction, ExtractError> {
-        let response =
-            http::post_json(&self.client, &self.url, self.headers(), &self.body(prompt)).await?;
+    async fn answer(&self, prompt: &Prompt, format: &OutputFormat) -> Result<Reply, ExtractError> {
+        let response = http::post_json(
+            &self.client,
+            &self.url,
+            self.headers(),
+            &self.body(prompt, format),
+        )
+        .await?;
 
         parse_response(&response, &self.model)
     }
@@ -179,7 +184,7 @@ fn content_block(block: &Block) -> Value {
     }
 }
 
-fn parse_response(response: &Value, asked_for: &str) -> Result<Extraction, ExtractError> {
+fn parse_response(response: &Value, asked_for: &str) -> Result<Reply, ExtractError> {
     let stop_reason = response["stop_reason"].as_str().unwrap_or_default();
 
     if stop_reason == "refusal" {
@@ -216,13 +221,13 @@ fn parse_response(response: &Value, asked_for: &str) -> Result<Extraction, Extra
 
     let model = response["model"].as_str().unwrap_or(asked_for).to_string();
 
-    let extraction = Extraction {
-        output: parse_output(&text)?,
+    let reply = Reply {
+        text: text.to_string(),
         usage,
         model,
     };
 
-    Ok(extraction)
+    Ok(reply)
 }
 
 fn header(value: &str) -> HeaderValue {
@@ -262,7 +267,7 @@ mod tests {
     fn builds_a_structured_output_request_with_fallback() {
         let anthropic = extractor("claude-opus-5-5");
 
-        let body = anthropic.body(&prompt());
+        let body = anthropic.body(&prompt(), &OutputFormat::receipt());
 
         assert_eq!(body["model"], "claude-opus-5-5");
         assert_eq!(body["system"], "instructions");
@@ -286,7 +291,12 @@ mod tests {
     fn no_fallback_for_other_models() {
         let anthropic = extractor("claude-haiku-5-5");
 
-        assert!(anthropic.body(&prompt()).get("fallbacks").is_none());
+        assert!(
+            anthropic
+                .body(&prompt(), &OutputFormat::receipt())
+                .get("fallbacks")
+                .is_none()
+        );
         assert!(anthropic.headers().get("anthropic-beta").is_none());
     }
 

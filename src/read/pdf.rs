@@ -42,17 +42,69 @@ pub fn read(bytes: &[u8]) -> Result<Pdf, ReadError> {
 
     let has_text_layer = visible >= MIN_CHARS_PER_PAGE * (pages.max(1) as usize).min(3);
 
+    // A text layer whose fonts can't be decoded comes out as symbols. The
+    // model is better off with the pages themselves.
+    let readable = has_text_layer && !looks_garbled(&text);
+
     let pdf = Pdf {
         pages,
-        text: has_text_layer.then_some(text),
+        text: readable.then_some(text),
     };
 
     Ok(pdf)
+}
+
+/// Symbols that are rare in real text but fill a text layer decoded with
+/// the wrong font encoding (`Na!$ on &ar#` for "Name on card").
+const GARBLE_SYMBOLS: &str = "!\"#$%&*+;<=>?@[\\]^_{|}~";
+
+/// Above this many such symbols per letter, the text is taken as garbled.
+/// Real receipts and emails, URLs included, stay under 0.2.
+const MAX_SYMBOLS_PER_LETTER: f64 = 0.3;
+
+/// Whether `text` looks like a text layer decoded with the wrong font
+/// encoding.
+pub fn looks_garbled(text: &str) -> bool {
+    let letters = text.chars().filter(|c| c.is_alphabetic()).count();
+
+    let symbols = text.chars().filter(|c| GARBLE_SYMBOLS.contains(*c)).count();
+
+    if letters == 0 {
+        return symbols > 0;
+    }
+
+    let ratio = symbols as f64 / letters as f64;
+
+    ratio > MAX_SYMBOLS_PER_LETTER
 }
 
 fn unreadable(reason: String) -> ReadError {
     ReadError::Unreadable {
         format: Format::Pdf,
         reason,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn real_text_is_not_garbled() {
+        let receipt = "Receipt #1234-5678\nAmount paid $112.40\nVisa ending in 4242\n\
+                       https://pay.stripe.com/receipts/acct_1?s=ap&id=5";
+
+        assert!(!looks_garbled(receipt));
+    }
+
+    #[test]
+    fn wrongly_decoded_fonts_are_garbled() {
+        let half = "Na!$ on &ar#: +NNK78P,KON.O )+, N, 4\n*at$ o/ (\"r&9as$: 2026-04-14\n\
+                    Original a!o\"nt: 2.26 2,*";
+
+        let symbols_only = "5#\"!$000000 !$&#+78,.)+, , 4 *$/(\"&9$ !\"2,* 5%$$";
+
+        assert!(looks_garbled(half));
+        assert!(looks_garbled(symbols_only));
     }
 }

@@ -7,8 +7,8 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
 use super::{
-    Accepts, Block, DEFAULT_MAX_TOKENS, ExtractError, Extraction, Extractor, Prompt, Settings,
-    Usage, data_url, http, parse_output, required_model, schema,
+    Accepts, Block, DEFAULT_MAX_TOKENS, ExtractError, Extractor, OutputFormat, Prompt, Reply,
+    Settings, Usage, data_url, http, required_model,
 };
 
 /// Ollama's default address.
@@ -53,7 +53,7 @@ impl OpenAiCompatible {
         headers
     }
 
-    fn body(&self, prompt: &Prompt) -> Value {
+    fn body(&self, prompt: &Prompt, format: &OutputFormat) -> Value {
         let content: Vec<Value> = prompt.blocks.iter().filter_map(content_part).collect();
 
         json!({
@@ -66,8 +66,8 @@ impl OpenAiCompatible {
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
-                    "name": "receipt",
-                    "schema": schema::model_output_schema(),
+                    "name": format.name,
+                    "schema": format.schema.clone(),
                     "strict": true,
                 }
             },
@@ -88,9 +88,14 @@ impl Extractor for OpenAiCompatible {
         }
     }
 
-    async fn extract(&self, prompt: &Prompt) -> Result<Extraction, ExtractError> {
-        let response =
-            http::post_json(&self.client, &self.url, self.headers(), &self.body(prompt)).await?;
+    async fn answer(&self, prompt: &Prompt, format: &OutputFormat) -> Result<Reply, ExtractError> {
+        let response = http::post_json(
+            &self.client,
+            &self.url,
+            self.headers(),
+            &self.body(prompt, format),
+        )
+        .await?;
 
         parse_response(&response, &self.model)
     }
@@ -111,7 +116,7 @@ fn content_part(block: &Block) -> Option<Value> {
     }
 }
 
-fn parse_response(response: &Value, asked_for: &str) -> Result<Extraction, ExtractError> {
+fn parse_response(response: &Value, asked_for: &str) -> Result<Reply, ExtractError> {
     let choice = &response["choices"][0];
 
     if choice["finish_reason"] == "length" {
@@ -138,13 +143,13 @@ fn parse_response(response: &Value, asked_for: &str) -> Result<Extraction, Extra
             .unwrap_or(0),
     };
 
-    let extraction = Extraction {
-        output: parse_output(text)?,
+    let reply = Reply {
+        text: text.to_string(),
         usage,
         model: response["model"].as_str().unwrap_or(asked_for).to_string(),
     };
 
-    Ok(extraction)
+    Ok(reply)
 }
 
 #[cfg(test)]
@@ -169,7 +174,7 @@ mod tests {
             warnings: Vec::new(),
         };
 
-        let body = compatible.body(&prompt);
+        let body = compatible.body(&prompt, &OutputFormat::receipt());
 
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(body["response_format"]["type"], "json_schema");

@@ -13,6 +13,7 @@ pub mod schema;
 
 use async_trait::async_trait;
 use base64::Engine;
+use serde_json::Value;
 use thiserror::Error;
 
 pub use prompt::{Accepts, Block, Prompt};
@@ -74,6 +75,34 @@ pub struct Extraction {
     pub model: String,
 }
 
+/// The JSON shape a model is asked to answer in: a name (some providers
+/// want one) and a strict schema.
+#[derive(Debug, Clone)]
+pub struct OutputFormat {
+    pub name: &'static str,
+    pub schema: Value,
+}
+
+impl OutputFormat {
+    /// What a receipt or invoice is read into: [`ModelOutput`].
+    pub fn receipt() -> OutputFormat {
+        OutputFormat {
+            name: "receipt",
+            schema: schema::model_output_schema(),
+        }
+    }
+}
+
+/// A model's answer as JSON text, before it is parsed, and what it cost.
+#[derive(Debug, Clone)]
+pub struct Reply {
+    pub text: String,
+    pub usage: Usage,
+
+    /// The model that actually answered.
+    pub model: String,
+}
+
 /// A model that reads documents.
 #[async_trait]
 pub trait Extractor: Send + Sync {
@@ -83,7 +112,21 @@ pub trait Extractor: Send + Sync {
     /// What it can read besides text.
     fn accepts(&self) -> Accepts;
 
-    async fn extract(&self, prompt: &Prompt) -> Result<Extraction, ExtractError>;
+    /// Answers `prompt` with JSON in `format`.
+    async fn answer(&self, prompt: &Prompt, format: &OutputFormat) -> Result<Reply, ExtractError>;
+
+    /// Reads a receipt or invoice into [`ModelOutput`].
+    async fn extract(&self, prompt: &Prompt) -> Result<Extraction, ExtractError> {
+        let reply = self.answer(prompt, &OutputFormat::receipt()).await?;
+
+        let extraction = Extraction {
+            output: parse_output(&reply.text)?,
+            usage: reply.usage,
+            model: reply.model,
+        };
+
+        Ok(extraction)
+    }
 }
 
 /// Settings for building an extractor. Keys are read from the environment
@@ -146,6 +189,11 @@ pub fn key_variable(provider: &str) -> Option<&'static str> {
 
 /// Parses a model's JSON text into [`ModelOutput`].
 pub fn parse_output(text: &str) -> Result<ModelOutput, ExtractError> {
+    parse_json(text)
+}
+
+/// Parses a model's JSON text, with or without a code fence, into `T`.
+pub fn parse_json<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, ExtractError> {
     let trimmed = text
         .trim()
         .trim_start_matches("```json")

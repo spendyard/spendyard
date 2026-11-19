@@ -6,9 +6,7 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use serde_json::json;
 use spendyard::decide::{Answer, Decider, Decision, Image, Question};
-use spendyard::extract::{
-    Accepts, ExtractError, Extraction, Extractor, ModelOutput, Prompt, Usage,
-};
+use spendyard::extract::{Accepts, ExtractError, Extractor, OutputFormat, Prompt, Reply, Usage};
 use spendyard::{Pipeline, read, understand};
 
 /// Returns a fixed answer and remembers the prompt it was given.
@@ -27,19 +25,19 @@ impl Extractor for Fake {
         Accepts::TEXT_ONLY
     }
 
-    async fn extract(&self, prompt: &Prompt) -> Result<Extraction, ExtractError> {
+    async fn answer(&self, prompt: &Prompt, _format: &OutputFormat) -> Result<Reply, ExtractError> {
         *self.seen.lock().unwrap() = Some(prompt.clone());
 
-        let output: ModelOutput = serde_json::from_value(self.answer.clone()).unwrap();
-
-        Ok(Extraction {
-            output,
+        let reply = Reply {
+            text: self.answer.to_string(),
             usage: Usage {
                 input: 100,
                 output: 50,
             },
             model: "fake-1".to_string(),
-        })
+        };
+
+        Ok(reply)
     }
 }
 

@@ -6,8 +6,8 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
 use super::{
-    Accepts, Block, DEFAULT_MAX_TOKENS, ExtractError, Extraction, Extractor, Prompt, Settings,
-    Usage, base64, http, parse_output, required_key, required_model, schema,
+    Accepts, Block, DEFAULT_MAX_TOKENS, ExtractError, Extractor, OutputFormat, Prompt, Reply,
+    Settings, Usage, base64, http, required_key, required_model,
 };
 
 const DEFAULT_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
@@ -60,7 +60,7 @@ impl Gemini {
         headers
     }
 
-    fn body(&self, prompt: &Prompt) -> Value {
+    fn body(&self, prompt: &Prompt, format: &OutputFormat) -> Value {
         let parts: Vec<Value> = prompt.blocks.iter().map(part).collect();
 
         json!({
@@ -68,7 +68,7 @@ impl Gemini {
             "contents": [{ "role": "user", "parts": parts }],
             "generationConfig": {
                 "responseMimeType": "application/json",
-                "responseJsonSchema": schema::model_output_schema(),
+                "responseJsonSchema": format.schema.clone(),
                 "maxOutputTokens": self.max_tokens,
             },
         })
@@ -88,9 +88,14 @@ impl Extractor for Gemini {
         }
     }
 
-    async fn extract(&self, prompt: &Prompt) -> Result<Extraction, ExtractError> {
-        let response =
-            http::post_json(&self.client, &self.url, self.headers(), &self.body(prompt)).await?;
+    async fn answer(&self, prompt: &Prompt, format: &OutputFormat) -> Result<Reply, ExtractError> {
+        let response = http::post_json(
+            &self.client,
+            &self.url,
+            self.headers(),
+            &self.body(prompt, format),
+        )
+        .await?;
 
         parse_response(&response, &self.model)
     }
@@ -110,7 +115,7 @@ fn part(block: &Block) -> Value {
     }
 }
 
-fn parse_response(response: &Value, asked_for: &str) -> Result<Extraction, ExtractError> {
+fn parse_response(response: &Value, asked_for: &str) -> Result<Reply, ExtractError> {
     if let Some(reason) = response
         .pointer("/promptFeedback/blockReason")
         .and_then(Value::as_str)
@@ -150,8 +155,8 @@ fn parse_response(response: &Value, asked_for: &str) -> Result<Extraction, Extra
             .unwrap_or(0),
     };
 
-    let extraction = Extraction {
-        output: parse_output(&text)?,
+    let reply = Reply {
+        text: text.to_string(),
         usage,
         model: response["modelVersion"]
             .as_str()
@@ -159,7 +164,7 @@ fn parse_response(response: &Value, asked_for: &str) -> Result<Extraction, Extra
             .to_string(),
     };
 
-    Ok(extraction)
+    Ok(reply)
 }
 
 #[cfg(test)]
@@ -188,7 +193,7 @@ mod tests {
             warnings: Vec::new(),
         };
 
-        let body = gemini.body(&prompt);
+        let body = gemini.body(&prompt, &OutputFormat::receipt());
 
         assert_eq!(
             body["generationConfig"]["responseMimeType"],

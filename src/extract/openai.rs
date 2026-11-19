@@ -6,8 +6,8 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
 use super::{
-    Accepts, Block, DEFAULT_MAX_TOKENS, ExtractError, Extraction, Extractor, Prompt, Settings,
-    Usage, data_url, http, parse_output, required_key, required_model, schema,
+    Accepts, Block, DEFAULT_MAX_TOKENS, ExtractError, Extractor, OutputFormat, Prompt, Reply,
+    Settings, Usage, data_url, http, required_key, required_model,
 };
 
 const DEFAULT_URL: &str = "https://api.openai.com/v1";
@@ -52,7 +52,7 @@ impl OpenAi {
         headers
     }
 
-    fn body(&self, prompt: &Prompt) -> Value {
+    fn body(&self, prompt: &Prompt, format: &OutputFormat) -> Value {
         let content: Vec<Value> = prompt.blocks.iter().map(content_part).collect();
 
         json!({
@@ -63,8 +63,8 @@ impl OpenAi {
             "text": {
                 "format": {
                     "type": "json_schema",
-                    "name": "receipt",
-                    "schema": schema::model_output_schema(),
+                    "name": format.name,
+                    "schema": format.schema.clone(),
                     "strict": true,
                 }
             },
@@ -85,9 +85,14 @@ impl Extractor for OpenAi {
         }
     }
 
-    async fn extract(&self, prompt: &Prompt) -> Result<Extraction, ExtractError> {
-        let response =
-            http::post_json(&self.client, &self.url, self.headers(), &self.body(prompt)).await?;
+    async fn answer(&self, prompt: &Prompt, format: &OutputFormat) -> Result<Reply, ExtractError> {
+        let response = http::post_json(
+            &self.client,
+            &self.url,
+            self.headers(),
+            &self.body(prompt, format),
+        )
+        .await?;
 
         parse_response(&response, &self.model)
     }
@@ -110,7 +115,7 @@ fn content_part(block: &Block) -> Value {
     }
 }
 
-fn parse_response(response: &Value, asked_for: &str) -> Result<Extraction, ExtractError> {
+fn parse_response(response: &Value, asked_for: &str) -> Result<Reply, ExtractError> {
     if response["status"] == "incomplete" {
         return Err(ExtractError::Truncated);
     }
@@ -149,13 +154,13 @@ fn parse_response(response: &Value, asked_for: &str) -> Result<Extraction, Extra
             .unwrap_or(0),
     };
 
-    let extraction = Extraction {
-        output: parse_output(&text)?,
+    let reply = Reply {
+        text: text.to_string(),
         usage,
         model: response["model"].as_str().unwrap_or(asked_for).to_string(),
     };
 
-    Ok(extraction)
+    Ok(reply)
 }
 
 #[cfg(test)]
@@ -184,7 +189,7 @@ mod tests {
             warnings: Vec::new(),
         };
 
-        let body = openai.body(&prompt);
+        let body = openai.body(&prompt, &OutputFormat::receipt());
 
         assert_eq!(body["text"]["format"]["strict"], true);
 

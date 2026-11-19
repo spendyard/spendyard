@@ -7,11 +7,14 @@
 //! Extractor request:
 //!
 //! ```json
-//! { "kind": "extract", "system": "…", "schema": { … },
+//! { "kind": "extract", "format": "receipt", "system": "…", "schema": { … },
 //!   "blocks": [ { "type": "text", "text": "…" },
 //!               { "type": "pdf", "label": "…", "base64": "…" },
 //!               { "type": "image", "label": "…", "mime": "image/png", "base64": "…" } ] }
 //! ```
+//!
+//! `format` is `receipt` for a receipt or invoice and `card_statement` for
+//! a page range of a card statement; the schema says what to fill in.
 //!
 //! Answer: the JSON the schema describes, or
 //! `{ "output": { … }, "usage": { "input": 0, "output": 0 }, "model": "…" }`.
@@ -28,7 +31,7 @@ use base64::Engine;
 use serde_json::{Map, Value, json};
 use spendyard::decide::{Decider, Decision, Image, Question};
 use spendyard::extract::{
-    Accepts, Block, ExtractError, Extraction, Extractor, Prompt, Usage, schema,
+    Accepts, Block, ExtractError, Extractor, OutputFormat, Prompt, Reply, Usage,
 };
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -158,13 +161,14 @@ impl Extractor for Exec {
         }
     }
 
-    async fn extract(&self, prompt: &Prompt) -> Result<Extraction, ExtractError> {
+    async fn answer(&self, prompt: &Prompt, format: &OutputFormat) -> Result<Reply, ExtractError> {
         let blocks: Vec<Value> = prompt.blocks.iter().map(block_json).collect();
 
         let request = json!({
             "kind": "extract",
+            "format": format.name,
             "system": prompt.system,
-            "schema": schema::model_output_schema(),
+            "schema": format.schema,
             "blocks": blocks,
         });
 
@@ -178,8 +182,6 @@ impl Extractor for Exec {
         } else {
             answer.clone()
         };
-
-        let output = spendyard::extract::parse_output(&output_json.to_string())?;
 
         let usage = Usage {
             input: answer
@@ -197,11 +199,13 @@ impl Extractor for Exec {
             .map(str::to_string)
             .unwrap_or_else(|| self.label());
 
-        Ok(Extraction {
-            output,
+        let reply = Reply {
+            text: output_json.to_string(),
             usage,
             model,
-        })
+        };
+
+        Ok(reply)
     }
 }
 
