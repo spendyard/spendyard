@@ -55,6 +55,10 @@ pub struct ReadResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub decisions: Option<BTreeMap<String, Answer>>,
 
+    /// For a card statement: its charges, read and checked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub statement: Option<crate::statement::Statement>,
+
     pub meta: Meta,
 }
 
@@ -236,6 +240,7 @@ pub fn not_about_money(kind: DocumentType, certainty: f64) -> ReadResult {
         flags: Vec::new(),
         warnings: Vec::new(),
         decisions: None,
+        statement: None,
         meta: Meta::new(),
     }
 }
@@ -301,6 +306,7 @@ pub fn assemble(
         flags: Vec::new(),
         warnings: document.warnings.clone(),
         decisions: None,
+        statement: None,
         meta: Meta {
             extractor: Some(extractor),
             model: Some(model),
@@ -435,7 +441,7 @@ fn vendor_id(domain: &str) -> Option<String> {
 
 /// Small models sometimes write "null", "none" or "n/a" as text instead of
 /// leaving a value out.
-fn present(value: Option<String>) -> Option<String> {
+pub(crate) fn present(value: Option<String>) -> Option<String> {
     let text = value?;
 
     let trimmed = text.trim();

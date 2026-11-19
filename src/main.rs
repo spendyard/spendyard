@@ -314,6 +314,13 @@ enum Command {
         note: Option<String>,
     },
 
+    /// Card charges read from statements (`read` reads them), matched to
+    /// receipts: what's missing a receipt, and receipts with no charge.
+    Charges {
+        #[command(subcommand)]
+        action: Option<ChargesAction>,
+    },
+
     /// The vendor catalog: lookups, lists, and vendors in your store it
     /// doesn't know yet.
     Vendors {
@@ -330,6 +337,33 @@ enum Command {
 
     /// Print version details.
     Version,
+}
+
+#[derive(Subcommand)]
+enum ChargesAction {
+    /// List charges, newest last, with the receipt each one matched.
+    List {
+        /// Only purchases with no receipt.
+        #[arg(long)]
+        missing: bool,
+
+        /// Only this card, by its last four digits.
+        #[arg(long)]
+        card: Option<String>,
+
+        /// Only this month, as YYYY-MM.
+        #[arg(long)]
+        month: Option<String>,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Match every charge to receipts again, after new receipts came in.
+    Match {
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -616,6 +650,30 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
             };
 
             mcp.await.map(|()| ExitCode::SUCCESS)
+        }
+
+        Command::Charges { action } => {
+            let done = async {
+                match action {
+                    Some(ChargesAction::List {
+                        missing,
+                        card,
+                        month,
+                        json,
+                    }) => cli::charges::list(cli::charges::ListOptions {
+                        missing,
+                        card,
+                        month,
+                        json,
+                    }),
+
+                    Some(ChargesAction::Match { json }) => cli::charges::match_command(json).await,
+
+                    None => cli::charges::match_command(false).await,
+                }
+            };
+
+            done.await.map(|()| ExitCode::SUCCESS)
         }
 
         Command::Vendors { action } => {

@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 use spendyard::ReadResult;
+use spendyard::statement::{ChargeKind, Statement};
 
 /// A serde enum as the word it serializes to: `BillingModel::OneTime` →
 /// `one_time`.
@@ -26,6 +27,12 @@ pub fn print_result(name: &str, result: &ReadResult) {
         word(&document.kind),
         word(&document.status)
     );
+
+    if let Some(statement) = &result.statement {
+        print_statement(statement);
+
+        return;
+    }
 
     if let Some(vendor) = &result.vendor {
         let mut text = vendor.name.clone();
@@ -175,4 +182,113 @@ fn row(label: &str, value: &str) {
     let line = format!("  {label:<10} {value}");
 
     println!("{}", line.trim_end());
+}
+
+/// A card statement: its summary, its checks and every charge.
+fn print_statement(statement: &Statement) {
+    let header: Vec<String> = [
+        statement.issuer.clone(),
+        statement.number.clone(),
+        statement
+            .issued
+            .as_ref()
+            .map(|date| format!("issued {date}")),
+        statement.due.as_ref().map(|date| format!("due {date}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    if !header.is_empty() {
+        row("Statement", &header.join(" · "));
+    }
+
+    let currency = statement.currency.as_deref().unwrap_or("");
+
+    let total = statement
+        .total
+        .as_deref()
+        .map(|total| format!(" · total {total} {currency}"))
+        .unwrap_or_default();
+
+    row("Charges", &format!("{}{total}", statement.charges.len()));
+
+    let cards: Vec<String> = statement
+        .cards
+        .iter()
+        .map(|card| {
+            let name = card.name.as_deref().unwrap_or("no name");
+
+            format!("•••• {} {name} ({})", card.last4, card.charges)
+        })
+        .collect();
+
+    if !cards.is_empty() {
+        row("Cards", &cards.join(", "));
+    }
+
+    for check in &statement.checks {
+        let mark = match check.ok {
+            Some(true) => "✓",
+            Some(false) => "✗",
+            None => "–",
+        };
+
+        row("Check", &format!("{mark} {}: {}", check.name, check.detail));
+    }
+
+    let meta = &statement.meta;
+
+    row(
+        "Read by",
+        &format!(
+            "{} · {} calls, {} reread · {} in, {} out · {:.1} s",
+            meta.models.join(", "),
+            meta.calls,
+            meta.rereads,
+            meta.tokens.input,
+            meta.tokens.output,
+            meta.ms as f64 / 1000.0
+        ),
+    );
+
+    for warning in &statement.warnings {
+        row("Warning", warning);
+    }
+
+    println!();
+
+    for charge in &statement.charges {
+        let number = charge
+            .row
+            .map(|row| format!("{row:>4}"))
+            .unwrap_or_else(|| "    ".to_string());
+
+        let original = match (&charge.original_amount, &charge.original_currency) {
+            (Some(amount), Some(code)) => format!("  ({amount} {code})"),
+            _ => String::new(),
+        };
+
+        let kind = match charge.kind {
+            ChargeKind::Purchase => String::new(),
+            other => format!("  [{}]", word(&other)),
+        };
+
+        println!(
+            "{number}  {}  {:<44} {:>12}{original}{kind}",
+            charge.date,
+            truncate(&charge.merchant, 44),
+            charge.amount
+        );
+    }
+}
+
+fn truncate(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_string();
+    }
+
+    let cut: String = text.chars().take(width - 1).collect();
+
+    format!("{cut}…")
 }

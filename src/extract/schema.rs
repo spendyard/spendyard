@@ -278,13 +278,17 @@ pub struct Evidence {
 /// as required (optional ones are nullable), no `$ref`s, no numeric or
 /// format constraints.
 pub fn model_output_schema() -> Value {
+    strict_schema::<ModelOutput>()
+}
+
+/// The strict JSON Schema for any output type, made the same way as
+/// [`model_output_schema`].
+pub fn strict_schema<T: JsonSchema>() -> Value {
     let mut settings = SchemaSettings::draft2020_12();
 
     settings.inline_subschemas = true;
 
-    let schema = settings
-        .into_generator()
-        .into_root_schema_for::<ModelOutput>();
+    let schema = settings.into_generator().into_root_schema_for::<T>();
 
     let mut value = schema.to_value();
 

@@ -18,7 +18,7 @@ use spendyard::{Document, ReadResult};
 use super::config;
 
 /// Bump with every change to the tables, and add a step to `migrate`.
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
@@ -118,6 +118,31 @@ CREATE TABLE IF NOT EXISTS rates (
     per_eur   REAL NOT NULL,
     PRIMARY KEY (date, currency)
 );
+
+CREATE TABLE IF NOT EXISTS charges (
+    id                 INTEGER PRIMARY KEY,
+    document_id        INTEGER NOT NULL REFERENCES documents (id) ON DELETE CASCADE,
+    position           INTEGER NOT NULL,
+    issuer             TEXT,
+    row                INTEGER,
+    date               TEXT NOT NULL,
+    posted             TEXT,
+    merchant           TEXT NOT NULL,
+    card_last4         TEXT,
+    name_on_card       TEXT,
+    amount             TEXT NOT NULL,
+    currency           TEXT,
+    original_amount    TEXT,
+    original_currency  TEXT,
+    rate               TEXT,
+    kind               TEXT NOT NULL,
+    vendor_id          TEXT,
+    vendor_name        TEXT,
+    receipt_id         INTEGER REFERENCES documents (id) ON DELETE SET NULL,
+    UNIQUE (document_id, position)
+);
+
+CREATE INDEX IF NOT EXISTS charges_card_date ON charges (card_last4, date);
 
 CREATE TABLE IF NOT EXISTS scans (
     key             TEXT PRIMARY KEY,
@@ -241,6 +266,8 @@ impl Store {
 
         write_receipt(&transaction, document_id, result_id, result, fallback_date)?;
 
+        write_charges(&transaction, document_id, result)?;
+
         transaction.commit()?;
 
         Ok(document_id)
@@ -343,6 +370,62 @@ fn upsert_document(
 }
 
 /// Replaces the document's report rows with this result's.
+/// A statement's charges, replacing any read from the same document
+/// before. Matches to receipts are made by `charges match`.
+fn write_charges(
+    transaction: &rusqlite::Transaction<'_>,
+    document_id: i64,
+    result: &ReadResult,
+) -> Result<()> {
+    let Some(statement) = &result.statement else {
+        return Ok(());
+    };
+
+    transaction.execute(
+        "DELETE FROM charges WHERE document_id = ?1",
+        params![document_id],
+    )?;
+
+    let catalog = spendyard::catalog::catalog();
+
+    for (position, charge) in statement.charges.iter().enumerate() {
+        let vendor = catalog.by_merchant(&charge.merchant);
+
+        let kind = serde_json::to_value(charge.kind)?
+            .as_str()
+            .unwrap_or("purchase")
+            .to_string();
+
+        transaction.execute(
+            "INSERT INTO charges (document_id, position, issuer, row, date, posted, merchant,
+                 card_last4, name_on_card, amount, currency, original_amount, original_currency,
+                 rate, kind, vendor_id, vendor_name)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            params![
+                document_id,
+                position as i64,
+                statement.issuer,
+                charge.row,
+                charge.date,
+                charge.posted,
+                charge.merchant,
+                charge.card_last4,
+                charge.name_on_card,
+                charge.amount,
+                statement.currency,
+                charge.original_amount,
+                charge.original_currency,
+                charge.rate,
+                kind,
+                vendor.map(|vendor| vendor.id.clone()),
+                vendor.map(|vendor| vendor.name.clone()),
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
 fn write_receipt(
     transaction: &rusqlite::Transaction<'_>,
     document_id: i64,

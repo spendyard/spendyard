@@ -45,6 +45,11 @@ pub struct Vendor {
     #[serde(default)]
     pub domains: Vec<String>,
 
+    /// How the vendor's charges start on card statements, when its name
+    /// alone doesn't find it: `["NOT JUST TI"]`. Matched without case.
+    #[serde(default)]
+    pub descriptors: Vec<String>,
+
     pub category: String,
 
     /// How it usually charges: `seat`, `usage`, `plan`, `one_time`.
@@ -229,6 +234,67 @@ impl Catalog {
         }
 
         self.by_name.get(&key).map(|index| &self.vendors[*index])
+    }
+
+    /// The vendor a charge on a card statement is from, by the merchant as
+    /// printed: `CURSOR USAGE MID APR, SAN FRANCISCO, US`,
+    /// `PLAIN.COM* NOT JUST TI`, `ANTHROPIC: CLAUDE TEAM`.
+    ///
+    /// Tries the vendors' descriptors first, then each part of the name
+    /// (split at `*` and `:`, city and country dropped): as a domain, then
+    /// as a name, then with words dropped from the end.
+    pub fn by_merchant(&self, merchant: &str) -> Option<&Vendor> {
+        let upper = merchant.to_uppercase();
+
+        let by_descriptor = self.vendors.iter().find(|vendor| {
+            vendor
+                .descriptors
+                .iter()
+                .any(|descriptor| upper.starts_with(&descriptor.to_uppercase()))
+        });
+
+        if by_descriptor.is_some() {
+            return by_descriptor;
+        }
+
+        let name = merchant.split(',').next().unwrap_or(merchant);
+
+        let parts = name
+            .split(['*', ':'])
+            .map(str::trim)
+            .filter(|part| part.len() >= 3);
+
+        for part in parts {
+            let looks_like_domain = part.contains('.') && !part.ends_with('.');
+
+            if looks_like_domain && let Some(vendor) = self.by_domain(part) {
+                return Some(vendor);
+            }
+
+            let words: Vec<&str> = part.split_whitespace().collect();
+
+            for length in (1..=words.len()).rev() {
+                let shorter = words[..length].join(" ");
+
+                if shorter.len() < 3 {
+                    break;
+                }
+
+                if let Some(vendor) = self.by_name(&shorter) {
+                    return Some(vendor);
+                }
+
+                let as_domain = shorter.to_lowercase();
+
+                if as_domain.contains('.')
+                    && let Some(vendor) = self.by_domain(&as_domain)
+                {
+                    return Some(vendor);
+                }
+            }
+        }
+
+        None
     }
 
     /// The vendor a receipt names, by domain first, then by name.
@@ -535,5 +601,36 @@ mod tests {
     fn name_keys() {
         assert_eq!(name_key("Neon, LLC"), name_key("Neon Inc."));
         assert_eq!(name_key("RealtimeBoard Inc. dba Miro"), "miro");
+    }
+}
+
+#[cfg(test)]
+mod merchant_tests {
+    #[test]
+    fn statement_merchants_find_their_vendors() {
+        let cases = [
+            ("CURSOR USAGE MID APR, SAN FRANCISCO, US", "cursor.com"),
+            ("SLACK T05MUMGUB3Q, DUBLIN 1, IE", "slack.com"),
+            ("ANTHROPIC: CLAUDE TEAM, SAN FRANCISCO, US", "anthropic.com"),
+            ("CODERABBIT* CODERABBIT, WALNUT CREEK, US", "coderabbit.ai"),
+            ("OPENAI *CHATGPT SUBSCR, SAN FRANCISCO, US", "openai.com"),
+            ("PLAIN.COM* NOT JUST TI, ALTRINCHAM, GB", "plain.com"),
+            ("VERCEL INC., COVINA, US", "vercel.com"),
+            ("POSTMARKAPP.COM, CHICAGO, US", "postmarkapp.com"),
+        ];
+
+        for (merchant, id) in cases {
+            let found = super::catalog()
+                .by_merchant(merchant)
+                .map(|v| v.id.as_str());
+
+            assert_eq!(found, Some(id), "{merchant}");
+        }
+
+        assert!(
+            super::catalog()
+                .by_merchant("REMA 1000 MAJORSTUEN, OSLO, NO")
+                .is_none()
+        );
     }
 }

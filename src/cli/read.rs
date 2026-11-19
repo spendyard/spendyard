@@ -6,12 +6,11 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde_json::json;
 use spendyard::ReadResult;
-use spendyard::extract::schema::DocumentType;
 
 use super::input::{for_each_as_done, read_input};
 use super::models::Models;
 use super::store::{Source, Store};
-use super::{config, pretty};
+use super::{charges, config, pretty};
 
 pub struct Options {
     pub inputs: Vec<PathBuf>,
@@ -54,6 +53,8 @@ pub async fn run(options: Options) -> Result<Outcome> {
         errors: 0,
     };
 
+    let mut statements = 0;
+
     let mut store = if options.no_store {
         None
     } else {
@@ -75,19 +76,24 @@ pub async fn run(options: Options) -> Result<Outcome> {
             Ok(read) => {
                 if let Some(store) = store.as_mut() {
                     save(store, &input, &read)?;
+
+                    if read.result.statement.is_some() {
+                        statements += 1;
+                    }
                 }
 
-                if read.result.document.is_receipt || read.result.document.is_invoice {
+                let has_charges = read
+                    .result
+                    .statement
+                    .as_ref()
+                    .is_some_and(|statement| !statement.charges.is_empty());
+
+                if read.result.document.is_receipt || read.result.document.is_invoice || has_charges
+                {
                     outcome.found += 1;
                 }
 
                 print(&name, &read.result, options.pretty, jsonl)?;
-
-                if read.result.document.kind == DocumentType::CardStatement {
-                    eprintln!(
-                        "spendyard: {name} is a card statement: use `spendyard charges read {name}`"
-                    );
-                }
             }
 
             Err(error) => {
@@ -101,6 +107,18 @@ pub async fn run(options: Options) -> Result<Outcome> {
     };
 
     for_each_as_done(options.inputs, options.concurrency, work, done).await?;
+
+    // New charges are matched to the receipts already in the store.
+    if statements > 0
+        && let Some(store) = &store
+    {
+        let summary = charges::match_all(store).await?;
+
+        if options.pretty {
+            println!();
+            charges::print_summary(&summary);
+        }
+    }
 
     Ok(outcome)
 }

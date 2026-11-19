@@ -1,6 +1,7 @@
 //! The command-line side: files, config and terminal output. None of this
 //! belongs in the library.
 
+pub mod charges;
 pub mod config;
 pub mod config_command;
 pub mod decide;

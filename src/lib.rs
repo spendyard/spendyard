@@ -15,6 +15,7 @@ pub mod format;
 pub mod money;
 pub mod read;
 pub mod result;
+pub mod statement;
 pub mod text;
 pub mod validate;
 
@@ -109,17 +110,45 @@ pub async fn understand(
         return Ok(result);
     }
 
-    // A card statement is many payments, read by `charges read`; the
-    // receipt extractor would only make one invoice of it.
-    if let Some(decision) = &decision
-        && let Some(("card_statement", probability)) = decision.choice("document_type")
-        && probability >= pipeline.threshold
-    {
-        let mut result = result::not_about_money(DocumentType::CardStatement, probability);
+    // A card statement is many payments; the receipt extractor would make
+    // one invoice of it. The first model can say so; without one, a long
+    // PDF is asked about on its first page only, so a statement isn't read
+    // in full twice.
+    let decided_statement =
+        decision
+            .as_ref()
+            .and_then(|decision| match decision.choice("document_type") {
+                Some(("card_statement", probability)) if probability >= pipeline.threshold => {
+                    Some(probability)
+                }
+
+                _ => None,
+            });
+
+    let first_page = if decision.is_none() && statement::is_long_pdf(document) {
+        Some(statement::first_page_is_statement(document, pipeline.extractor).await?)
+    } else {
+        None
+    };
+
+    let certainty = match (decided_statement, &first_page) {
+        (Some(probability), _) => Some(probability),
+        (None, Some((true, _))) => Some(0.9),
+        _ => None,
+    };
+
+    let first_page_usage = first_page.map(|(_, usage)| usage).unwrap_or_default();
+
+    if let Some(certainty) = certainty {
+        let mut result = result::not_about_money(DocumentType::CardStatement, certainty);
 
         result.warnings = warnings;
 
-        attach_decision(&mut result, decision, pipeline);
+        if let Some(decision) = &decision {
+            attach_decision(&mut result, decision, pipeline);
+        }
+
+        add_statement(&mut result, document, pipeline, first_page_usage).await?;
 
         result.meta.ms = started.elapsed().as_millis() as u64;
 
@@ -166,9 +195,37 @@ pub async fn understand(
 
     validate::validate(&mut result, document);
 
+    result.meta.tokens.input += first_page_usage.input;
+    result.meta.tokens.output += first_page_usage.output;
+
+    if result.document.kind == DocumentType::CardStatement {
+        add_statement(&mut result, document, pipeline, extract::Usage::default()).await?;
+    }
+
     result.meta.ms = started.elapsed().as_millis() as u64;
 
     Ok(result)
+}
+
+/// Reads the statement's charges into `result`, and counts their tokens
+/// (plus `earlier`, from deciding it was a statement) in its meta.
+async fn add_statement(
+    result: &mut ReadResult,
+    document: &Document,
+    pipeline: &Pipeline<'_>,
+    earlier: extract::Usage,
+) -> Result<(), ExtractError> {
+    let statement = statement::read_statement(document, pipeline.extractor).await?;
+
+    result.meta.extractor = Some(pipeline.extractor.name());
+    result.meta.model = statement.meta.models.first().cloned();
+
+    result.meta.tokens.input += earlier.input + statement.meta.tokens.input;
+    result.meta.tokens.output += earlier.output + statement.meta.tokens.output;
+
+    result.statement = Some(statement);
+
+    Ok(())
 }
 
 /// "Anthropic (anthropic.com, ai)" when the email's sender is a vendor the
