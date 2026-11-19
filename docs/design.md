@@ -1,0 +1,580 @@
+# Spendyard design
+
+Status: draft, 2026-11-19.
+
+Spendyard has two parts:
+
+1. **`spendyard`, an open-source binary** (Apache 2.0). It reads one
+   document — an email, PDF, image or text — and works out whether it is a
+   receipt or invoice, who the vendor is, how it was paid, what it cost and
+   how it is billed. It runs as a CLI, as an HTTP API and as MCP tools for
+   agents, using the user's own model API keys.
+2. **Spendyard Cloud, a SaaS spend dashboard** for startups. It runs the
+   same binary over a company's receipts, over time and across people, and
+   shows its subscriptions, renewals, seats, AI tool spend and who pays for
+   what.
+
+The principle behind both: **deterministic where possible, a model where
+necessary, and the cheapest model that can answer.**
+
+## 1. Who it is for
+
+**First customer: startups of 10–50 people** with no IT department, no
+single sign-on and no finance integrations. Their SaaS spend is spread
+across founders' cards, personal cards that get expensed, and a growing pile
+of AI tools billed partly by seat and partly by usage.
+
+Existing SaaS management tools (Zylo, Productiv, Torii, Cledara, Spendflo)
+find subscriptions mainly through single sign-on and finance-system
+integrations. That suits larger companies. Spendyard starts from
+**receipts**: point it at a shared inbox or forward receipts to it, and it
+works on day one with nothing else connected.
+
+The angle we lead with is **AI tool spend** (OpenAI, Anthropic, Cursor,
+Copilot, Midjourney, …): prices mix seats and usage and change from month
+to month, and only the receipt says what was actually used.
+
+The open-source binary is how people find us. A developer runs
+`spendyard read` on their own receipts, sees that it works, and brings it to
+their company.
+
+## 2. Goals and non-goals
+
+### Goals
+
+- Read every common input: `.eml`, `.msg`, PDF (with or without a text
+  layer), JPEG / PNG / WebP / HEIC, HTML and plain text.
+- Answer "is this a receipt or invoice?" cheaply enough to run on every
+  message in an inbox.
+- Extract the vendor, payment methods, amounts, billing model and line
+  items (seats, usage, add-ons), with evidence for each value.
+- Pluggable models; the user brings their own keys. Nothing phones home.
+- One self-contained binary per platform.
+- A built-in way to compare models on labelled data (`spendyard eval`).
+
+### Non-goals (binary v1)
+
+- Customer-defined extraction schemas. Spendyard is about spend, not
+  generic document extraction.
+- Anything spanning several documents (subscriptions, renewals,
+  duplicates). That is the cloud's job (§10).
+- Its own OCR engine. Text layers are read directly; images and scanned
+  pages go to models that can see.
+- Receipts other than software and services (groceries, restaurants,
+  travel). They may work, but we don't tune or evaluate for them.
+
+## 3. Language: Rust
+
+The binary is written in Rust.
+
+- **One static binary** per platform (musl on Linux), with no runtime to
+  install.
+- **Better document libraries.** `mail-parser` (from Stalwart) handles
+  real-world MIME well. There are pure-Rust crates for PDF text extraction
+  and rendering (hayro and others, to evaluate in M1), which could let us
+  rasterize scanned PDFs without bundling pdfium.
+- **WebAssembly.** The core (reading, validation, model calls over HTTP)
+  can compile to `wasm32` and run in a Cloudflare Worker. The cloud can then
+  run the exact same code that people run locally.
+- **Crates for the rest:** `clap` (CLI), `axum` (HTTP), `rmcp` (MCP),
+  `reqwest`, `serde`, `schemars` (JSON Schema for structured output).
+
+The cost is slower development than Go, which Stagd uses. We accept that for
+the single binary and for running the same core in the cloud.
+
+HEIC decoding usually needs libheif (C). Options: build it in statically,
+or let vision models that accept HEIC take it directly. To decide in M1.
+
+## 4. Pipeline
+
+```
+input ──▶ 1. read ──▶ 2. locate ──▶ 3. decide ──▶ 4. extract ──▶ 5. validate ──▶ result
+          (fixed)     (fixed)       (cheap model)  (capable model)  (fixed)
+```
+
+### 4.1 Read (deterministic)
+
+Every input becomes one `Document`:
+
+```rust
+struct Document {
+    headers: Option<EmailHeaders>, // from, to, subject, date, message_id
+    parts: Vec<Part>,              // body first, then attachments, forwarded emails flattened
+    warnings: Vec<String>,
+}
+
+struct Part {
+    index: usize,
+    label: String,                 // "body", "attachment:Invoice-2291.pdf"
+    kind: PartKind,                // Text | Html | Pdf | Image | Email | Other
+    mime: String,
+    bytes: Vec<u8>,
+    text: Option<String>,          // HTML as text, or the PDF text layer
+    pages: Option<u32>,
+}
+```
+
+- The format is detected from the file's first bytes, never its extension
+  or `Content-Type`.
+- Forwarded emails (`message/rfc822`) are followed up to 3 levels deep.
+- An email that can't be parsed falls back to being read as text, with a
+  warning. It is not an error.
+- Encrypted or corrupt files are errors that name the problem.
+
+### 4.2 Locate (deterministic first)
+
+Decide which part holds the receipt.
+
+- The body has amounts and a vendor → the body.
+- The body has no amount and there is one PDF or image attachment
+  ("your receipt is attached") → that attachment.
+- Otherwise the first model chooses (§4.3), and if it is unsure, the
+  extractor gets every candidate part, labelled, and says which one it used.
+
+The vendor hint comes from the From domain and the vendor catalog (§8), not
+from a model.
+
+### 4.3 Decide (cheap first model)
+
+One call to a JEV-style decision model answers every multiple-choice and
+yes/no question at once, each with a calibrated probability:
+
+| Question | Type | Options |
+|---|---|---|
+| `document_type` | choice | receipt, invoice, renewal_notice, payment_failed, quote, trial_ending, other |
+| `status` | choice | paid, due, failed, upcoming, none |
+| `part` | choice | built from the document's parts |
+| `billing_model` | choice | subscription, usage, mixed, one_time, unknown |
+| `interval` | choice | month, year, other, none |
+| `paid_by_card` | yes/no | |
+| `has_seats` | yes/no | |
+| `has_usage` | yes/no | |
+
+Routing:
+
+- `document_type` is `other` with high probability → stop. No extraction.
+  This is most of an inbox, at roughly $0.0001 per message.
+- Any answer is below the configured threshold → ask the extractor's model
+  the same questions (§5.1).
+- Otherwise → extract, passing the answers as hints ("has seats and usage:
+  expect both kinds of line").
+
+Decision models choose from options; they don't produce text. So they never
+supply names, amounts or dates.
+
+### 4.4 Extract (capable model)
+
+One structured-output call to the configured extractor, with the chosen part
+(or labelled parts), the hints and the output JSON Schema. Text goes as text.
+PDFs go natively to providers that accept them (Anthropic, OpenAI, Gemini);
+otherwise pages are rendered to images. Images go to vision models.
+
+A scanned PDF or a photo skips the decision model when that model can't see
+it, and the extractor answers the §4.3 questions as well.
+
+### 4.5 Validate (deterministic)
+
+- The lines add up to the subtotal, and subtotal plus tax to the total
+  (allowing for rounding and discounts).
+- Currencies are ISO 4217 codes; dates parse and are plausible (the period
+  end comes after the start, and a renewal comes after the invoice date).
+- A card's last four digits are four digits.
+- **Every value comes with a quote, and the quote must appear in the
+  source text** (normalized for whitespace and number formatting). A value
+  whose quote isn't found is flagged and its confidence lowered. This catches
+  invented values without a second model call. Values read from images can't
+  be checked this way and are marked `evidence_checked: false`.
+- **Cross-check the two models.** If the billing model the lines add up to
+  disagrees with the decision model's `billing_model`, flag it.
+
+A failed check becomes a flag on the result, not an error.
+
+## 5. Plug-in models
+
+### 5.1 Two traits
+
+```rust
+#[async_trait]
+trait Decider {
+    async fn decide(&self, doc: &Document, questions: &[Question]) -> Result<Vec<Answer>>;
+}
+
+#[async_trait]
+trait Extractor {
+    async fn extract(&self, doc: &Document, req: &ExtractRequest) -> Result<Extraction>;
+}
+```
+
+`Question` and `Answer` follow the JEV request format (`choice`, `score`,
+yes/no), so every decision model uses one adapter shape. Any `Extractor` can
+also act as a `Decider` by answering the questions in its structured output.
+Its probabilities aren't calibrated, so it is the fallback, not the default.
+
+### 5.2 Built-in providers
+
+| Provider | Decider | Extractor | Notes |
+|---|---|---|---|
+| `jev` | ✓ | | TypeSafe. Text only, early access. |
+| `clef`, `clef-flash` | ✓ | | Cloudflare Workers AI REST API with the user's token. Accepts small images. Open weights. |
+| `systemone` | ✓ | | Self-hosted Clef, Nimble and similar through llama.cpp or SGLang. |
+| `anthropic` | fallback | ✓ | Reads PDFs natively. |
+| `openai` | fallback | ✓ | Reads PDFs natively. |
+| `gemini` | fallback | ✓ | Reads PDFs natively. |
+| `openai-compatible` | fallback | ✓ | Ollama, vLLM, LM Studio and others, for running locally. |
+| `exec` | ✓ | ✓ | Runs a command: request as JSON on stdin, answer as JSON on stdout. |
+
+Providers are compiled in and register themselves, so adding one is a pull
+request. `openai-compatible` and `exec` cover everything else without a
+fork.
+
+Clef-flash is the default decider (open weights, so it doesn't depend on one
+vendor). JEV is a supported alternative that `eval` measures against it.
+
+### 5.3 Configuration and keys
+
+`~/.config/spendyard/config.toml`, overridable per run with flags and
+environment variables:
+
+```toml
+[decider]
+provider  = "clef-flash"
+threshold = 0.85
+
+[extractor]
+provider = "anthropic"
+model    = "claude-haiku-5-5"
+
+[providers.openai-compatible]
+base_url = "http://localhost:11434/v1"
+```
+
+Keys come only from the environment or the OS keychain
+(`ANTHROPIC_API_KEY`, `SPENDYARD_JEV_KEY`, `CLOUDFLARE_API_TOKEN`,
+`CLOUDFLARE_ACCOUNT_ID`, …), never the config file. Spendyard has no keys of
+its own and sends nothing anywhere except to the providers configured.
+
+`--decider none` skips the first model; `--extractor none` stops after
+deciding.
+
+## 6. Output
+
+```json
+{
+  "document": {
+    "type": "invoice",
+    "is_receipt": true,
+    "is_invoice": true,
+    "status": "paid",
+    "source": "attachment:Invoice-2291.pdf",
+    "confidence": 0.97
+  },
+  "vendor": {
+    "id": "cursor.com",
+    "name": "Cursor",
+    "processor": "stripe",
+    "account": { "email": "billing@example.com", "workspace": "Example Inc", "customer_id": "cus_…" }
+  },
+  "payments": [
+    { "method": "card", "brand": "visa", "last4": "4242", "amount": "112.40" }
+  ],
+  "amount": { "total": "112.40", "subtotal": "92.00", "tax": "20.40", "currency": "USD" },
+  "billing": {
+    "model": "mixed",
+    "interval": "month",
+    "period": { "start": "2026-10-19", "end": "2026-11-18" },
+    "next_renewal": "2026-11-19"
+  },
+  "lines": [
+    {
+      "kind": "seat",
+      "product": "Cursor",
+      "plan": "Pro",
+      "description": "Pro (per seat)",
+      "quantity": 4,
+      "unit": "seat",
+      "unit_price": "20.00",
+      "amount": "80.00",
+      "interval": "month"
+    },
+    {
+      "kind": "usage",
+      "product": "Cursor",
+      "description": "Premium requests over quota",
+      "quantity": 300,
+      "unit": "request",
+      "unit_price": "0.04",
+      "amount": "12.00"
+    }
+  ],
+  "evidence": {
+    "amount.total": { "quote": "Amount paid $112.40", "part": 1, "checked": true },
+    "payments[0].last4": { "quote": "Visa •••• 4242", "part": 1, "checked": true }
+  },
+  "flags": [],
+  "decisions": { "document_type": { "receipt": 0.03, "invoice": 0.95, "other": 0.01 } },
+  "meta": {
+    "spendyard_version": "0.1.0",
+    "schema_version": "2026-11-19",
+    "decider": "clef-flash",
+    "extractor": "anthropic/claude-haiku-5-5",
+    "tokens": { "decider": 2900, "extractor": 4100 },
+    "cost_usd": "0.0061",
+    "ms": 2140
+  }
+}
+```
+
+Notes:
+
+- **Money is a decimal string**, never a float.
+- **A receipt proves payment and an invoice asks for it.** Most SaaS
+  vendors send a "paid invoice", so `type` plus `status` carries the meaning;
+  `is_receipt` and `is_invoice` are shortcuts.
+- **`lines[].kind`**: `seat`, `plan` (flat fee), `usage`, `addon`,
+  `discount`, `credit`, `tax`, `other`.
+- **Price per seat** is the `unit_price` of a `seat` line. It isn't a field
+  of its own, so an invoice with seats on two products (Jira and Confluence)
+  still works.
+- **`billing.model`** comes from the lines: subscription lines only →
+  `subscription`; usage only → `usage`; both → `mixed`.
+- **`vendor.id`** is the canonical domain from the vendor catalog (§8), so the
+  cloud can group by it. `processor` is set when a payment processor (Stripe,
+  Paddle, Lemon Squeezy, …) sent the receipt for the real vendor.
+- **`vendor.account`** holds what can tell two subscriptions with the same
+  vendor apart.
+- **No content is written to disk.** Neither the input nor the result is
+  logged unless `--debug` is given. The only local state is the mailbox scan
+  cursors (§7, Mailboxes).
+
+The JSON Schema for this output is generated from the Rust types and
+published with every release. `schema_version` changes whenever the output
+changes.
+
+## 7. Interfaces
+
+All three run the same pipeline.
+
+### CLI
+
+```bash
+spendyard read invoice.pdf               # JSON result to stdout
+spendyard read message.eml --pretty      # readable summary
+cat receipt.txt | spendyard read -
+spendyard read ./inbox/*.eml --jsonl     # one result per line, run in parallel
+spendyard decide message.eml             # first model only
+spendyard parts message.eml              # list what's in the document, no model calls
+spendyard eval ./testdata                # §9
+spendyard vendors lookup stripe.com      # vendor catalog
+```
+
+Exit codes: 0 receipt or invoice found, 1 none found, 2 error.
+
+### HTTP API: `spendyard serve`
+
+```
+POST /v1/read       body: raw file, multipart or JSON { "base64": … }
+POST /v1/decide
+POST /v1/parts
+GET  /v1/health
+```
+
+Binds to `127.0.0.1` by default. `--token` requires a bearer token. Keys are
+the server's own, from its environment.
+
+### MCP: `spendyard mcp`
+
+MCP over stdio with three tools: `read_document`, `decide_document` and
+`list_parts`. Each takes a file path or base64 content. An agent with a
+mailbox can then sort and read receipts itself.
+
+### Mailboxes: Gmail and Outlook
+
+The CLI can read receipts straight from a mailbox, so nobody has to export
+emails first.
+
+```bash
+spendyard login gmail                    # opens the browser; token goes to the OS keychain
+spendyard login outlook                  # device code: open a URL, type the code
+spendyard accounts                       # signed-in mailboxes
+
+spendyard scan gmail --since 2026-01-01 --jsonl > receipts.jsonl
+spendyard scan outlook --folder Receipts
+spendyard scan gmail --new               # only messages since the last scan
+spendyard scan imap://mail.example.com   # anything else, over IMAP
+```
+
+How a scan works:
+
+1. **Filter on the server first.** Search for likely receipts so most mail
+   is never downloaded: Gmail's `q` (`newer_than:1y (receipt OR invoice OR
+   faktura OR kvittering OR has:attachment)`), Microsoft Graph's `$search`,
+   and From addresses from the vendor catalog (§8).
+2. **Decide on headers and a snippet** where that is enough, then download
+   the full message (raw MIME) only for likely receipts.
+3. **Run the normal pipeline**, one result per message, with `source`
+   naming the mailbox and message ID.
+4. **Remember what was scanned.** Message IDs and the mailbox's change
+   cursor (Gmail `historyId`, Graph delta link) go to
+   `~/.local/share/spendyard/state.db`, so `--new` reads only new mail. No
+   message content or results are stored there.
+
+Providers:
+
+| Mailbox | API | Sign-in | Permission |
+|---|---|---|---|
+| Gmail / Google Workspace | Gmail API | OAuth in the browser, with a local redirect (`http://127.0.0.1:<port>`). Google doesn't allow device codes for Gmail. | `gmail.readonly` |
+| Outlook / Microsoft 365 | Microsoft Graph | Device code, or the browser with a local redirect | `Mail.Read`, `offline_access` |
+| Anything else | IMAP | Password or app password, or XOAUTH2 | |
+
+Tokens live only in the OS keychain (macOS Keychain, Windows Credential
+Manager, Secret Service on Linux), never in a file.
+
+**The catch: who owns the OAuth app.**
+
+- **Gmail.** `gmail.readonly` is a *restricted* scope. An app that signs in
+  more than 100 users with it must pass Google's verification and a
+  yearly third-party security assessment (CASA). For an open-source CLI the
+  way out is the same as for model keys: **users bring their own OAuth
+  client.** They create one in their own Google Cloud project (an internal
+  app for a Workspace domain needs no verification), and
+  `spendyard login gmail --client-id …` uses it. A guide walks through the
+  setup. Spendyard Cloud gets its own verified app later; that cost belongs
+  to the cloud.
+- **Outlook.** We register one multi-tenant Microsoft Entra app with
+  `Mail.Read` (delegated) and complete publisher verification. Users in
+  most Microsoft 365 tenants can consent themselves. Where an admin has
+  blocked user consent, the admin approves the app once, or the company
+  uses its own app registration (`--client-id`), as with Gmail.
+
+The MCP server gets a `scan_mailbox` tool on top of the same code, so an
+agent can ask for "receipts from the last month" without handling MIME
+itself.
+
+## 8. Vendor catalog
+
+A data file in the repo (`vendors/*.toml`), compiled into the binary:
+
+```toml
+[cursor]
+id      = "cursor.com"
+name    = "Cursor"
+domains = ["cursor.com", "cursor.sh", "anysphere.inc"]
+category = "ai-dev-tools"
+pricing = ["seat", "usage"]
+```
+
+It covers:
+
+- vendors: canonical ID, name, domains, aliases and category
+- payment processors (Stripe, Paddle, Lemon Squeezy, FastSpring, Chargebee,
+  Apple, Google Play) and how to find the real vendor on their receipts
+- the From addresses each vendor sends receipts from
+
+The catalog sets the vendor hint before any model call and makes `vendor.id`
+consistent. Contributions improve results for everyone.
+
+## 9. Evaluation
+
+```bash
+spendyard eval ./testdata \
+  --decider clef-flash,jev \
+  --extractor anthropic/claude-haiku-5-5,openai-compatible/qwen3
+```
+
+- `testdata/` holds inputs with expected results in `*.expected.json`,
+  personal details removed. It ships in the repo as a public set of SaaS and
+  AI-tool receipts, which also shows that Spendyard works.
+- For each combination: accuracy per field, how often the decider routed
+  correctly, flags raised, cost and time per document.
+- The first questions to answer: "renewal notice vs receipt" (decision
+  models are weaker at reasoning), Norwegian, Swedish and German receipts,
+  and processor vs vendor.
+- Any change to prompts, the schema or defaults comes with an `eval` run.
+
+## 10. Spendyard Cloud
+
+The dashboard does what needs many documents over time. The binary does
+everything about a single document.
+
+| Open binary | Cloud |
+|---|---|
+| Reading every format | Receipt sources: a forwarding address, a shared inbox, Gmail and Microsoft 365 |
+| Decide and extract | Receipt storage and search |
+| Validation and evidence | Subscriptions put together from receipts (vendor, account, plan, interval) |
+| Vendor catalog | Renewal calendar and alerts ("Linear renews yearly in 14 days") |
+| CLI, `serve`, `mcp`, `eval` | Price changes ("Cursor went from $20 to $40 a seat") |
+| | AI tool spend: seats vs usage month by month, per tool |
+| | Cards' last four digits matched to people; spend per person and team |
+| | Duplicates across forwarded copies; overlapping tools |
+| | Expense exports for accounting (Fiken, Tripletex, Xero, QuickBooks) |
+| | Later: seats paid for vs used, by connecting Google Workspace, Microsoft 365 or GitHub |
+
+### Cloud v1 for startups
+
+1. Sign up, get a forwarding address, forward receipts (or connect one
+   Gmail or Microsoft 365 mailbox).
+2. **Subscriptions**: every vendor, what it costs per month, interval, seats,
+   card and owner.
+3. **Renewals**: what renews in the next 30 days.
+4. **AI spend**: per tool and month, seats vs usage.
+5. A weekly email: new subscriptions, price changes, upcoming renewals.
+
+### How the cloud uses the binary
+
+The core compiles to WebAssembly and runs in a Cloudflare Worker, so the
+cloud reads documents with exactly the code that is open. The cloud uses its
+own model keys and bills for usage.
+
+### Sending from the CLI to the cloud (later)
+
+A company can also run `spendyard` itself, on a laptop or a server of its
+own, and send results to the cloud:
+
+```bash
+spendyard login cloud                    # device code: open a URL, type the code
+spendyard scan gmail --new --push        # read locally, send results
+spendyard push receipts.jsonl            # send results produced earlier
+spendyard push invoice.pdf --with-file   # also store the original in the cloud
+```
+
+- By default only **results** are sent. Documents stay where they are,
+  which suits companies that won't hand their mailbox to a SaaS.
+- `--with-file` also uploads the original, so the cloud can show it.
+- The cloud might also run some of the work for the CLI: its own model keys
+  (no need to bring your own), a vendor catalog newer than the binary's, or
+  receipts stored for search. These are services the CLI calls when you are
+  signed in to the cloud. The binary must keep working fully without them.
+
+Not part of v1; the API for it is designed with Cloud C1.
+
+Cloud data handling (retention, deletion, subprocessors) gets its own
+document before launch.
+
+## 11. Milestones
+
+| Milestone | Scope |
+|---|---|
+| **M0: Repo** | Cargo workspace, CI, release builds for macOS and Linux (arm64 and x86_64), Apache 2.0 licence, README. |
+| **M1: Read** | `Document` from eml, msg, PDF (text layer), images, HTML and text; `spendyard parts`. Pick the PDF crates and the HEIC approach. |
+| **M2: Extract** | `Extractor` trait; `anthropic`, `openai`, `gemini` and `openai-compatible`; output schema; validation and evidence checks; `spendyard read`. |
+| **M3: Decide** | `Decider` trait; `clef-flash`, `clef`, `jev`, `systemone`; routing and thresholds; LLM fallback. |
+| **M4: Eval** | `spendyard eval`, first 200 labelled documents, defaults chosen from the results. |
+| **M5: Serve and MCP** | `spendyard serve` and `spendyard mcp`; `exec` provider. |
+| **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; scan state; `scan_mailbox` MCP tool; Gmail setup guide. |
+| **M6: Vendor catalog** | First 200 vendors, AI tools first; processor rules. |
+| **M7: Public release** | Docs, Homebrew, crates.io, announcement. |
+| **Cloud C1** | Forwarding address, storage, subscriptions, renewals, AI spend, weekly email. |
+| **Cloud C2** | `spendyard login cloud` and `push`; cloud services the CLI can call (models, catalog, storage); a verified Google app for the cloud. |
+
+## 12. Open questions
+
+- Name and home on GitHub (organization, crate name).
+- The PDF crates: is a pure-Rust renderer good enough for scanned
+  receipts, or do we bundle pdfium?
+- HEIC: libheif built in, or vision models only?
+- Is JEV still in early access, and on what retention terms?
+- Gmail for the CLI: is "bring your own OAuth client" acceptable to
+  startups, or is it worth paying for Google's verification early?
+- Default thresholds per question, set from the `eval` results.
+- Cloud stack: Cloudflare Workers with the WebAssembly core is the
+  assumption. Confirm when Cloud C1 starts.
