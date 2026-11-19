@@ -20,6 +20,7 @@ html2text = "0.17"
 keyring = "4"
 lopdf = { version = "0.47", default-features = false }
 mail-parser = "1"
+pdf-extract = "0.12.1"
 reqwest = { version = "0.13", features = ["form", "json"] }
 rmcp = { version = "3", features = ["server", "macros", "transport-io"] }
 rpassword = "7"

@@ -36,7 +36,18 @@ pub fn read(bytes: &[u8]) -> Result<Pdf, ReadError> {
         .extract_text_with_limit(&page_numbers, MAX_DECOMPRESSED_BYTES)
         .unwrap_or_default();
 
-    let text = text::tidy(&raw);
+    let lopdf_text = text::tidy(&raw);
+
+    // lopdf misses text in some fonts (Northflank's invoices lose their
+    // amounts). When its text looks thin or garbled, pdf-extract reads it
+    // again, and the better of the two is kept.
+    let text = if looks_thin(&lopdf_text, pages) || looks_garbled(&lopdf_text) {
+        let second = second_reading(bytes);
+
+        better_text(lopdf_text, second)
+    } else {
+        lopdf_text
+    };
 
     let visible = text.chars().filter(|c| !c.is_whitespace()).count();
 
@@ -52,6 +63,45 @@ pub fn read(bytes: &[u8]) -> Result<Pdf, ReadError> {
     };
 
     Ok(pdf)
+}
+
+/// Below this many visible characters per page, lopdf's text is worth a
+/// second reading. A one-page receipt has several hundred.
+const THIN_CHARS_PER_PAGE: usize = 200;
+
+fn looks_thin(text: &str, pages: u32) -> bool {
+    let visible = text.chars().filter(|c| !c.is_whitespace()).count();
+
+    visible < THIN_CHARS_PER_PAGE * pages.max(1) as usize
+}
+
+/// The text as pdf-extract reads it. It panics on some malformed PDFs,
+/// which only means there is no second reading.
+fn second_reading(bytes: &[u8]) -> Option<String> {
+    let extracted = std::panic::catch_unwind(|| pdf_extract::extract_text_from_mem(bytes));
+
+    match extracted {
+        Ok(Ok(raw)) => Some(text::tidy(&raw)),
+        _ => None,
+    }
+}
+
+/// The readable one with the most visible text; the first when neither is
+/// readable.
+fn better_text(first: String, second: Option<String>) -> String {
+    let Some(second) = second else {
+        return first;
+    };
+
+    let visible = |text: &str| text.chars().filter(|c| !c.is_whitespace()).count();
+
+    let second_wins = match (looks_garbled(&first), looks_garbled(&second)) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => visible(&second) > visible(&first),
+    };
+
+    if second_wins { second } else { first }
 }
 
 /// Symbols that are rare in real text but fill a text layer decoded with
@@ -95,6 +145,18 @@ mod tests {
                        https://pay.stripe.com/receipts/acct_1?s=ap&id=5";
 
         assert!(!looks_garbled(receipt));
+    }
+
+    #[test]
+    fn the_readable_longer_text_wins() {
+        let short = "Invoice Paid".to_string();
+        let full = "Invoice Paid Total $286.77 Total paid $286.77".to_string();
+        let garbled = "Na!$ on &ar#: +NNK78P,KON.O )+, N, 4 *at$ o/ (\"r&9as$".to_string();
+
+        assert_eq!(better_text(short.clone(), Some(full.clone())), full);
+        assert_eq!(better_text(full.clone(), Some(short.clone())), full);
+        assert_eq!(better_text(garbled.clone(), Some(short.clone())), short);
+        assert_eq!(better_text(short.clone(), None), short);
     }
 
     #[test]
