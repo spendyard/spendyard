@@ -283,7 +283,7 @@ threshold = 0.85
 
 [extractor]
 provider = "anthropic"      # anthropic | openai | gemini | openai-compatible
-model    = "claude-opus-5-5"  # the default; claude-haiku-5-5 costs far less
+model    = "claude-haiku-5-5" # the default; claude-opus-5-5 for hard documents
 effort   = "low"            # Anthropic only
 
 [providers.openai-compatible]
@@ -297,8 +297,9 @@ Keys come only from the environment or the OS keychain
 the config file. `api_key_env` under `[providers.<name>]` reads a key from
 another variable.
 
-**Defaults (M2).** Anthropic with `claude-opus-5-5`, structured outputs and
-server-side fallback on refusals. OpenAI, Gemini and `openai-compatible`
+**Defaults (M2).** Anthropic with `claude-haiku-5-5` and structured
+outputs: cheap enough to run on every receipt. Opus and Sonnet models also
+get server-side fallback on refusals. OpenAI, Gemini and `openai-compatible`
 have no default model: models change too fast to pick one in code, so the
 config or `--extractor provider/model` names it.
 

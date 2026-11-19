@@ -196,19 +196,7 @@ pub fn assemble(
 
     let lines: Vec<Line> = output.lines.into_iter().map(normalize_line).collect();
 
-    let billing = output.billing.map(|billing| {
-        let start = present(billing.period_start);
-        let end = present(billing.period_end);
-
-        let has_dates = start.is_some() || end.is_some();
-
-        Billing {
-            model: billing_model_from_lines(&lines).unwrap_or(billing.model),
-            interval: billing.interval,
-            period: has_dates.then_some(Period { start, end }),
-            next_renewal: present(billing.next_renewal),
-        }
-    });
+    let billing = billing(output.billing, &lines);
 
     let evidence = output
         .evidence
@@ -226,9 +214,9 @@ pub fn assemble(
 
     ReadResult {
         document: summary,
-        vendor: output.vendor.map(vendor),
+        vendor: vendor(output.vendor),
         payments: output.payments.into_iter().map(normalize_payment).collect(),
-        amount: output.amount.map(normalize_amount),
+        amount: normalize_amount(output.amount),
         billing,
         lines,
         invoice_number: present(output.invoice_number),
@@ -267,17 +255,50 @@ pub fn billing_model_from_lines(lines: &[Line]) -> Option<BillingModel> {
     }
 }
 
-fn vendor(vendor: crate::extract::schema::Vendor) -> Vendor {
-    Vendor {
+fn billing(billing: crate::extract::schema::Billing, lines: &[Line]) -> Option<Billing> {
+    let start = present(billing.period_start);
+    let end = present(billing.period_end);
+    let next_renewal = present(billing.next_renewal);
+
+    let has_dates = start.is_some() || end.is_some();
+
+    let model = billing_model_from_lines(lines).unwrap_or(billing.model);
+
+    let nothing_known = model == BillingModel::Unknown
+        && billing.interval.is_none()
+        && !has_dates
+        && next_renewal.is_none();
+
+    if nothing_known {
+        return None;
+    }
+
+    let billing = Billing {
+        model,
+        interval: billing.interval,
+        period: has_dates.then_some(Period { start, end }),
+        next_renewal,
+    };
+
+    Some(billing)
+}
+
+/// `None` when the model found no vendor.
+fn vendor(vendor: crate::extract::schema::Vendor) -> Option<Vendor> {
+    let name = present(Some(vendor.name))?;
+
+    let vendor = Vendor {
         id: present(vendor.domain).as_deref().and_then(vendor_id),
-        name: vendor.name,
+        name,
         processor: present(vendor.processor),
         account: Account {
             email: present(vendor.account_email),
             workspace: present(vendor.account_workspace),
             customer_id: present(vendor.account_customer_id),
         },
-    }
+    };
+
+    Some(vendor)
 }
 
 /// `https://www.Cursor.com/` → `cursor.com`.
@@ -315,13 +336,21 @@ fn normalize_money(value: Option<String>) -> Option<String> {
     present(value).map(|text| money::normalize(&text).unwrap_or(text))
 }
 
-fn normalize_amount(amount: Amount) -> Amount {
-    Amount {
+/// `None` when the model found no amounts.
+fn normalize_amount(amount: Amount) -> Option<Amount> {
+    let amount = Amount {
         total: normalize_money(amount.total),
         subtotal: normalize_money(amount.subtotal),
         tax: normalize_money(amount.tax),
         currency: present(amount.currency).map(|code| code.to_uppercase()),
-    }
+    };
+
+    let empty = amount.total.is_none()
+        && amount.subtotal.is_none()
+        && amount.tax.is_none()
+        && amount.currency.is_none();
+
+    (!empty).then_some(amount)
 }
 
 fn normalize_payment(payment: Payment) -> Payment {

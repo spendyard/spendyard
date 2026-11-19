@@ -8,7 +8,7 @@
 use schemars::JsonSchema;
 use schemars::generate::SchemaSettings;
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 /// Everything the extractor reads from one document.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -25,14 +25,14 @@ pub struct ModelOutput {
     /// How sure you are of the whole reading, from 0 to 1.
     pub confidence: f64,
 
-    pub vendor: Option<Vendor>,
+    pub vendor: Vendor,
 
     /// How it was paid. Empty when the document doesn't say.
     pub payments: Vec<Payment>,
 
-    pub amount: Option<Amount>,
+    pub amount: Amount,
 
-    pub billing: Option<Billing>,
+    pub billing: Billing,
 
     /// Every line item, including discounts and credits. Tax is not a line.
     pub lines: Vec<Line>,
@@ -309,6 +309,9 @@ fn strictify(value: &mut Value) {
             for child in object.values_mut() {
                 strictify(child);
             }
+
+            flatten_choices(object);
+            drop_nullability(object);
         }
 
         Value::Array(items) => {
@@ -318,6 +321,138 @@ fn strictify(value: &mut Value) {
         }
 
         _ => {}
+    }
+}
+
+/// Anthropic allows at most this many fields with `anyOf` or a type list.
+pub const MAX_UNIONS: usize = 16;
+
+/// An enum whose values have descriptions comes out as `oneOf` of
+/// `const`s. That is a union per field, and providers limit unions, so it
+/// becomes one plain `enum` with the value descriptions in the field's
+/// description.
+fn flatten_choices(object: &mut Map<String, Value>) {
+    let Some(Value::Array(branches)) = object.get("oneOf") else {
+        return;
+    };
+
+    let mut values = Vec::new();
+    let mut notes = Vec::new();
+
+    for branch in branches {
+        let constant = branch.get("const").cloned().map(|value| vec![value]);
+        let listed = branch.get("enum").and_then(Value::as_array).cloned();
+
+        let Some(branch_values) = constant.or(listed) else {
+            return;
+        };
+
+        if let Some(note) = branch.get("description").and_then(Value::as_str) {
+            for value in &branch_values {
+                notes.push(format!("{}: {note}", value.as_str().unwrap_or_default()));
+            }
+        }
+
+        values.extend(branch_values);
+    }
+
+    object.remove("oneOf");
+
+    object.insert("type".to_string(), json!("string"));
+    object.insert("enum".to_string(), Value::Array(values));
+
+    if !notes.is_empty() {
+        let field = object
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+
+        let combined = format!("{field} {}.", notes.join("; ")).trim().to_string();
+
+        object.insert("description".to_string(), json!(combined));
+    }
+}
+
+/// Optional text and objects lose `null` to keep unions under
+/// [`MAX_UNIONS`]: an empty string means "not on the document", and
+/// optional objects are always given (with empty fields). Optional numbers
+/// and enums stay nullable, as `anyOf` with a null branch, which every
+/// provider accepts alongside `enum`.
+fn drop_nullability(object: &mut Map<String, Value>) {
+    let Some(Value::Array(types)) = object.get("type") else {
+        return;
+    };
+
+    let has_null = types.iter().any(|kind| kind == "null");
+
+    let others: Vec<Value> = types
+        .iter()
+        .filter(|kind| *kind != "null")
+        .cloned()
+        .collect();
+
+    if !has_null || others.len() != 1 {
+        return;
+    }
+
+    let kind = others[0].clone();
+
+    let is_enum = object.contains_key("enum");
+
+    if !is_enum && (kind == "string" || kind == "object") {
+        object.insert("type".to_string(), kind.clone());
+
+        if kind == "string" {
+            let field = object
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+
+            let note = format!("{field} Empty string when the document doesn't say.");
+
+            object.insert("description".to_string(), json!(note.trim()));
+        }
+
+        return;
+    }
+
+    let description = object.remove("description");
+
+    let mut present = std::mem::take(object);
+
+    present.insert("type".to_string(), kind);
+
+    if let Some(Value::Array(values)) = present.get_mut("enum") {
+        values.retain(|value| !value.is_null());
+    }
+
+    let absent = json!({ "type": "null" });
+
+    object.insert("anyOf".to_string(), json!([Value::Object(present), absent]));
+
+    if let Some(description) = description {
+        object.insert("description".to_string(), description);
+    }
+}
+
+/// Fields whose schema is a union: `anyOf`, `oneOf` or a type list.
+pub fn count_unions(value: &Value) -> usize {
+    match value {
+        Value::Object(object) => {
+            let is_union = object.contains_key("anyOf")
+                || object.contains_key("oneOf")
+                || matches!(object.get("type"), Some(Value::Array(_)));
+
+            let children: usize = object.values().map(count_unions).sum();
+
+            children + usize::from(is_union)
+        }
+
+        Value::Array(items) => items.iter().map(count_unions).sum(),
+
+        _ => 0,
     }
 }
 
@@ -389,6 +524,50 @@ mod tests {
         for banned in ["$ref", "$defs", "minimum", "\"format\"", "$schema"] {
             assert!(!text.contains(banned), "{banned} in schema: {text}");
         }
+    }
+
+    #[test]
+    fn unions_stay_within_the_provider_limit() {
+        let schema = model_output_schema();
+
+        let unions = count_unions(&schema);
+
+        assert!(unions <= MAX_UNIONS, "{unions} unions");
+        assert!(!schema.to_string().contains("oneOf"));
+    }
+
+    #[test]
+    fn optional_text_is_a_plain_string_and_enums_stay_nullable() {
+        let schema = model_output_schema();
+
+        let billing = &schema["properties"]["billing"];
+
+        assert_eq!(billing["type"], "object");
+
+        let renewal = &billing["properties"]["next_renewal"];
+
+        assert_eq!(renewal["type"], "string");
+        assert!(
+            renewal["description"]
+                .as_str()
+                .unwrap()
+                .contains("Empty string")
+        );
+
+        let interval = &billing["properties"]["interval"];
+
+        assert_eq!(interval["anyOf"][0]["enum"].as_array().unwrap().len(), 5);
+        assert_eq!(interval["anyOf"][1]["type"], "null");
+
+        let kind = &schema["properties"]["document_type"];
+
+        assert_eq!(kind["type"], "string");
+        assert!(
+            kind["description"]
+                .as_str()
+                .unwrap()
+                .contains("renewal_notice: Says a charge is coming")
+        );
     }
 
     #[test]

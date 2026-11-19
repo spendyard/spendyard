@@ -112,7 +112,7 @@ pub struct Settings {
 }
 
 /// The default model for Anthropic.
-pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-opus-5-5";
+pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-haiku-5-5";
 
 /// Generous enough for an invoice with many lines.
 const DEFAULT_MAX_TOKENS: u32 = 16_000;
