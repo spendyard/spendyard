@@ -9,6 +9,8 @@ aliases = ["Anthropic, PBC"]             # names on receipts: legal, old, tradin
 domains = ["claude.com", "claude.ai"]    # other domains its site and mail use; subdomains match
 category = "ai"
 pricing = ["usage", "seat"]              # seat, usage, plan, one_time
+descriptors = ["NOT JUST TI"]            # optional: how its charges start on card statements,
+                                         # when the name or domain alone doesn't find it
 ```
 
 Categories: ai, dev-tools, infrastructure, observability, security, data,
