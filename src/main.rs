@@ -145,8 +145,20 @@ enum Command {
     /// Sign in to a mailbox. Outlook signs in with a code you enter in the
     /// browser; the token goes to the OS keychain.
     Login {
-        /// outlook
+        /// outlook or imap (Gmail, iCloud, Fastmail, Yahoo and others, with
+        /// an app password)
         provider: String,
+
+        /// The mailbox address, for imap.
+        address: Option<String>,
+
+        /// The IMAP server as host:port. Default: guessed from the address.
+        #[arg(long)]
+        server: Option<String>,
+
+        /// The IMAP user name, when it isn't the address.
+        #[arg(long)]
+        username: Option<String>,
 
         /// The OAuth app to sign in with. Default: the config.
         #[arg(long)]
@@ -170,7 +182,7 @@ enum Command {
     /// Read receipts straight from a mailbox: list messages since the last
     /// scan, keep the ones likely about money, and read those.
     Scan {
-        /// outlook
+        /// outlook or imap
         provider: String,
 
         /// Which signed-in account, when there are several.
@@ -456,11 +468,21 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
 
         Command::Login {
             provider,
+            address,
+            server,
+            username,
             client_id,
             tenant,
-        } => cli::mailbox_commands::login(&provider, client_id, tenant)
-            .await
-            .map(|()| ExitCode::SUCCESS),
+        } => cli::mailbox_commands::login(cli::mailbox_commands::LoginOptions {
+            provider,
+            address,
+            client_id,
+            tenant,
+            server,
+            username,
+        })
+        .await
+        .map(|()| ExitCode::SUCCESS),
 
         Command::Logout { account } => {
             cli::mailbox_commands::logout(&account).map(|()| ExitCode::SUCCESS)

@@ -16,18 +16,23 @@ const KEYCHAIN_SERVICE: &str = "spendyard";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
-    /// `outlook`, later `gmail` and `imap`.
+    /// `outlook` or `imap`.
     pub provider: String,
 
     /// The mailbox address.
     pub address: String,
 
-    /// The OAuth app signed in with.
+    /// The OAuth app signed in with (Outlook); empty for IMAP.
+    #[serde(default)]
     pub client_id: String,
 
     /// Microsoft tenant, for Outlook.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant: Option<String>,
+
+    /// `host:port`, for IMAP.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<String>,
 
     /// Where the refresh token is: `keychain` or `file`.
     pub token_store: String,

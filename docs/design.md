@@ -572,8 +572,32 @@ Run on the first real mailbox (2026-11-19): the pre-filter kept 91 of the
 (newsletters, a security alert, a support thread, internal mail) and Haiku
 read 7 failed payments and unpaid invoices. 19 seconds in all.
 
+**IMAP (built after Outlook).** For Gmail without an OAuth app, and for
+iCloud, Fastmail, Yahoo, Proton (through Proton Bridge) and self-hosted
+mail: `spendyard login imap you@gmail.com` asks for the password without
+echoing it (or reads it from standard input), checks it by signing in, and
+keeps it in the keychain. The server is known for common providers and
+`imap.<domain>:993` otherwise (`--server` overrides); Outlook and Microsoft
+365 refuse passwords over IMAP and are pointed at `login outlook`. Gmail,
+iCloud, Yahoo and Fastmail need an **app password** (Gmail: 2-Step
+Verification on, then myaccount.google.com/apppasswords; some Workspace
+admins turn app passwords off).
+
+`spendyard scan imap` scans Gmail's "All Mail" (found by its special-use
+flag, since the name is translated) or INBOX elsewhere (`--folder`
+overrides). It searches `SINCE` the date, or after the last UID seen when
+the folder's UIDVALIDITY hasn't changed; fetches only headers for the
+pre-filter, without marking anything read; downloads the likely ones; and
+reads them through the same steps as Outlook. Connections are TLS with the
+system's certificate store; plain IMAP is allowed only to this machine on a
+port other than 993 (Proton Bridge, test servers).
+
+Tested against a local IMAP server (GreenMail) with receipts, a forwarded
+receipt, a renewal notice, a failed payment and non-receipts: all read as
+expected, and a second scan found nothing new.
+
 `spendyard accounts` and `spendyard logout` manage sign-ins, and MCP has a
-`scan_mailbox` tool. Until Spendyard registers its own Entra app, Outlook
+`scan_mailbox` tool for both. Until Spendyard registers its own Entra app, Outlook
 needs an app ID of the user's own (delegated `Mail.Read`, public client
 flows allowed).
 
@@ -905,7 +929,7 @@ document before launch.
 | **M3: Decide** | `Decider` trait; `clef-flash`, `clef`, `jev`, `systemone`; routing and thresholds; LLM fallback. Built, with the extractor as the fallback; `spendyard decide`, `spendyard config`. Not yet run against a real decision model (no key). |
 | **M4: Eval** | `spendyard eval`, first 200 labelled documents, defaults chosen from the results. Built: `spendyard label` and `spendyard eval`; a first private set of 26. Still to do: grow it to 200 with real non-receipts from an inbox, review the drafts, then set the threshold and default models from it. |
 | **M5: MCP and exec** | `spendyard mcp`; `exec` provider. Done; `serve` was dropped (the HTTP API is the cloud's). |
-| **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; `scan_mailbox` MCP tool; Gmail setup guide. Outlook done and run on a real mailbox; still to do: Gmail, IMAP, registering Spendyard's own Entra app. |
+| **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; `scan_mailbox` MCP tool; Gmail setup guide. Outlook done and run on a real mailbox; IMAP done (Gmail with an app password, iCloud, Fastmail, Yahoo, others), tested on a local server; still to do: Gmail through its API, registering Spendyard's own Entra app. |
 | **M5c: Store and reports** | `~/.spendyard` with SQLite (`rusqlite`, SQLite compiled in); `read` and `scan` store results; `report`, `subscriptions`, `receipts`, `edit`; exchange rates. Done; still to do: grouping by account, price changes. |
 | **M6: Vendor catalog** | First 200 vendors, AI tools first; processor rules. Done: 248 vendors, 18 processors, `spendyard vendors`. |
 | **M7: Public release** | Docs, Homebrew, crates.io, announcement. |

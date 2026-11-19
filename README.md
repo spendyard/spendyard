@@ -10,8 +10,8 @@ own model API keys. Nothing is sent anywhere except to the
 model providers you configure.
 
 > **Status:** early development. `parts`, `read`, `decide`, `config`, `label`,
-> `eval`, `mcp`, `login`/`scan` for Outlook, and the store with its reports work;
-> Gmail, IMAP and the cloud come next. The design is in
+> `eval`, `mcp`, `login`/`scan` for Outlook and IMAP (Gmail with an app password),
+> and the store with its reports work; the cloud comes next. The design is in
 > [docs/design.md](docs/design.md).
 
 ## How it works
@@ -90,6 +90,16 @@ spendyard scan outlook --folder Receipts --since 2026-01-01 --save ./receipts
 spendyard accounts
 ```
 
+Gmail, iCloud, Fastmail, Yahoo and most other mail over IMAP, with an app
+password (Gmail: turn on 2-Step Verification, then create one at
+myaccount.google.com/apppasswords):
+
+```bash
+spendyard login imap you@gmail.com        # asks for the app password, keeps it in the keychain
+spendyard scan imap --dry-run
+spendyard scan imap -d clef-flash
+```
+
 Everything read or scanned is kept in `~/.spendyard/spendyard.db`
 (`--no-store` to skip), and reported from there:
 
@@ -104,9 +114,7 @@ spendyard vendors unknown                  # vendors on your receipts the catalo
 
 ### Coming later
 
-```bash
-spendyard login gmail
-```
+Gmail through its own API, for workspaces where IMAP is turned off.
 
 ## Building
 

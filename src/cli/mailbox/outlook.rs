@@ -79,6 +79,7 @@ pub async fn login(client_id: &str, tenant: &str) -> Result<Account> {
         address,
         client_id: client_id.to_string(),
         tenant: Some(tenant.to_string()),
+        server: None,
         token_store: String::new(),
     };
 

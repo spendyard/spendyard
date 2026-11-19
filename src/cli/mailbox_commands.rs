@@ -35,11 +35,34 @@ fn outlook_app(
     Ok((client_id, tenant))
 }
 
-pub async fn login(
-    provider: &str,
-    client_id: Option<String>,
-    tenant: Option<String>,
-) -> Result<()> {
+pub struct LoginOptions {
+    pub provider: String,
+
+    /// The mailbox address, for IMAP.
+    pub address: Option<String>,
+
+    pub client_id: Option<String>,
+    pub tenant: Option<String>,
+
+    /// `host:port`, for IMAP; guessed from the address otherwise.
+    pub server: Option<String>,
+
+    /// For IMAP, when it isn't the address.
+    pub username: Option<String>,
+}
+
+pub async fn login(options: LoginOptions) -> Result<()> {
+    let LoginOptions {
+        provider,
+        address,
+        client_id,
+        tenant,
+        server,
+        username,
+    } = options;
+
+    let provider = provider.as_str();
+
     let config = config::load()?;
 
     match provider {
@@ -56,10 +79,81 @@ pub async fn login(
             Ok(())
         }
 
-        "gmail" | "imap" => bail!("{provider} isn't supported yet; Outlook is"),
+        "imap" => {
+            let Some(address) = address else {
+                bail!("which mailbox? `spendyard login imap you@example.com`");
+            };
 
-        other => bail!("unknown mailbox {other:?}; use outlook"),
+            login_imap(&address.to_lowercase(), server, username).await
+        }
+
+        "gmail" => bail!(
+            "Gmail goes through IMAP with an app password: `spendyard login imap you@gmail.com`. Create the app password at myaccount.google.com/apppasswords (2-Step Verification must be on)"
+        ),
+
+        other => bail!("unknown mailbox {other:?}; use outlook or imap"),
     }
+}
+
+/// Signs in to an IMAP mailbox: asks for the (app) password, checks it by
+/// signing in, and keeps it in the keychain.
+async fn login_imap(address: &str, server: Option<String>, username: Option<String>) -> Result<()> {
+    let server = match server {
+        Some(server) => server,
+        None => mailbox::imap::server_for(address)?,
+    };
+
+    let username = username.unwrap_or_else(|| address.to_string());
+
+    let password = read_password(&format!(
+        "Password (or app password) for {username} at {server}: "
+    ))?;
+
+    let session = mailbox::imap::connect(&server, &username, &password).await?;
+
+    session.logout().await;
+
+    let account = accounts::Account {
+        provider: "imap".to_string(),
+        address: address.to_string(),
+        client_id: String::new(),
+        tenant: None,
+        server: Some(server.clone()),
+        token_store: String::new(),
+    };
+
+    let account = accounts::add(account, &password)?;
+
+    println!(
+        "signed in to {} at {server} (password in the {})",
+        account.address, account.token_store
+    );
+
+    Ok(())
+}
+
+/// A password from the terminal without echoing it, or from standard input
+/// when it's piped (`echo $APP_PASSWORD | spendyard login imap …`).
+fn read_password(prompt: &str) -> Result<String> {
+    use std::io::IsTerminal;
+
+    let password = if std::io::stdin().is_terminal() {
+        rpassword::prompt_password(prompt)?
+    } else {
+        let mut line = String::new();
+
+        std::io::stdin().read_line(&mut line)?;
+
+        line
+    };
+
+    let password = password.trim().to_string();
+
+    if password.is_empty() {
+        bail!("no password given");
+    }
+
+    Ok(password)
 }
 
 pub fn logout(account: &str) -> Result<()> {
@@ -111,10 +205,6 @@ pub struct ScanCommand {
 /// Returns how many receipts or invoices were found and how many errors
 /// there were.
 pub async fn scan(command: ScanCommand) -> Result<(usize, usize)> {
-    if command.provider != "outlook" {
-        bail!("{} isn't supported yet; Outlook is", command.provider);
-    }
-
     let config = config::load()?;
 
     let models = if command.options.dry_run {
@@ -135,7 +225,7 @@ pub async fn scan(command: ScanCommand) -> Result<(usize, usize)> {
         Some(Store::open()?)
     };
 
-    let report = mailbox::scan_outlook(command.options, models, store.as_mut()).await?;
+    let report = mailbox::scan(&command.provider, command.options, models, store.as_mut()).await?;
 
     let stored_note = if report.already_stored > 0 {
         format!(" ({} more already in the store)", report.already_stored)

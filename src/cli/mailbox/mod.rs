@@ -2,6 +2,7 @@
 //! pre-filter on headers, and the normal pipeline on what passes.
 
 pub mod accounts;
+pub mod imap;
 pub mod outlook;
 
 use std::path::PathBuf;
@@ -152,6 +153,9 @@ struct Read {
 }
 
 pub struct ScanReport {
+    /// `outlook` or `imap`.
+    pub provider: &'static str,
+
     pub account: String,
     pub folder: String,
     pub since: String,
@@ -164,16 +168,30 @@ pub struct ScanReport {
     pub scanned: Vec<Scanned>,
 }
 
-/// Scans an Outlook mailbox. Models are only needed when not a dry run.
-/// With a store, it continues where the last scan stopped, skips messages
-/// already stored, and saves what it reads.
-pub async fn scan_outlook(
+/// Scans a signed-in mailbox: `outlook` or `imap`. Models are only needed
+/// when not a dry run. With a store, it continues where the last scan
+/// stopped, skips messages already stored, and saves what it reads.
+pub async fn scan(
+    provider: &str,
+    options: ScanOptions,
+    models: Option<Arc<Models>>,
+    store: Option<&mut Store>,
+) -> Result<ScanReport> {
+    let account = accounts::find(provider, options.account.as_deref())?;
+
+    match provider {
+        "outlook" => scan_outlook(account, options, models, store).await,
+        "imap" => scan_imap(account, options, models, store).await,
+        other => anyhow::bail!("unknown mailbox {other:?}; use outlook or imap"),
+    }
+}
+
+async fn scan_outlook(
+    account: accounts::Account,
     options: ScanOptions,
     models: Option<Arc<Models>>,
     mut store: Option<&mut Store>,
 ) -> Result<ScanReport> {
-    let account = accounts::find("outlook", options.account.as_deref())?;
-
     let session = Arc::new(outlook::Session::open(&account).await?);
 
     let folder_label = options
@@ -203,9 +221,7 @@ pub async fn scan_outlook(
         .list(options.folder.as_deref(), &since, options.limit)
         .await?;
 
-    let listed = headers.len();
-
-    let cut_short = listed >= options.limit;
+    let cut_short = headers.len() >= options.limit;
 
     let fresh: Vec<Header> = headers
         .iter()
@@ -213,33 +229,14 @@ pub async fn scan_outlook(
         .cloned()
         .collect();
 
-    let likely: Vec<Header> = fresh
-        .iter()
-        .filter(|header| options.all || likely_about_money(header))
-        .cloned()
-        .collect();
-
-    let mut candidates = Vec::new();
-    let mut already_stored = 0;
-
-    for header in likely {
-        let stored = match (&store, &header.message_id) {
-            (Some(store), Some(message_id)) if !options.again => store.has_message(message_id)?,
-            _ => false,
-        };
-
-        if stored {
-            already_stored += 1;
-        } else {
-            candidates.push(header);
-        }
-    }
+    let (candidates, already_stored) = pick(&fresh, &options, store.as_deref())?;
 
     let mut report = ScanReport {
+        provider: "outlook",
         account: account.address.clone(),
         folder: folder_label,
         since,
-        listed,
+        listed: headers.len(),
         candidates: candidates.clone(),
         already_stored,
         scanned: Vec::new(),
@@ -249,6 +246,184 @@ pub async fn scan_outlook(
         return Ok(report);
     }
 
+    // Graph serves many downloads at once.
+    let limit = Arc::new(Semaphore::new(options.concurrency.max(1)));
+
+    let mut tasks = JoinSet::new();
+
+    for (position, header) in candidates.into_iter().enumerate() {
+        let session = Arc::clone(&session);
+        let limit = Arc::clone(&limit);
+
+        tasks.spawn(async move {
+            let _permit = limit.acquire_owned().await;
+
+            let mime = session.mime(&header.id).await;
+
+            (position, header, mime)
+        });
+    }
+
+    let mut downloaded = Vec::new();
+
+    while let Some(joined) = tasks.join_next().await {
+        downloaded.push(joined?);
+    }
+
+    downloaded.sort_by_key(|(position, _, _)| *position);
+
+    let downloaded = downloaded
+        .into_iter()
+        .map(|(_, header, mime)| (header, mime))
+        .collect();
+
+    report.scanned =
+        read_and_keep(downloaded, &account, &options, models, store.as_deref_mut()).await?;
+
+    // Remember where this scan got to, unless it was a one-off window or
+    // the listing was cut short (older messages would be skipped next time).
+    if options.since.is_none()
+        && !cut_short
+        && let Some(newest) = headers.first()
+        && let Some(store) = store
+    {
+        let seen_at_newest: Vec<String> = headers
+            .iter()
+            .filter(|header| header.received == newest.received)
+            .map(|header| header.id.clone())
+            .collect();
+
+        store.set_scan_state(&state_key, &newest.received, &seen_at_newest)?;
+    }
+
+    Ok(report)
+}
+
+async fn scan_imap(
+    account: accounts::Account,
+    options: ScanOptions,
+    models: Option<Arc<Models>>,
+    mut store: Option<&mut Store>,
+) -> Result<ScanReport> {
+    let server = account
+        .server
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("{} has no IMAP server; sign in again", account.key()))?;
+
+    let password = accounts::token(&account)?;
+
+    let mut session = imap::connect(&server, &account.address, &password).await?;
+
+    let folder = match &options.folder {
+        Some(folder) => folder.clone(),
+        None => session.default_folder().await?,
+    };
+
+    let state_key = format!("{}:{folder}", account.key());
+
+    let cursor = match (&options.since, &store) {
+        (None, Some(store)) => store.scan_state(&state_key)?.map(|(cursor, _)| cursor),
+        _ => None,
+    };
+
+    let since_date = options
+        .since
+        .clone()
+        .unwrap_or_else(|| days_ago(30).chars().take(10).collect());
+
+    let (headers, cursor_after, cut_short) = session
+        .list(&folder, cursor.as_deref(), &since_date, options.limit)
+        .await?;
+
+    let (candidates, already_stored) = pick(&headers, &options, store.as_deref())?;
+
+    let since_label = match &cursor {
+        Some(_) => "the last scan".to_string(),
+        None => since_date.clone(),
+    };
+
+    let mut report = ScanReport {
+        provider: "imap",
+        account: account.address.clone(),
+        folder: folder.clone(),
+        since: since_label,
+        listed: headers.len(),
+        candidates: candidates.clone(),
+        already_stored,
+        scanned: Vec::new(),
+    };
+
+    if options.dry_run {
+        session.logout().await;
+
+        return Ok(report);
+    }
+
+    // One IMAP connection answers one command at a time: download first,
+    // then read the messages in parallel.
+    let mut downloaded = Vec::new();
+
+    for header in candidates {
+        let mime = session.mime(&header.id).await;
+
+        downloaded.push((header, mime));
+    }
+
+    session.logout().await;
+
+    report.scanned =
+        read_and_keep(downloaded, &account, &options, models, store.as_deref_mut()).await?;
+
+    if options.since.is_none()
+        && !cut_short
+        && let Some(cursor_after) = cursor_after
+        && let Some(store) = store
+    {
+        store.set_scan_state(&state_key, &cursor_after, &[])?;
+    }
+
+    Ok(report)
+}
+
+/// The messages worth reading: likely about money (or all, with `--all`),
+/// and not already in the store (unless `--again`). Returns them and how
+/// many were skipped as stored.
+fn pick(
+    headers: &[Header],
+    options: &ScanOptions,
+    store: Option<&Store>,
+) -> Result<(Vec<Header>, usize)> {
+    let mut candidates = Vec::new();
+    let mut already_stored = 0;
+
+    for header in headers
+        .iter()
+        .filter(|header| options.all || likely_about_money(header))
+    {
+        let stored = match (store, &header.message_id) {
+            (Some(store), Some(message_id)) if !options.again => store.has_message(message_id)?,
+            _ => false,
+        };
+
+        if stored {
+            already_stored += 1;
+        } else {
+            candidates.push(header.clone());
+        }
+    }
+
+    Ok((candidates, already_stored))
+}
+
+/// Reads downloaded messages through the pipeline, several at a time,
+/// saves each to the store, and keeps copies with `--save`.
+async fn read_and_keep(
+    downloaded: Vec<(Header, Result<Vec<u8>>)>,
+    account: &accounts::Account,
+    options: &ScanOptions,
+    models: Option<Arc<Models>>,
+    mut store: Option<&mut Store>,
+) -> Result<Vec<Scanned>> {
     let models = models.expect("models for a scan that reads");
 
     if let Some(dir) = &options.save {
@@ -259,8 +434,7 @@ pub async fn scan_outlook(
 
     let mut tasks = JoinSet::new();
 
-    for (position, header) in candidates.into_iter().enumerate() {
-        let session = Arc::clone(&session);
+    for (position, (header, mime)) in downloaded.into_iter().enumerate() {
         let models = Arc::clone(&models);
         let limit = Arc::clone(&limit);
         let save = options.save.clone();
@@ -268,21 +442,26 @@ pub async fn scan_outlook(
         tasks.spawn(async move {
             let _permit = limit.acquire_owned().await;
 
-            let outcome = read_message(&session, &header, &models, save.as_deref()).await;
+            let outcome = match mime {
+                Ok(mime) => read_message(mime, &header, &models, save.as_deref()).await,
+                Err(error) => Err(error),
+            };
 
             (position, header, outcome)
         });
     }
 
-    let mut scanned = Vec::new();
+    let mut finished = Vec::new();
 
     while let Some(joined) = tasks.join_next().await {
-        scanned.push(joined?);
+        finished.push(joined?);
     }
 
-    scanned.sort_by_key(|(position, _, _)| *position);
+    finished.sort_by_key(|(position, _, _)| *position);
 
-    for (_, header, outcome) in scanned {
+    let mut scanned = Vec::new();
+
+    for (_, header, outcome) in finished {
         let result = match outcome {
             Ok(read) => {
                 if let Some(store) = store.as_deref_mut() {
@@ -301,37 +480,18 @@ pub async fn scan_outlook(
             Err(error) => Err(error),
         };
 
-        report.scanned.push(Scanned { header, result });
+        scanned.push(Scanned { header, result });
     }
 
-    // Remember where this scan got to, unless it was a one-off window or
-    // the listing was cut short (older messages would be skipped next time).
-    if options.since.is_none()
-        && !cut_short
-        && let Some(newest) = headers.first()
-    {
-        let seen_at_newest: Vec<String> = headers
-            .iter()
-            .filter(|header| header.received == newest.received)
-            .map(|header| header.id.clone())
-            .collect();
-
-        if let Some(store) = store {
-            store.set_scan_state(&state_key, &newest.received, &seen_at_newest)?;
-        }
-    }
-
-    Ok(report)
+    Ok(scanned)
 }
 
 async fn read_message(
-    session: &outlook::Session,
+    mime: Vec<u8>,
     header: &Header,
     models: &Models,
     save: Option<&std::path::Path>,
 ) -> Result<Read> {
-    let mime = session.mime(&header.id).await?;
-
     if let Some(dir) = save {
         let name = format!(
             "{}_{}.eml",
@@ -358,7 +518,7 @@ pub fn result_line(report: &ScanReport, scanned: &Scanned, result: &ReadResult) 
     let mut line = serde_json::to_value(result).unwrap_or_default();
 
     line["source"] = json!({
-        "mailbox": "outlook",
+        "mailbox": report.provider,
         "account": report.account,
         "message_id": scanned.header.message_id,
         "received": scanned.header.received,

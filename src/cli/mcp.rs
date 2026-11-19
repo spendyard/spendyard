@@ -40,7 +40,7 @@ pub struct DocumentInput {
 /// Which mailbox to scan.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ScanInput {
-    /// `outlook`. The account must be signed in with `spendyard login`.
+    /// `outlook` or `imap`. The account must be signed in with `spendyard login`.
     pub mailbox: String,
 
     /// The account address, when several are signed in.
@@ -128,15 +128,15 @@ impl Server {
     }
 
     #[tool(
-        description = "Find receipts and invoices in a signed-in mailbox (Outlook): lists messages since the last scan (or a date), keeps the ones likely about money, and reads those like read_document. Returns one result per message read, with the message's sender, subject and date. Use dry_run to see what would be read first."
+        description = "Find receipts and invoices in a signed-in mailbox (outlook or imap): lists messages since the last scan (or a date), keeps the ones likely about money, and reads those like read_document. Returns one result per message read, with the message's sender, subject and date. Use dry_run to see what would be read first."
     )]
     async fn scan_mailbox(
         &self,
         Parameters(input): Parameters<ScanInput>,
     ) -> Result<CallToolResult, McpError> {
-        if input.mailbox != "outlook" {
+        if !["outlook", "imap"].contains(&input.mailbox.as_str()) {
             return Ok(failure(format!(
-                "{} isn't supported yet; outlook is",
+                "{} isn't a mailbox; use outlook or imap",
                 input.mailbox
             )));
         }
@@ -160,7 +160,8 @@ impl Server {
             Err(error) => return Ok(failure(format!("{error:#}"))),
         };
 
-        let report = match super::mailbox::scan_outlook(
+        let report = match super::mailbox::scan(
+            &input.mailbox,
             options,
             Some(Arc::clone(&self.models)),
             Some(&mut store),
