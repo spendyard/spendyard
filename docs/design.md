@@ -114,7 +114,12 @@ Revisit with real receipts in the test set. The choice sits behind
 **No PDF rendering yet.** A PDF without a text layer is returned without
 text and with a warning. Models that read PDFs (Anthropic, OpenAI, Gemini)
 take it as it is (§4.4). Rendering pages to images, with `hayro` (pure Rust),
-is only needed for extractors that take images but not PDFs. Decide in M2.
+is only needed for extractors that take images but not PDFs.
+
+**Decided in M2: no rendering.** Anthropic, OpenAI and Gemini all read PDFs.
+`openai-compatible` gets text and images only, and a scanned PDF fails
+there with a message naming the providers that can read it. Local models
+that read scanned PDFs well are rare anyway. Revisit if that changes.
 
 **HEIC: detected, not decoded.** Decoding needs libheif (C), which breaks
 the plain static build. HEIC goes as it is to models that accept it
@@ -277,16 +282,39 @@ provider  = "clef-flash"
 threshold = 0.85
 
 [extractor]
-provider = "anthropic"
-model    = "claude-haiku-5-5"
+provider = "anthropic"      # anthropic | openai | gemini | openai-compatible
+model    = "claude-opus-5-5"  # the default; claude-haiku-5-5 costs far less
+effort   = "low"            # Anthropic only
 
 [providers.openai-compatible]
 base_url = "http://localhost:11434/v1"
 ```
 
 Keys come only from the environment or the OS keychain
-(`ANTHROPIC_API_KEY`, `SPENDYARD_JEV_KEY`, `CLOUDFLARE_API_TOKEN`,
-`CLOUDFLARE_ACCOUNT_ID`, …), never the config file. Spendyard has no keys of
+(`ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`,
+`GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENAI_COMPATIBLE_API_KEY`,
+`TYPESAFE_API_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, …), never
+the config file. `api_key_env` under `[providers.<name>]` reads a key from
+another variable.
+
+**Defaults (M2).** Anthropic with `claude-opus-5-5`, structured outputs and
+server-side fallback on refusals. OpenAI, Gemini and `openai-compatible`
+have no default model: models change too fast to pick one in code, so the
+config or `--extractor provider/model` names it.
+
+**How each provider is held to the schema:**
+
+| Provider | API | Schema |
+|---|---|---|
+| `anthropic` | Messages | `output_config.format` (`json_schema`) |
+| `openai` | Responses | `text.format` (`json_schema`, strict) |
+| `gemini` | `generateContent` | `responseJsonSchema` |
+| `openai-compatible` | Chat Completions | `response_format` (`json_schema`, strict); servers vary in how strictly they follow it, and validation catches what slips through |
+
+The schema is generated from the Rust types in `extract/schema.rs`, whose
+doc comments are the field descriptions the model reads. Every object is
+closed and every field required (nullable when optional), as strict modes
+need. Spendyard has no keys of
 its own and sends nothing anywhere except to the providers configured.
 
 `--decider none` skips the first model; `--extractor none` stops after
@@ -677,7 +705,7 @@ document before launch.
 |---|---|
 | **M0: Repo** | One Cargo package (library plus CLI), CI, release builds for macOS and Linux (arm64 and x86_64), Apache 2.0 licence, README. |
 | **M1: Read** | `Document` from eml, msg, PDF (text layer), images, HTML and text; `spendyard parts`. Pick the PDF crates and the HEIC approach. |
-| **M2: Extract** | `Extractor` trait; `anthropic`, `openai`, `gemini` and `openai-compatible`; output schema; validation and evidence checks; `spendyard read`. |
+| **M2: Extract** | `Extractor` trait; `anthropic`, `openai`, `gemini` and `openai-compatible`; output schema; validation and evidence checks; `spendyard read`. Done: run end to end with a local model; the hosted providers still need a first real run. |
 | **M3: Decide** | `Decider` trait; `clef-flash`, `clef`, `jev`, `systemone`; routing and thresholds; LLM fallback. |
 | **M4: Eval** | `spendyard eval`, first 200 labelled documents, defaults chosen from the results. |
 | **M5: Serve and MCP** | `spendyard serve` and `spendyard mcp`; `exec` provider. |
@@ -692,7 +720,9 @@ document before launch.
 
 - Name and home on GitHub (organization, crate name).
 - Does `lopdf` hold up on real receipts (§3.1)?
-- Rendering PDF pages with `hayro`: needed in M2, or not at all?
+- Do Gemini's and OpenAI's strict schema modes accept the generated schema
+  as is? Only Anthropic's request shape and a local model have been run;
+  the others are tested against recorded request and response shapes.
 - Is JEV still in early access, and on what retention terms?
 - Gmail for the CLI: is "bring your own OAuth client" acceptable to
   startups, or is it worth paying for Google's verification early?

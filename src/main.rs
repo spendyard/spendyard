@@ -1,10 +1,9 @@
-use std::io::Read;
-use std::path::{Path, PathBuf};
+mod cli;
+
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use spendyard::{Document, Part};
 
 /// Reads receipts and invoices and works out what you're paying for.
 #[derive(Parser)]
@@ -16,6 +15,33 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Read what documents say about money: vendor, amounts, card, seats,
+    /// usage and billing. Exits 0 when a receipt or invoice was found, 1
+    /// when none was, 2 on errors.
+    Read {
+        /// Emails (.eml, .msg), PDFs, images, HTML or text files; `-` reads
+        /// standard input.
+        #[arg(required = true)]
+        inputs: Vec<PathBuf>,
+
+        /// `provider` or `provider/model`: anthropic, openai, gemini or
+        /// openai-compatible. Default: the config, then anthropic.
+        #[arg(long, short)]
+        extractor: Option<String>,
+
+        /// Print a readable summary instead of JSON.
+        #[arg(long)]
+        pretty: bool,
+
+        /// One JSON object per line. The default for several inputs.
+        #[arg(long)]
+        jsonl: bool,
+
+        /// How many documents to read at once.
+        #[arg(long, default_value_t = 4)]
+        concurrency: usize,
+    },
+
     /// List what's in a document: the email body, attachments, forwarded
     /// emails. No model calls.
     Parts {
@@ -36,21 +62,50 @@ enum Command {
     Version,
 }
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     let cli = Cli::parse();
 
     let result = match cli.command {
-        Command::Parts { input, json, text } => parts(&input, json, text),
+        Command::Read {
+            inputs,
+            extractor,
+            pretty,
+            jsonl,
+            concurrency,
+        } => {
+            let options = cli::read::Options {
+                inputs,
+                extractor,
+                pretty,
+                jsonl,
+                concurrency,
+            };
+
+            cli::read::run(options).await.map(|outcome| {
+                if outcome.errors > 0 {
+                    ExitCode::from(2)
+                } else if outcome.found > 0 {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::from(1)
+                }
+            })
+        }
+
+        Command::Parts { input, json, text } => {
+            cli::parts::run(&input, json, text).map(|()| ExitCode::SUCCESS)
+        }
 
         Command::Version => {
             print_version();
 
-            Ok(())
+            Ok(ExitCode::SUCCESS)
         }
     };
 
     match result {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
 
         Err(error) => {
             eprintln!("spendyard: {error:#}");
@@ -58,138 +113,6 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
-}
-
-fn parts(input: &Path, json: bool, with_text: bool) -> Result<()> {
-    let (bytes, name) = read_input(input)?;
-
-    let document = spendyard::read(&bytes, name.as_deref())?;
-
-    if json {
-        let output = serde_json::to_string_pretty(&document)?;
-
-        println!("{output}");
-
-        return Ok(());
-    }
-
-    print_summary(&document, with_text);
-
-    Ok(())
-}
-
-/// The input's bytes and its file name, if it has one.
-fn read_input(input: &Path) -> Result<(Vec<u8>, Option<String>)> {
-    if input == Path::new("-") {
-        let mut bytes = Vec::new();
-
-        std::io::stdin()
-            .read_to_end(&mut bytes)
-            .context("reading standard input")?;
-
-        return Ok((bytes, None));
-    }
-
-    let bytes = std::fs::read(input).with_context(|| format!("reading {}", input.display()))?;
-
-    let name = input
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned());
-
-    Ok((bytes, name))
-}
-
-fn print_summary(document: &Document, with_text: bool) {
-    println!("{:?}", document.format);
-
-    if let Some(headers) = &document.headers {
-        let fields = [
-            ("From", &headers.from),
-            ("To", &headers.to),
-            ("Subject", &headers.subject),
-            ("Date", &headers.date),
-        ];
-
-        for (name, value) in fields {
-            if let Some(value) = value {
-                println!("  {name:<8} {value}");
-            }
-        }
-    }
-
-    println!();
-
-    let label_width = document
-        .parts
-        .iter()
-        .map(|part| part.label.chars().count())
-        .max()
-        .unwrap_or(0);
-
-    for part in &document.parts {
-        print_part(part, label_width, with_text);
-    }
-
-    if !document.warnings.is_empty() {
-        println!();
-
-        for warning in &document.warnings {
-            println!("warning: {warning}");
-        }
-    }
-}
-
-fn print_part(part: &Part, label_width: usize, with_text: bool) {
-    let kind = format!("{:?}", part.kind).to_lowercase();
-
-    let mut details = vec![human_size(part.size)];
-
-    if let Some(pages) = part.pages {
-        let unit = if pages == 1 { "page" } else { "pages" };
-
-        details.push(format!("{pages} {unit}"));
-    }
-
-    match &part.text {
-        Some(text) => details.push(format!("{} chars", text.chars().count())),
-        None => details.push("no text".to_string()),
-    }
-
-    if part.inline {
-        details.push("inline".to_string());
-    }
-
-    println!(
-        "  {:>2}  {:<label_width$}  {:<5}  {}",
-        part.index,
-        part.label,
-        kind,
-        details.join(", "),
-    );
-
-    if with_text && let Some(text) = &part.text {
-        println!();
-
-        for line in text.lines() {
-            println!("      │ {line}");
-        }
-
-        println!();
-    }
-}
-
-fn human_size(bytes: usize) -> String {
-    let bytes = bytes as f64;
-
-    if bytes < 1024.0 {
-        return format!("{bytes} B");
-    }
-
-    if bytes < 1024.0 * 1024.0 {
-        return format!("{:.1} KB", bytes / 1024.0);
-    }
-
-    format!("{:.1} MB", bytes / 1024.0 / 1024.0)
 }
 
 fn print_version() {

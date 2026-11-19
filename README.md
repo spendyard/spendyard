@@ -9,8 +9,9 @@ It is one binary. It runs as a CLI, as an HTTP API and as MCP tools for
 agents, with your own model API keys. Nothing is sent anywhere except to the
 model providers you configure.
 
-> **Status:** early development. Nothing works yet beyond `spendyard version`.
-> The design is in [docs/design.md](docs/design.md).
+> **Status:** early development. `spendyard parts` and `spendyard read` work;
+> the cheap first model, mailboxes and the store come next. The design is in
+> [docs/design.md](docs/design.md).
 
 ## How it works
 
@@ -31,11 +32,32 @@ document ──▶ read ──▶ locate ──▶ decide ──▶ extract ─�
 5. **Validate**: totals add up, and every value comes with a quote that must
    appear in the document.
 
-## Planned usage
+## Usage
 
 ```bash
-spendyard read invoice.pdf
-spendyard read message.eml --pretty
+export ANTHROPIC_API_KEY=…
+spendyard read invoice.pdf                 # JSON
+spendyard read message.eml --pretty        # a readable summary
+spendyard read *.eml                       # one JSON line per document
+spendyard read receipt.png -e gemini/<model>
+spendyard read receipt.eml -e openai-compatible/qwen3:4b   # Ollama, locally
+spendyard parts message.eml --text         # what's inside, no model
+```
+
+Settings live in `~/.spendyard/config.toml`:
+
+```toml
+[extractor]
+provider = "anthropic"
+model    = "claude-haiku-5-5"
+
+[providers.openai-compatible]
+base_url = "http://localhost:11434/v1"
+```
+
+### Coming later
+
+```bash
 spendyard login gmail
 spendyard scan gmail --since 2026-01-01   # kept in ~/.spendyard
 spendyard report --by vendor --months 12

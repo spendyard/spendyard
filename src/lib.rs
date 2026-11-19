@@ -7,12 +7,20 @@
 //! work starts.
 
 pub mod document;
+pub mod extract;
 pub mod format;
+pub mod money;
 pub mod read;
+pub mod result;
 pub mod text;
+pub mod validate;
+
+use std::time::Instant;
 
 pub use document::{Document, EmailHeaders, Format, Part, PartKind};
+pub use extract::{ExtractError, Extractor};
 pub use read::{ReadError, read};
+pub use result::ReadResult;
 
 /// The version of this crate, reported as `meta.spendyard_version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -21,6 +29,46 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 ///
 /// Change it whenever the output changes.
 pub const SCHEMA_VERSION: &str = "2026-11-19";
+
+/// Reads what `document` says about money with `extractor`, then checks
+/// the answer.
+pub async fn understand(
+    document: &Document,
+    extractor: &dyn Extractor,
+) -> Result<ReadResult, ExtractError> {
+    let prompt = extract::prompt::build(document, extractor.accepts());
+
+    if !prompt.has_content() {
+        let reason = if prompt.warnings.is_empty() {
+            "it has no text".to_string()
+        } else {
+            prompt.warnings.join("; ")
+        };
+
+        return Err(ExtractError::NothingToRead(reason));
+    }
+
+    let started = Instant::now();
+
+    let extraction = extractor.extract(&prompt).await?;
+
+    let ms = started.elapsed().as_millis() as u64;
+
+    let mut result = result::assemble(
+        document,
+        extraction.output,
+        extractor.name(),
+        extraction.model,
+        extraction.usage,
+        ms,
+    );
+
+    result.warnings.extend(prompt.warnings);
+
+    validate::validate(&mut result, document);
+
+    Ok(result)
+}
 
 #[cfg(test)]
 mod tests {
