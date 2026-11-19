@@ -257,13 +257,48 @@ impl Catalog {
             return by_descriptor;
         }
 
-        let name = merchant.split(',').next().unwrap_or(merchant);
+        let mut sections = merchant.split(',');
+
+        let name = sections.next().unwrap_or(merchant);
 
         let parts = name
             .split(['*', ':'])
             .map(str::trim)
             .filter(|part| part.len() >= 3);
 
+        if let Some(vendor) = self.by_merchant_parts(parts) {
+            return Some(vendor);
+        }
+
+        // A domain after the name, where a city would be: `MSBILL.INFO`.
+        let domain = sections
+            .map(str::trim)
+            .filter(|section| section.contains('.') && !section.contains(' '))
+            .find_map(|section| self.by_domain(&section.to_lowercase()));
+
+        if domain.is_some() {
+            return domain;
+        }
+
+        // An order number glued to the name, sometimes behind a character
+        // printed wrongly (`MICROSOFTÄG014841462`): the A–Z letters it
+        // starts with.
+        let letters: String = name
+            .trim()
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
+
+        if letters.len() >= 4 {
+            return self.by_name(&letters);
+        }
+
+        None
+    }
+
+    /// The first vendor found from parts of a merchant's name: each as a
+    /// domain, then as a name with words dropped from the end.
+    fn by_merchant_parts<'a>(&self, parts: impl Iterator<Item = &'a str>) -> Option<&Vendor> {
         for part in parts {
             let looks_like_domain = part.contains('.') && !part.ends_with('.');
 
@@ -617,6 +652,8 @@ mod merchant_tests {
             ("PLAIN.COM* NOT JUST TI, ALTRINCHAM, GB", "plain.com"),
             ("VERCEL INC., COVINA, US", "vercel.com"),
             ("POSTMARKAPP.COM, CHICAGO, US", "postmarkapp.com"),
+            ("MICROSOFTÄG014841462, MSBILL.INFO, IE", "microsoft.com"),
+            ("MICROSOFT G016820300, MSBILL.INFO, IE", "microsoft.com"),
         ];
 
         for (merchant, id) in cases {

@@ -169,7 +169,10 @@ pub async fn match_command(json: bool) -> Result<()> {
 
 /// Matches every charge in the store again, from scratch.
 pub async fn match_all(store: &Store) -> Result<MatchSummary> {
-    let charges = load_charges(store)?;
+    let mut charges = load_charges(store)?;
+
+    refresh_vendors(store, &mut charges)?;
+
     let receipts = load_receipts(store)?;
 
     ensure_rates(store, &charges, &receipts).await;
@@ -215,6 +218,32 @@ pub async fn match_all(store: &Store) -> Result<MatchSummary> {
     let summary = summarize(&charges, &receipts, &used_charges, &used_receipts);
 
     Ok(summary)
+}
+
+/// Looks each charge's vendor up again from its merchant, so additions to
+/// the catalog reach charges read before them.
+fn refresh_vendors(store: &Store, charges: &mut [StoredCharge]) -> Result<()> {
+    let catalog = spendyard::catalog::catalog();
+
+    for charge in charges.iter_mut() {
+        let vendor = catalog.by_merchant(&charge.merchant);
+
+        let id = vendor.map(|vendor| vendor.id.clone());
+
+        if id == charge.vendor_id {
+            continue;
+        }
+
+        charge.vendor_id = id;
+        charge.vendor_name = vendor.map(|vendor| vendor.name.clone());
+
+        store.connection.execute(
+            "UPDATE charges SET vendor_id = ?1, vendor_name = ?2 WHERE id = ?3",
+            params![charge.vendor_id, charge.vendor_name, charge.id],
+        )?;
+    }
+
+    Ok(())
 }
 
 fn summarize(

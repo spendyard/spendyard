@@ -1,5 +1,5 @@
 name = "Microsoft"
 aliases = ["Microsoft Norge AS", "Microsoft Corporation", "Microsoft Ireland Operations Limited", "Microsoft Azure"]
-domains = ["azure.com", "office.com", "microsoftonline.com"]
+domains = ["azure.com", "office.com", "microsoftonline.com", "msbill.info"]
 category = "infrastructure"
 pricing = ["usage", "seat"]
