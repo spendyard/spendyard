@@ -182,7 +182,7 @@ yes/no question at once, each with a calibrated probability:
 
 | Question | Type | Options |
 |---|---|---|
-| `document_type` | choice | receipt, invoice, renewal_notice, payment_failed, quote, trial_ending, other |
+| `document_type` | choice | receipt, invoice, renewal_notice, payment_failed, quote, trial_ending, other; `card_statement` planned with charges (§8) |
 | `status` | choice | paid, due, failed, upcoming, none |
 | `part` | choice | built from the document's parts |
 | `billing_model` | choice | subscription, usage, mixed, one_time, unknown |
@@ -463,6 +463,7 @@ spendyard decide message.eml             # first model only
 spendyard parts message.eml              # list what's in the document, no model calls
 spendyard eval ./testdata                # §10
 spendyard vendors lookup stripe.com      # vendor catalog (§9)
+spendyard charges read statement.pdf     # a card statement: every line a charge (§8, planned)
 ```
 
 Exit codes: 0 receipt or invoice found, 1 none found, 2 error.
@@ -657,6 +658,7 @@ Everything Spendyard finds is kept in one place, with no setup:
 |---|---|
 | `spendyard scan …` | Always. That's the point of scanning. |
 | `spendyard read file…` | Yes. `--no-store` for a one-off look. |
+| `spendyard charges read file…` | Yes, as charges (planned). `--no-store` for a one-off look. |
 | `spendyard parts`, `decide` | No. They only look. |
 | `spendyard mcp` | No, unless the config says `store = true`. It answers agents, which shouldn't fill your store by surprise. |
 | `spendyard eval` | No. It uses a temporary store. |
@@ -676,6 +678,7 @@ data between them is moving rows.
 | `rates` | Exchange rates per day, from the European Central Bank's free daily feed, so spending can be added up in one currency. |
 | `scans` | Mailbox cursors and which messages were already read. |
 | `edits` | Corrections by hand: a fixed vendor, a receipt marked personal or ignored. They win over the model's result and survive re-runs. |
+| `charges` | Planned: card charges from statements (and, in the cloud, card platforms and banks), with the receipt each one matched. Below. |
 
 Re-extracting never needs the mailbox again when originals are kept
 (`keep_files`). Without them, `spendyard rescan` fetches the messages again
@@ -714,6 +717,75 @@ last payment and the interval), and a status: `payment failed` or `due`
 when the newest document says so, `lapsed?` when the last payment is older
 than the interval allows, otherwise `active`. Grouping by vendor and
 account, and price changes, come later.
+
+### Charges: what the card paid (planned, M6b)
+
+Receipts say what a vendor billed; a card statement says what the card
+actually paid. Matching the two finds receipts that are missing, receipts
+paid with a card nobody connected, and the exact amount in the company's
+currency, card fees included. A charge is its own kind of thing, with its
+own command group, because a statement is many payments, not one:
+
+```bash
+spendyard charges read eurocard-2026-10.pdf   # a statement, PDF or CSV: every line becomes a charge
+spendyard charges read eurocard-*.csv --push  # several, and send them to the cloud
+spendyard charges list --missing              # charges with no receipt
+spendyard charges list --card 3776 --month 2026-10
+spendyard charges match                       # match again, after new receipts came in
+```
+
+```text
+Eurocard •••• 3776 · October 2026 · 96 charges · NOK 71,240
+  88 matched to a receipt
+   6 missing a receipt: NOK 4,180 (GOOGLE *WORKSPACE, NOTION LABS, …)
+   2 card fees, no receipt needed
+   2 receipts on this card with no charge
+```
+
+It's `charges`, not `statements`: what is stored, listed and matched is a
+charge, and the statement is only one source of them. The cloud fills the
+same table from card platforms (Pleo, Ramp, Brex) and banks through open
+banking, so the matching is written once. `read` stays one document, one
+payment.
+
+1. **Recognise.** `document_type` gets a `card_statement` option. Given a
+   statement, `read` says "This is a card statement: use `spendyard
+   charges read`" and exits 1, so a statement is never read as one invoice
+   with 96 lines. `scan` sends statements it finds in a mailbox (Eurocard
+   emails one each month) to `charges read` by itself.
+2. **Extract.** Its own output schema: the issuer, the cards on it (a
+   company statement often has several cardholders, each with their own
+   last four digits), the period and the currency, then each charge: date,
+   posting date, the merchant as printed (`GOOGLE *WORKSPACE`), the amount
+   in the statement's currency, the original amount and currency for
+   foreign charges, and card fees and refunds as their own lines. Long PDFs
+   are read a few pages at a time. A CSV needs no model: the columns are
+   recognised once per issuer, kept in the config, and read directly
+   after that.
+3. **Validate.** The charges add up to the statement's total, the opening
+   balance plus charges gives the closing one, the last four digits are
+   the card's, and each merchant name is quoted from the page with the
+   same letters-and-digits check as receipts.
+4. **Store.** A `charges` table (§8): card, date, posting date, merchant
+   as printed, amount and currency, original amount and currency, kind
+   (purchase, fee, refund), the source (the statement's document, or later
+   a card platform or bank), the vendor it was mapped to, and the receipt
+   it matched. A charge can be marked personal, like a receipt.
+5. **Match.** A charge and a receipt match on:
+   - **vendor**: each vendor file in the catalog (§9) gets the names it
+     appears under on statements, `descriptors = ["NOTION LABS"]`,
+     matched like processor rules;
+   - **amount**: the same currency exactly, or another currency within the
+     ECB rate of the day plus a margin for card currency fees (about 2%);
+   - **date**: from the receipt's date to a few days after, for posting;
+   - **card**: the last four digits, when the receipt has them.
+
+   The best match wins, each receipt is used once, and what's left over on
+   either side is the report: charges missing a receipt, and receipts
+   with no charge (often a card that isn't connected, or someone's own).
+
+The MCP server gets a `read_charges` tool next to `read_document`, and
+`receipts` shows the charge a receipt matched.
 
 ### To the cloud and back
 
@@ -932,6 +1004,7 @@ document before launch.
 | **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; `scan_mailbox` MCP tool; Gmail setup guide. Outlook done and run on a real mailbox; IMAP done (Gmail with an app password, iCloud, Fastmail, Yahoo, others), tested on a local server; still to do: Gmail through its API, registering Spendyard's own Entra app. |
 | **M5c: Store and reports** | `~/.spendyard` with SQLite (`rusqlite`, SQLite compiled in); `read` and `scan` store results; `report`, `subscriptions`, `receipts`, `edit`; exchange rates. Done; still to do: grouping by account, price changes. |
 | **M6: Vendor catalog** | First 200 vendors, AI tools first; processor rules. Done: 248 vendors, 18 processors, `spendyard vendors`. |
+| **M6b: Charges** | `card_statement` in the decision; `charges read` for PDF and CSV statements, the `charges` table, `descriptors` in the catalog, matching against receipts, `charges list` and `charges match`; `read_charges` MCP tool. |
 | **M7: Public release** | Docs, Homebrew, crates.io, announcement. |
 | **Cloud C1** | Forwarding address, storage, subscriptions, renewals, AI spend, weekly email. |
 | **Cloud C2** | `spendyard login cloud`, `push` and `pull` against the shared store; cloud services the CLI can call (models, catalog, storage); a verified Google app for the cloud. |
