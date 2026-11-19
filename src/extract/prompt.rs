@@ -34,7 +34,9 @@ number or an amount.
 - For every value you fill in, add an evidence entry: text copied exactly from the document that \
 shows the value itself with its label (\"Amount paid $112.40\", not just \"Amount paid\"), and the \
 index of the part it is in.
-- confidence is how sure you are of the whole reading, from 0 to 1.";
+- confidence is how sure you are of the whole reading, from 0 to 1.
+- A <first-model> block, when there is one, is a quicker model's reading with probabilities. Use \
+it as a hint; where the document says otherwise, the document wins.";
 
 /// One piece of what the model is given.
 #[derive(Debug, Clone, PartialEq)]
@@ -76,6 +78,18 @@ pub struct Prompt {
 }
 
 impl Prompt {
+    /// Adds a first model's answers, for the extractor to weigh. They go
+    /// last, after the document.
+    pub fn add_hints(&mut self, hints: &str) {
+        if hints.is_empty() {
+            return;
+        }
+
+        let text = format!("<first-model>\n{hints}\n</first-model>");
+
+        self.blocks.push(Block::Text(text));
+    }
+
     /// Whether anything besides the instructions and headers is there to
     /// read.
     pub fn has_content(&self) -> bool {

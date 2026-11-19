@@ -29,6 +29,11 @@ enum Command {
         #[arg(long, short)]
         extractor: Option<String>,
 
+        /// The cheap first model: jev, clef, clef-flash, systemone or none.
+        /// Default: the config, then none.
+        #[arg(long, short)]
+        decider: Option<String>,
+
         /// Print a readable summary instead of JSON.
         #[arg(long)]
         pretty: bool,
@@ -39,6 +44,24 @@ enum Command {
 
         /// How many documents to read at once.
         #[arg(long, default_value_t = 4)]
+        concurrency: usize,
+    },
+
+    /// Ask only the cheap first model what documents are: receipt or not,
+    /// paid or due, seats, usage, card. Exits 2 on errors.
+    Decide {
+        #[arg(required = true)]
+        inputs: Vec<PathBuf>,
+
+        /// jev, clef, clef-flash or systemone, optionally with /model.
+        #[arg(long, short)]
+        decider: Option<String>,
+
+        /// One JSON object per line.
+        #[arg(long)]
+        json: bool,
+
+        #[arg(long, default_value_t = 8)]
         concurrency: usize,
     },
 
@@ -58,8 +81,21 @@ enum Command {
         text: bool,
     },
 
+    /// Show where the config lives, the models in effect and which keys
+    /// are set.
+    Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
+    },
+
     /// Print version details.
     Version,
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Write a commented starter config to ~/.spendyard/config.toml.
+    Init,
 }
 
 #[tokio::main]
@@ -70,6 +106,7 @@ async fn main() -> ExitCode {
         Command::Read {
             inputs,
             extractor,
+            decider,
             pretty,
             jsonl,
             concurrency,
@@ -77,6 +114,7 @@ async fn main() -> ExitCode {
             let options = cli::read::Options {
                 inputs,
                 extractor,
+                decider,
                 pretty,
                 jsonl,
                 concurrency,
@@ -93,8 +131,39 @@ async fn main() -> ExitCode {
             })
         }
 
+        Command::Decide {
+            inputs,
+            decider,
+            json,
+            concurrency,
+        } => {
+            let options = cli::decide::Options {
+                inputs,
+                decider,
+                json,
+                concurrency,
+            };
+
+            cli::decide::run(options).await.map(|errors| {
+                if errors > 0 {
+                    ExitCode::from(2)
+                } else {
+                    ExitCode::SUCCESS
+                }
+            })
+        }
+
         Command::Parts { input, json, text } => {
             cli::parts::run(&input, json, text).map(|()| ExitCode::SUCCESS)
+        }
+
+        Command::Config { action } => {
+            let done = match action {
+                Some(ConfigAction::Init) => cli::config_command::init(),
+                None => cli::config_command::show(),
+            };
+
+            done.map(|()| ExitCode::SUCCESS)
         }
 
         Command::Version => {

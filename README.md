@@ -9,8 +9,8 @@ It is one binary. It runs as a CLI, as an HTTP API and as MCP tools for
 agents, with your own model API keys. Nothing is sent anywhere except to the
 model providers you configure.
 
-> **Status:** early development. `spendyard parts` and `spendyard read` work;
-> the cheap first model, mailboxes and the store come next. The design is in
+> **Status:** early development. `parts`, `read`, `decide` and `config` work;
+> mailboxes and the store come next. The design is in
 > [docs/design.md](docs/design.md).
 
 ## How it works
@@ -41,15 +41,23 @@ spendyard read message.eml --pretty        # a readable summary
 spendyard read *.eml                       # one JSON line per document
 spendyard read receipt.png -e gemini/<model>
 spendyard read receipt.eml -e openai-compatible/qwen3:4b   # Ollama, locally
+spendyard read *.eml -d clef-flash         # a cheap first model before the extractor
+spendyard decide *.eml -d jev              # only the first model's answers
 spendyard parts message.eml --text         # what's inside, no model
+spendyard config                           # settings in effect, and which keys are set
+spendyard config init                      # write a commented ~/.spendyard/config.toml
 ```
 
-Settings live in `~/.spendyard/config.toml`:
+Settings live in `~/.spendyard/config.toml`; keys come from the environment:
 
 ```toml
 [extractor]
 provider = "anthropic"
 model    = "claude-haiku-5-5"
+
+[decider]
+provider  = "clef-flash"   # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
+threshold = 0.85
 
 [providers.openai-compatible]
 base_url = "http://localhost:11434/v1"

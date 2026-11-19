@@ -5,16 +5,15 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use serde_json::json;
-use spendyard::{Extractor, ReadResult};
-use tokio::sync::Semaphore;
-use tokio::task::JoinSet;
+use spendyard::{Decider, Extractor, Pipeline, ReadResult};
 
-use super::input::read_input;
+use super::input::{for_each, read_input};
 use super::{config, pretty};
 
 pub struct Options {
     pub inputs: Vec<PathBuf>,
     pub extractor: Option<String>,
+    pub decider: Option<String>,
     pub pretty: bool,
     pub jsonl: bool,
     pub concurrency: usize,
@@ -26,47 +25,44 @@ pub struct Outcome {
     pub errors: usize,
 }
 
+/// The models, shared by every task.
+struct Models {
+    decider: Option<Arc<dyn Decider>>,
+    extractor: Arc<dyn Extractor>,
+    threshold: f64,
+}
+
 pub async fn run(options: Options) -> Result<Outcome> {
     let config = config::load()?;
 
-    let settings = config::extractor_settings(&config, options.extractor.as_deref());
+    let extractor_settings = config::extractor_settings(&config, options.extractor.as_deref());
 
-    let extractor: Arc<dyn Extractor> = Arc::from(spendyard::extract::build(settings)?);
+    let decider = match config::decider_settings(&config, options.decider.as_deref()) {
+        Some(settings) => Some(Arc::from(spendyard::decide::build(settings)?)),
+        None => None,
+    };
+
+    let models = Arc::new(Models {
+        decider,
+        extractor: Arc::from(spendyard::extract::build(extractor_settings)?),
+        threshold: config::threshold(&config),
+    });
 
     let jsonl = options.jsonl || options.inputs.len() > 1;
 
-    let limit = Arc::new(Semaphore::new(options.concurrency.max(1)));
+    let results = for_each(options.inputs, options.concurrency, |input| {
+        let models = Arc::clone(&models);
 
-    let mut tasks = JoinSet::new();
-
-    for (position, input) in options.inputs.into_iter().enumerate() {
-        let extractor = Arc::clone(&extractor);
-        let limit = Arc::clone(&limit);
-
-        tasks.spawn(async move {
-            let _permit = limit.acquire_owned().await;
-
-            let result = read_one(&input, extractor.as_ref()).await;
-
-            (position, input, result)
-        });
-    }
-
-    let mut finished = Vec::new();
-
-    while let Some(joined) = tasks.join_next().await {
-        finished.push(joined?);
-    }
-
-    // Results in the order the inputs were given.
-    finished.sort_by_key(|(position, _, _)| *position);
+        async move { read_one(&input, &models).await }
+    })
+    .await?;
 
     let mut outcome = Outcome {
         found: 0,
         errors: 0,
     };
 
-    for (_, input, result) in finished {
+    for (input, result) in results {
         let name = input.display().to_string();
 
         match result {
@@ -89,12 +85,18 @@ pub async fn run(options: Options) -> Result<Outcome> {
     Ok(outcome)
 }
 
-async fn read_one(input: &std::path::Path, extractor: &dyn Extractor) -> Result<ReadResult> {
+async fn read_one(input: &std::path::Path, models: &Models) -> Result<ReadResult> {
     let (bytes, name) = read_input(input)?;
 
     let document = spendyard::read(&bytes, name.as_deref())?;
 
-    let result = spendyard::understand(&document, extractor).await?;
+    let pipeline = Pipeline {
+        decider: models.decider.as_deref(),
+        extractor: models.extractor.as_ref(),
+        threshold: models.threshold,
+    };
+
+    let result = spendyard::understand(&document, &pipeline).await?;
 
     Ok(result)
 }

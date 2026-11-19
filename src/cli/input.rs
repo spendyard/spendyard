@@ -1,7 +1,11 @@
-//! Reading an input file, or standard input for `-`.
+//! Reading input files, or standard input for `-`, one or many at a time.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 
 use anyhow::{Context, Result};
 
@@ -24,4 +28,48 @@ pub fn read_input(input: &Path) -> Result<(Vec<u8>, Option<String>)> {
         .map(|name| name.to_string_lossy().into_owned());
 
     Ok((bytes, name))
+}
+
+/// Runs `work` on every input, at most `concurrency` at a time, and
+/// returns the results in the order the inputs were given.
+pub async fn for_each<T, F, Fut>(
+    inputs: Vec<PathBuf>,
+    concurrency: usize,
+    work: F,
+) -> Result<Vec<(PathBuf, Result<T>)>>
+where
+    T: Send + 'static,
+    F: Fn(PathBuf) -> Fut,
+    Fut: Future<Output = Result<T>> + Send + 'static,
+{
+    let limit = Arc::new(Semaphore::new(concurrency.max(1)));
+
+    let mut tasks = JoinSet::new();
+
+    for (position, input) in inputs.into_iter().enumerate() {
+        let limit = Arc::clone(&limit);
+
+        let job = work(input.clone());
+
+        tasks.spawn(async move {
+            let _permit = limit.acquire_owned().await;
+
+            (position, input, job.await)
+        });
+    }
+
+    let mut finished = Vec::new();
+
+    while let Some(joined) = tasks.join_next().await {
+        finished.push(joined?);
+    }
+
+    finished.sort_by_key(|(position, _, _)| *position);
+
+    let ordered = finished
+        .into_iter()
+        .map(|(_, input, result)| (input, result))
+        .collect();
+
+    Ok(ordered)
 }

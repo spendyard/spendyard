@@ -191,14 +191,44 @@ yes/no question at once, each with a calibrated probability:
 | `has_seats` | yes/no | |
 | `has_usage` | yes/no | |
 
-Routing:
+Routing (as built in M3):
 
-- `document_type` is `other` with high probability → stop. No extraction.
-  This is most of an inbox, at roughly $0.0001 per message.
-- Any answer is below the configured threshold → ask the extractor's model
-  the same questions (§5.1).
-- Otherwise → extract, passing the answers as hints ("has seats and usage:
-  expect both kinds of line").
+- `document_type` is `other` with at least the threshold's probability
+  (default 0.85) → stop. No extraction. This is most of an inbox, at
+  roughly $0.0001 per message.
+- Otherwise → extract, with the answers as hints in a `<first-model>` block
+  ("has seats and usage: expect both kinds of line"). An unsure first model
+  needs no separate LLM fallback: the extractor answers the same questions
+  in its own output anyway.
+- The first model fails → the extractor reads the document alone, with a
+  warning.
+- After extraction, a first model that was sure and disagrees with the
+  extractor (on receipt-or-invoice versus anything else, or on the billing
+  model) raises a `models_disagree` flag.
+
+The answers, with their probabilities, are in the result as `decisions`;
+`spendyard decide` runs the first model alone. The state sent is the
+headers plus each part's text (8,000 characters per part, 30,000 in all;
+Clef has a 24K-token context). Clef also gets up to four images when a
+document has no text; JEV is text only.
+
+**One client, four providers.** JEV (TypeSafe; Codiv's OpenJev with
+`base_url = "https://api.codiv.ai"`), Clef and Clef-flash on Cloudflare
+(REST, the same request format plus images) and `systemone` servers all
+take `{ model, state, questions }` and return `{ model, answers, usage }`.
+
+**What else they can answer.** Any multiple-choice, yes/no or 1–10 score
+question, up to 64 per call, each with a probability, so new questions are
+nearly free. Candidates, each a line in `decide/questions.rs`:
+
+- the spending category (AI, dev tools, design, infrastructure, office …)
+  for vendors the catalog doesn't know
+- business or personal, for receipts on personal cards
+- whether it announces a price increase, a plan change or a seat change
+- whether a scanned mailbox message is worth downloading at all, from
+  headers and a snippet (§7, Mailboxes)
+- in the cloud: which team or cost center a receipt belongs to, and how
+  urgent a renewal or failed payment is (a score)
 
 Decision models choose from options; they don't produce text. So they never
 supply names, amounts or dates.
@@ -707,7 +737,7 @@ document before launch.
 | **M0: Repo** | One Cargo package (library plus CLI), CI, release builds for macOS and Linux (arm64 and x86_64), Apache 2.0 licence, README. |
 | **M1: Read** | `Document` from eml, msg, PDF (text layer), images, HTML and text; `spendyard parts`. Pick the PDF crates and the HEIC approach. |
 | **M2: Extract** | `Extractor` trait; `anthropic`, `openai`, `gemini` and `openai-compatible`; output schema; validation and evidence checks; `spendyard read`. Done: run end to end with a local model; the hosted providers still need a first real run. |
-| **M3: Decide** | `Decider` trait; `clef-flash`, `clef`, `jev`, `systemone`; routing and thresholds; LLM fallback. |
+| **M3: Decide** | `Decider` trait; `clef-flash`, `clef`, `jev`, `systemone`; routing and thresholds; LLM fallback. Built, with the extractor as the fallback; `spendyard decide`, `spendyard config`. Not yet run against a real decision model (no key). |
 | **M4: Eval** | `spendyard eval`, first 200 labelled documents, defaults chosen from the results. |
 | **M5: Serve and MCP** | `spendyard serve` and `spendyard mcp`; `exec` provider. |
 | **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; `scan_mailbox` MCP tool; Gmail setup guide. |
@@ -725,6 +755,8 @@ document before launch.
   as is? Only Anthropic's request shape and a local model have been run;
   the others are tested against recorded request and response shapes.
 - Is JEV still in early access, and on what retention terms?
+- Does Cloudflare's REST API wrap Clef's answers in `{ "result": … }`? The
+  client accepts both; the first real call settles it.
 - Gmail for the CLI: is "bring your own OAuth client" acceptable to
   startups, or is it worth paying for Google's verification early?
 - Default thresholds per question, set from the `eval` results.

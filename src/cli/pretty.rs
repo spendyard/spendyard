@@ -133,11 +133,26 @@ pub fn print_result(name: &str, result: &ReadResult) {
 
     let meta = &result.meta;
 
+    let mut models = Vec::new();
+
+    if let Some(decider) = &meta.decider {
+        let tokens = meta.decider_tokens.map(|usage| usage.input).unwrap_or(0);
+
+        models.push(format!("{decider} {tokens} in"));
+    }
+
+    match &meta.model {
+        Some(model) => models.push(format!(
+            "{model} {} in / {} out",
+            meta.tokens.input, meta.tokens.output
+        )),
+
+        None => models.push("no extraction needed".to_string()),
+    }
+
     println!(
-        "  {} · {} in / {} out · {:.1} s",
-        meta.model,
-        meta.tokens.input,
-        meta.tokens.output,
+        "  {} · {:.1} s",
+        models.join(" → "),
         meta.ms as f64 / 1000.0
     );
 

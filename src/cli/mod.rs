@@ -2,6 +2,8 @@
 //! belongs in the library.
 
 pub mod config;
+pub mod config_command;
+pub mod decide;
 pub mod input;
 pub mod parts;
 pub mod pretty;

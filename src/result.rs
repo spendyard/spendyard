@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+use crate::decide::Answer;
 use crate::document::Document;
 use crate::extract::Usage;
 use crate::extract::schema::{
@@ -46,6 +47,10 @@ pub struct ReadResult {
     /// Problems reading the input, such as parts that couldn't be sent.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+
+    /// The first model's answers, with probabilities, when one ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decisions: Option<BTreeMap<String, Answer>>,
 
     pub meta: Meta,
 }
@@ -155,14 +160,66 @@ pub struct Meta {
     pub spendyard_version: &'static str,
     pub schema_version: &'static str,
 
-    /// `provider/model` as configured.
-    pub extractor: String,
+    /// The first model, `provider/model`, when one ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decider: Option<String>,
 
-    /// The model that answered.
-    pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decider_tokens: Option<Usage>,
+
+    /// The extractor, `provider/model` as configured. `None` when the first
+    /// model was sure there was nothing to extract.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extractor: Option<String>,
+
+    /// The model that answered the extraction.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 
     pub tokens: Usage,
     pub ms: u64,
+}
+
+impl Meta {
+    fn new() -> Meta {
+        Meta {
+            spendyard_version: crate::VERSION,
+            schema_version: crate::SCHEMA_VERSION,
+            decider: None,
+            decider_tokens: None,
+            extractor: None,
+            model: None,
+            tokens: Usage::default(),
+            ms: 0,
+        }
+    }
+}
+
+/// The result when the first model is sure the document isn't about
+/// money: no extraction ran.
+pub fn not_about_money(kind: DocumentType, certainty: f64) -> ReadResult {
+    ReadResult {
+        document: DocumentSummary {
+            kind,
+            is_receipt: false,
+            is_invoice: false,
+            status: Status::None,
+            source: None,
+            confidence: certainty,
+        },
+        vendor: None,
+        payments: Vec::new(),
+        amount: None,
+        billing: None,
+        lines: Vec::new(),
+        invoice_number: None,
+        issued: None,
+        evidence: BTreeMap::new(),
+        flags: Vec::new(),
+        warnings: Vec::new(),
+        decisions: None,
+        meta: Meta::new(),
+    }
 }
 
 /// Puts the result together from the model's answer. Validation runs
@@ -224,13 +281,13 @@ pub fn assemble(
         evidence,
         flags: Vec::new(),
         warnings: document.warnings.clone(),
+        decisions: None,
         meta: Meta {
-            spendyard_version: crate::VERSION,
-            schema_version: crate::SCHEMA_VERSION,
-            extractor,
-            model,
+            extractor: Some(extractor),
+            model: Some(model),
             tokens,
             ms,
+            ..Meta::new()
         },
     }
 }

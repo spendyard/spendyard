@@ -5,7 +5,7 @@
 
 mod anthropic;
 mod gemini;
-mod http;
+pub(crate) mod http;
 mod openai;
 mod openai_compatible;
 pub mod prompt;

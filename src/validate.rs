@@ -30,6 +30,7 @@ pub fn validate(result: &mut ReadResult, document: &Document) {
     check_dates(result, &mut flags);
     check_cards(result, &mut flags);
     check_evidence(result, document, &mut flags);
+    check_models_agree(result, &mut flags);
 
     result.flags.extend(flags);
 }
@@ -281,6 +282,62 @@ fn check_cards(result: &ReadResult, flags: &mut Vec<Flag>) {
             ));
         }
     }
+}
+
+/// Document types the extractor reads as money changing hands.
+const MONEY_TYPES: &[&str] = &["receipt", "invoice"];
+
+/// When the first model was sure and the extractor says otherwise, one of
+/// them is wrong. Receipt and invoice count as the same here: a paid
+/// invoice is both.
+fn check_models_agree(result: &ReadResult, flags: &mut Vec<Flag>) {
+    let Some(decisions) = &result.decisions else {
+        return;
+    };
+
+    let sure = |question: &str| -> Option<String> {
+        let (choice, probability) = decisions.get(question)?.chosen()?;
+
+        (probability >= crate::decide::DEFAULT_THRESHOLD).then(|| choice.to_string())
+    };
+
+    if let Some(first) = sure("document_type") {
+        let extracted = word(&result.document.kind);
+
+        let same_side =
+            MONEY_TYPES.contains(&first.as_str()) == MONEY_TYPES.contains(&extracted.as_str());
+
+        if !same_side {
+            flags.push(flag(
+                "models_disagree",
+                Some("document.type"),
+                format!("the first model says {first}, the extractor {extracted}"),
+            ));
+        }
+    }
+
+    if let Some(first) = sure("billing_model")
+        && first != "unknown"
+        && let Some(billing) = &result.billing
+    {
+        let extracted = word(&billing.model);
+
+        if extracted != "unknown" && extracted != first {
+            flags.push(flag(
+                "models_disagree",
+                Some("billing.model"),
+                format!("the first model says {first}, the extractor {extracted}"),
+            ));
+        }
+    }
+}
+
+/// The word a serde enum serializes to: `BillingModel::OneTime` → `one_time`.
+fn word<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|value| value.as_str().map(str::to_string))
+        .unwrap_or_default()
 }
 
 /// Every quote must be in the document's text. The values that matter most

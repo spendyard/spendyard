@@ -1,12 +1,15 @@
 //! The whole pipeline on a fixture, with a fake model standing in for a
 //! provider.
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use serde_json::json;
+use spendyard::decide::{Answer, Decider, Decision, Image, Question};
 use spendyard::extract::{
     Accepts, ExtractError, Extraction, Extractor, ModelOutput, Prompt, Usage,
 };
-use spendyard::{read, understand};
+use spendyard::{Pipeline, read, understand};
 
 /// Returns a fixed answer and remembers the prompt it was given.
 struct Fake {
@@ -37,6 +40,66 @@ impl Extractor for Fake {
             },
             model: "fake-1".to_string(),
         })
+    }
+}
+
+/// A first model with fixed answers.
+struct FakeDecider {
+    kind: (&'static str, f64),
+    billing: (&'static str, f64),
+}
+
+#[async_trait]
+impl Decider for FakeDecider {
+    fn name(&self) -> String {
+        "fake-decider".to_string()
+    }
+
+    fn accepts_images(&self) -> bool {
+        false
+    }
+
+    async fn decide(
+        &self,
+        _state: &serde_json::Value,
+        questions: &[Question],
+        _images: &[Image],
+    ) -> Result<Decision, ExtractError> {
+        assert!(
+            questions
+                .iter()
+                .any(|question| question.name() == "document_type")
+        );
+
+        let choice = |(choice, probability): (&str, f64)| Answer::Choice {
+            choice: choice.to_string(),
+            probabilities: BTreeMap::from([(choice.to_string(), probability)]),
+        };
+
+        let mut decision = Decision::default();
+
+        decision
+            .answers
+            .insert("document_type".to_string(), choice(self.kind));
+        decision
+            .answers
+            .insert("billing_model".to_string(), choice(self.billing));
+
+        decision.model = "fake-decider-1".to_string();
+        decision.usage = Usage {
+            input: 900,
+            output: 0,
+        };
+
+        Ok(decision)
+    }
+}
+
+fn pipeline<'a>(extractor: &'a Fake, decider: Option<&'a FakeDecider>) -> Pipeline<'a> {
+    Pipeline {
+        decider: decider.map(|decider| decider as &dyn Decider),
+        extractor,
+        threshold: 0.85,
     }
 }
 
@@ -99,7 +162,7 @@ async fn a_good_answer_passes_every_check() {
         seen: Default::default(),
     };
 
-    let result = understand(&document, &fake).await.unwrap();
+    let result = understand(&document, &pipeline(&fake, None)).await.unwrap();
 
     assert_eq!(result.flags, [], "unexpected flags");
 
@@ -125,8 +188,8 @@ async fn a_good_answer_passes_every_check() {
     );
     assert!(result.evidence.values().all(|evidence| evidence.checked));
 
-    assert_eq!(result.meta.extractor, "fake/model");
-    assert_eq!(result.meta.model, "fake-1");
+    assert_eq!(result.meta.extractor.as_deref(), Some("fake/model"));
+    assert_eq!(result.meta.model.as_deref(), Some("fake-1"));
 
     let prompt = fake.seen.lock().unwrap().clone().unwrap();
 
@@ -153,7 +216,7 @@ async fn invented_values_are_flagged() {
         seen: Default::default(),
     };
 
-    let result = understand(&document, &fake).await.unwrap();
+    let result = understand(&document, &pipeline(&fake, None)).await.unwrap();
 
     let codes: Vec<&str> = result.flags.iter().map(|flag| flag.code).collect();
 
@@ -172,7 +235,100 @@ async fn a_scanned_pdf_has_nothing_for_a_text_only_model() {
         seen: Default::default(),
     };
 
-    let error = understand(&document, &fake).await.unwrap_err();
+    let error = understand(&document, &pipeline(&fake, None))
+        .await
+        .unwrap_err();
 
     assert!(matches!(error, ExtractError::NothingToRead(_)));
+}
+
+#[tokio::test]
+async fn a_sure_first_model_skips_the_extractor() {
+    let document = read(&fixture("receipt.eml"), None).unwrap();
+
+    let fake = Fake {
+        answer: good_answer(),
+        seen: Default::default(),
+    };
+
+    let decider = FakeDecider {
+        kind: ("other", 0.97),
+        billing: ("unknown", 0.9),
+    };
+
+    let result = understand(&document, &pipeline(&fake, Some(&decider)))
+        .await
+        .unwrap();
+
+    assert!(fake.seen.lock().unwrap().is_none(), "the extractor ran");
+    assert!(!result.document.is_receipt);
+    assert_eq!(result.meta.decider.as_deref(), Some("fake-decider"));
+    assert!(result.meta.extractor.is_none());
+}
+
+#[tokio::test]
+async fn an_unsure_first_model_hands_over_with_hints() {
+    let document = read(&fixture("receipt.eml"), None).unwrap();
+
+    let fake = Fake {
+        answer: good_answer(),
+        seen: Default::default(),
+    };
+
+    let decider = FakeDecider {
+        kind: ("other", 0.6),
+        billing: ("mixed", 0.9),
+    };
+
+    let result = understand(&document, &pipeline(&fake, Some(&decider)))
+        .await
+        .unwrap();
+
+    let prompt = fake
+        .seen
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("the extractor ran");
+
+    let hints_sent = prompt.blocks.iter().any(|block| {
+        matches!(block, spendyard::extract::Block::Text(text) if text.contains("<first-model>"))
+    });
+
+    assert!(hints_sent);
+    assert!(result.document.is_receipt);
+    assert!(result.decisions.is_some());
+    assert_eq!(
+        result.flags,
+        [],
+        "unsure about the type, and agrees on billing"
+    );
+}
+
+#[tokio::test]
+async fn a_sure_first_model_that_disagrees_is_flagged() {
+    let document = read(&fixture("receipt.eml"), None).unwrap();
+
+    let fake = Fake {
+        answer: good_answer(),
+        seen: Default::default(),
+    };
+
+    let decider = FakeDecider {
+        kind: ("renewal_notice", 0.95),
+        billing: ("subscription", 0.95),
+    };
+
+    let result = understand(&document, &pipeline(&fake, Some(&decider)))
+        .await
+        .unwrap();
+
+    let fields: Vec<&str> = result
+        .flags
+        .iter()
+        .filter(|flag| flag.code == "models_disagree")
+        .filter_map(|flag| flag.field.as_deref())
+        .collect();
+
+    assert_eq!(fields, ["document.type", "billing.model"]);
 }

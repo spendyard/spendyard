@@ -12,11 +12,28 @@ use spendyard::extract::{self, Settings};
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
+    pub decider: DeciderConfig,
+
+    #[serde(default)]
     pub extractor: ExtractorConfig,
 
     /// Per provider: `[providers.openai-compatible]`.
     #[serde(default)]
     pub providers: BTreeMap<String, ProviderConfig>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeciderConfig {
+    /// `jev`, `clef`, `clef-flash`, `systemone` or `none`. No first model
+    /// when unset.
+    pub provider: Option<String>,
+
+    pub model: Option<String>,
+
+    /// How sure the first model must be that a document isn't about money
+    /// before the extractor is skipped. Default 0.85.
+    pub threshold: Option<f64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -126,6 +143,60 @@ pub fn extractor_settings(config: &Config, flag: Option<&str>) -> Settings {
     }
 }
 
+/// The first model to use, if any: `--decider` wins over the config.
+/// `none` turns it off. `--decider` is `provider` or `provider/model`.
+pub fn decider_settings(
+    config: &Config,
+    flag: Option<&str>,
+) -> Option<spendyard::decide::Settings> {
+    let (flag_provider, flag_model) = match flag {
+        Some(value) => match value.split_once('/') {
+            Some((provider, model)) => (Some(provider.to_string()), Some(model.to_string())),
+            None => (Some(value.to_string()), None),
+        },
+
+        None => (None, None),
+    };
+
+    let provider = flag_provider.or_else(|| config.decider.provider.clone())?;
+
+    if provider == "none" {
+        return None;
+    }
+
+    let same_provider = config.decider.provider.as_deref() == Some(provider.as_str());
+
+    let model = flag_model.or_else(|| {
+        same_provider
+            .then(|| config.decider.model.clone())
+            .flatten()
+    });
+
+    let provider_config = config.providers.get(&provider);
+
+    let key_variable = provider_config
+        .and_then(|settings| settings.api_key_env.clone())
+        .or_else(|| spendyard::decide::key_variable(&provider).map(str::to_string));
+
+    let settings = spendyard::decide::Settings {
+        api_key: key_variable.and_then(|variable| env(&variable)),
+        account_id: env("CLOUDFLARE_ACCOUNT_ID"),
+        base_url: provider_config.and_then(|settings| settings.base_url.clone()),
+        provider,
+        model,
+    };
+
+    Some(settings)
+}
+
+/// The decider threshold from the config, or the default.
+pub fn threshold(config: &Config) -> f64 {
+    config
+        .decider
+        .threshold
+        .unwrap_or(spendyard::decide::DEFAULT_THRESHOLD)
+}
+
 fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
@@ -180,6 +251,36 @@ mod tests {
         assert_eq!(
             settings.base_url.as_deref(),
             Some("http://localhost:1234/v1")
+        );
+    }
+
+    #[test]
+    fn decider_comes_from_flag_or_config() {
+        assert!(decider_settings(&Config::default(), None).is_none());
+
+        let config = config(
+            r#"
+            [decider]
+            provider = "jev"
+            model = "openjev-latest"
+            threshold = 0.9
+
+            [providers.jev]
+            base_url = "https://api.codiv.ai"
+            "#,
+        );
+
+        let settings = decider_settings(&config, None).unwrap();
+
+        assert_eq!(settings.provider, "jev");
+        assert_eq!(settings.model.as_deref(), Some("openjev-latest"));
+        assert_eq!(settings.base_url.as_deref(), Some("https://api.codiv.ai"));
+        assert_eq!(threshold(&config), 0.9);
+
+        assert!(decider_settings(&config, Some("none")).is_none());
+        assert_eq!(
+            decider_settings(&config, Some("clef-flash")).unwrap().model,
+            None
         );
     }
 

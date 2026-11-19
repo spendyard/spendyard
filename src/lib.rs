@@ -6,6 +6,7 @@
 //! the library: it moves into its own WebAssembly-ready crate when the cloud
 //! work starts.
 
+pub mod decide;
 pub mod document;
 pub mod extract;
 pub mod format;
@@ -17,8 +18,11 @@ pub mod validate;
 
 use std::time::Instant;
 
+pub use decide::Decider;
 pub use document::{Document, EmailHeaders, Format, Part, PartKind};
 pub use extract::{ExtractError, Extractor};
+
+use extract::schema::DocumentType;
 pub use read::{ReadError, read};
 pub use result::ReadResult;
 
@@ -30,13 +34,70 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Change it whenever the output changes.
 pub const SCHEMA_VERSION: &str = "2026-11-19";
 
-/// Reads what `document` says about money with `extractor`, then checks
-/// the answer.
+/// The models to read documents with.
+pub struct Pipeline<'a> {
+    /// The cheap first model. `None` sends every document to the extractor.
+    pub decider: Option<&'a dyn Decider>,
+
+    pub extractor: &'a dyn Extractor,
+
+    /// How sure the first model must be that a document isn't about money
+    /// before the extractor is skipped.
+    pub threshold: f64,
+}
+
+/// Document types that never need the extractor when the first model is
+/// sure of them.
+const NOT_ABOUT_MONEY: &[&str] = &["other"];
+
+/// Reads what `document` says about money, then checks the answer.
+///
+/// With a first model: it answers its questions first. When it is sure
+/// the document isn't about money, that's the result; otherwise its
+/// answers go to the extractor as hints, and are compared with the
+/// extractor's answer afterwards. If the first model fails, the extractor
+/// reads the document alone and a warning says so.
 pub async fn understand(
     document: &Document,
-    extractor: &dyn Extractor,
+    pipeline: &Pipeline<'_>,
 ) -> Result<ReadResult, ExtractError> {
-    let prompt = extract::prompt::build(document, extractor.accepts());
+    let started = Instant::now();
+
+    let mut warnings = Vec::new();
+
+    let decision = match pipeline.decider {
+        Some(decider) => match decide::decide(document, decider).await {
+            Some(Ok(decision)) => Some(decision),
+
+            Some(Err(error)) => {
+                warnings.push(format!("the first model failed ({error}); read without it"));
+
+                None
+            }
+
+            None => None,
+        },
+
+        None => None,
+    };
+
+    if let Some(decision) = &decision
+        && let Some((kind, certainty)) = decision.choice("document_type")
+        && NOT_ABOUT_MONEY.contains(&kind)
+        && certainty >= pipeline.threshold
+    {
+        let mut result = result::not_about_money(DocumentType::Other, certainty);
+
+        result.warnings = warnings;
+
+        attach_decision(&mut result, decision, pipeline);
+
+        result.meta.ms = started.elapsed().as_millis() as u64;
+
+        return Ok(result);
+    }
+
+    let mut prompt = extract::prompt::build(document, pipeline.extractor.accepts());
 
     if !prompt.has_content() {
         let reason = if prompt.warnings.is_empty() {
@@ -48,26 +109,40 @@ pub async fn understand(
         return Err(ExtractError::NothingToRead(reason));
     }
 
-    let started = Instant::now();
+    if let Some(decision) = &decision {
+        prompt.add_hints(&decision.hints());
+    }
 
-    let extraction = extractor.extract(&prompt).await?;
-
-    let ms = started.elapsed().as_millis() as u64;
+    let extraction = pipeline.extractor.extract(&prompt).await?;
 
     let mut result = result::assemble(
         document,
         extraction.output,
-        extractor.name(),
+        pipeline.extractor.name(),
         extraction.model,
         extraction.usage,
-        ms,
+        0,
     );
 
+    result.warnings.extend(warnings);
     result.warnings.extend(prompt.warnings);
+
+    if let Some(decision) = &decision {
+        attach_decision(&mut result, decision, pipeline);
+    }
 
     validate::validate(&mut result, document);
 
+    result.meta.ms = started.elapsed().as_millis() as u64;
+
     Ok(result)
+}
+
+fn attach_decision(result: &mut ReadResult, decision: &decide::Decision, pipeline: &Pipeline<'_>) {
+    result.decisions = Some(decision.answers.clone());
+
+    result.meta.decider = pipeline.decider.map(|decider| decider.name());
+    result.meta.decider_tokens = Some(decision.usage);
 }
 
 #[cfg(test)]
