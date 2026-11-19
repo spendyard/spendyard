@@ -5,11 +5,12 @@ straight from Gmail and Outlook — and works out what you're paying for:
 the vendor, the card, the price, the price per seat, usage charges, and
 whether it's billed monthly, yearly, by usage or a mix.
 
-It is one binary. It runs as a CLI, as an HTTP API and as MCP tools for
-agents, with your own model API keys. Nothing is sent anywhere except to the
+It is one binary. It runs as a CLI and as MCP tools for agents, with your
+own model API keys. Nothing is sent anywhere except to the
 model providers you configure.
 
-> **Status:** early development. `parts`, `read`, `decide` and `config` work;
+> **Status:** early development. `parts`, `read`, `decide`, `config`, `label`,
+> `eval` and `mcp` work;
 > mailboxes and the store come next. The design is in
 > [docs/design.md](docs/design.md).
 
@@ -48,7 +49,18 @@ spendyard config                           # settings in effect, and which keys 
 spendyard config init                      # write a commented ~/.spendyard/config.toml
 spendyard label ./eval                     # draft expected answers with a careful model
 spendyard eval ./eval -d none,clef-flash   # score model combinations against them
+spendyard mcp                              # MCP tools over stdio, for agents
 ```
+
+As an MCP server for Claude, Cursor or any other client:
+
+```json
+{ "mcpServers": { "spendyard": { "command": "spendyard", "args": ["mcp"] } } }
+```
+
+Any program can be a model: `provider = "exec"` and `command = [...]` under
+`[extractor]` or `[decider]` in the config. It gets the request as JSON on
+standard input and answers with JSON on standard output.
 
 API keys come from the environment, or from `.env.local` / `.env` in the
 current folder or `~/.spendyard/.env`; variables already set win.
@@ -75,8 +87,6 @@ spendyard login gmail
 spendyard scan gmail --since 2026-01-01   # kept in ~/.spendyard
 spendyard report --by vendor --months 12
 spendyard subscriptions
-spendyard serve
-spendyard mcp
 ```
 
 ## Building

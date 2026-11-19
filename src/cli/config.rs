@@ -34,6 +34,9 @@ pub struct DeciderConfig {
     /// How sure the first model must be that a document isn't about money
     /// before the extractor is skipped. Default 0.85.
     pub threshold: Option<f64>,
+
+    /// For `provider = "exec"`: the command and its arguments.
+    pub command: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -43,6 +46,9 @@ pub struct ExtractorConfig {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub max_tokens: Option<u32>,
+
+    /// For `provider = "exec"`: the command and its arguments.
+    pub command: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]

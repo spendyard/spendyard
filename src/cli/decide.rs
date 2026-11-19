@@ -21,13 +21,11 @@ pub struct Options {
 pub async fn run(options: Options) -> Result<usize> {
     let config = config::load()?;
 
-    let Some(settings) = config::decider_settings(&config, options.decider.as_deref()) else {
+    let Some(decider) = super::models::decider(&config, options.decider.as_deref())? else {
         bail!(
             "no first model: pass --decider (jev, clef, clef-flash or systemone), or set provider under [decider] in the config"
         );
     };
-
-    let decider: Arc<dyn Decider> = Arc::from(spendyard::decide::build(settings)?);
 
     let results = for_each(options.inputs, options.concurrency, |input| {
         let decider = Arc::clone(&decider);

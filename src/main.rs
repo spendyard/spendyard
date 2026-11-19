@@ -128,6 +128,16 @@ enum Command {
         text: bool,
     },
 
+    /// Run as an MCP server over stdio, with read_document,
+    /// decide_document and list_parts tools for agents.
+    Mcp {
+        #[arg(long, short)]
+        extractor: Option<String>,
+
+        #[arg(long, short)]
+        decider: Option<String>,
+    },
+
     /// Show where the config lives, the models in effect and which keys
     /// are set.
     Config {
@@ -251,6 +261,19 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
 
         Command::Parts { input, json, text } => {
             cli::parts::run(&input, json, text).map(|()| ExitCode::SUCCESS)
+        }
+
+        Command::Mcp { extractor, decider } => {
+            let mcp = async {
+                let config = cli::config::load()?;
+
+                let models =
+                    cli::models::Models::load(&config, extractor.as_deref(), decider.as_deref())?;
+
+                cli::mcp::run(models).await
+            };
+
+            mcp.await.map(|()| ExitCode::SUCCESS)
         }
 
         Command::Config { action } => {

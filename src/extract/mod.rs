@@ -144,8 +144,8 @@ pub fn key_variable(provider: &str) -> Option<&'static str> {
     }
 }
 
-/// Parses the model's JSON text into [`ModelOutput`].
-fn parse_output(text: &str) -> Result<ModelOutput, ExtractError> {
+/// Parses a model's JSON text into [`ModelOutput`].
+pub fn parse_output(text: &str) -> Result<ModelOutput, ExtractError> {
     let trimmed = text
         .trim()
         .trim_start_matches("```json")

@@ -5,9 +5,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use serde_json::json;
-use spendyard::{Decider, Extractor, Pipeline, ReadResult};
+use spendyard::ReadResult;
 
 use super::input::{for_each, read_input};
+use super::models::Models;
 use super::{config, pretty};
 
 pub struct Options {
@@ -25,28 +26,14 @@ pub struct Outcome {
     pub errors: usize,
 }
 
-/// The models, shared by every task.
-struct Models {
-    decider: Option<Arc<dyn Decider>>,
-    extractor: Arc<dyn Extractor>,
-    threshold: f64,
-}
-
 pub async fn run(options: Options) -> Result<Outcome> {
     let config = config::load()?;
 
-    let extractor_settings = config::extractor_settings(&config, options.extractor.as_deref());
-
-    let decider = match config::decider_settings(&config, options.decider.as_deref()) {
-        Some(settings) => Some(Arc::from(spendyard::decide::build(settings)?)),
-        None => None,
-    };
-
-    let models = Arc::new(Models {
-        decider,
-        extractor: Arc::from(spendyard::extract::build(extractor_settings)?),
-        threshold: config::threshold(&config),
-    });
+    let models = Arc::new(Models::load(
+        &config,
+        options.extractor.as_deref(),
+        options.decider.as_deref(),
+    )?);
 
     let jsonl = options.jsonl || options.inputs.len() > 1;
 
@@ -90,13 +77,7 @@ async fn read_one(input: &std::path::Path, models: &Models) -> Result<ReadResult
 
     let document = spendyard::read(&bytes, name.as_deref())?;
 
-    let pipeline = Pipeline {
-        decider: models.decider.as_deref(),
-        extractor: models.extractor.as_ref(),
-        threshold: models.threshold,
-    };
-
-    let result = spendyard::understand(&document, &pipeline).await?;
+    let result = spendyard::understand(&document, &models.pipeline()).await?;
 
     Ok(result)
 }

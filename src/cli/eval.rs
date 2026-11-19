@@ -110,9 +110,7 @@ pub async fn label(options: LabelOptions) -> Result<()> {
 
     let flag = options.extractor.as_deref().unwrap_or(LABEL_MODEL);
 
-    let settings = config::extractor_settings(&config, Some(flag));
-
-    let extractor: Arc<dyn Extractor> = Arc::from(spendyard::extract::build(settings)?);
+    let extractor = super::models::extractor(&config, Some(flag))?;
 
     let mut todo: Vec<PathBuf> = documents(&options.dir)?
         .into_iter()
@@ -245,16 +243,9 @@ pub async fn run(options: EvalOptions) -> Result<()> {
 
     for decider_flag in &decider_flags {
         for extractor_flag in &extractor_flags {
-            let decider: Option<Arc<dyn Decider>> =
-                match config::decider_settings(&config, decider_flag.as_deref()) {
-                    Some(settings) => Some(Arc::from(spendyard::decide::build(settings)?)),
-                    None => None,
-                };
+            let decider = super::models::decider(&config, decider_flag.as_deref())?;
 
-            let extractor_settings = config::extractor_settings(&config, extractor_flag.as_deref());
-
-            let extractor: Arc<dyn Extractor> =
-                Arc::from(spendyard::extract::build(extractor_settings)?);
+            let extractor = super::models::extractor(&config, extractor_flag.as_deref())?;
 
             let run = run_combination(
                 Arc::clone(&documents),

@@ -8,8 +8,8 @@ Spendyard has two parts:
    document — an email, PDF, image or text — and works out whether it is a
    receipt or invoice, who the vendor is, how it was paid, what it cost and
    how it is billed. It scans Gmail and Outlook, keeps what it finds in a
-   local store, and reports one person's spending. It runs as a CLI, as an
-   HTTP API and as MCP tools for agents, using the user's own model API keys.
+   local store, and reports one person's spending. It runs as a CLI and as
+   MCP tools for agents, using the user's own model API keys.
 2. **Spendyard Cloud, a SaaS spend dashboard** for startups. The same store,
    shared by a company: everyone's receipts, over time and across people,
    with its subscriptions, renewals, seats, AI tool spend and who pays for
@@ -467,23 +467,52 @@ spendyard vendors lookup stripe.com      # vendor catalog
 
 Exit codes: 0 receipt or invoice found, 1 none found, 2 error.
 
-### HTTP API: `spendyard serve`
+### No HTTP API in the binary (decided in M5)
 
-```
-POST /v1/read       body: raw file, multipart or JSON { "base64": … }
-POST /v1/decide
-POST /v1/parts
-GET  /v1/health
-```
-
-Binds to `127.0.0.1` by default. `--token` requires a bearer token. Keys are
-the server's own, from its environment.
+The HTTP API is Spendyard Cloud's (§11). The binary doesn't serve one:
+programs call the CLI, which prints JSON (`spendyard read --jsonl`), agents
+use MCP, and other models plug in with `exec`. A local server would mostly
+be a way to put model keys on a network by mistake. A `serve` command was
+built and taken out again; it is easy to bring back if self-hosters ask.
 
 ### MCP: `spendyard mcp`
 
 MCP over stdio with three tools: `read_document`, `decide_document` and
-`list_parts`. Each takes a file path or base64 content. An agent with a
-mailbox can then sort and read receipts itself.
+`list_parts`. Each takes `path`, or `base64` with an optional `name`, and
+answers with the same JSON the CLI prints. Errors (an unreadable file, no
+first model configured) come back as tool errors an agent can read, not
+protocol errors. An agent with a mailbox can then sort and read receipts
+itself. To add it to an MCP client:
+
+```json
+{ "mcpServers": { "spendyard": { "command": "spendyard", "args": ["mcp"] } } }
+```
+
+### `exec`: any program as a model
+
+`provider = "exec"` with `command = ["program", "arg"]` under `[extractor]`
+or `[decider]` makes any program a model. Spendyard writes the request as
+JSON to its standard input and reads JSON from its standard output:
+
+- extractor: `{ "kind": "extract", "system", "schema", "blocks": [text,
+  pdf or image blocks, base64] }` in; the schema's JSON out, or `{ "output",
+  "usage": { "input", "output" }, "model" }`.
+- first model: `{ "kind": "decide", "state", "questions", "images" }` in, in
+  the JEV format; `{ "answers", "usage", "model" }` out.
+
+A non-zero exit is an error, with the end of standard error in the
+message. It lives in the CLI, not the library, because it starts
+processes.
+
+### JSON, not protobuf
+
+Every interface is JSON: MCP is JSON-RPC by definition, models answer in
+JSON Schema, `exec` should be easy from any language, and the cloud runs in
+Workers, where JSON is native. The result format is versioned
+(`schema_version`) and has a generated JSON Schema. If the cloud API later
+wants typed clients and binary payloads, Connect-style RPC can serve the
+same messages as both JSON and protobuf from one definition; that's a
+cloud decision, not the binary's.
 
 ### Mailboxes: Gmail and Outlook
 
@@ -573,7 +602,7 @@ Everything Spendyard finds is kept in one place, with no setup:
 | `spendyard scan …` | Always. That's the point of scanning. |
 | `spendyard read file…` | Yes. `--no-store` for a one-off look. |
 | `spendyard parts`, `decide` | No. They only look. |
-| `spendyard serve`, `mcp` | No, unless the config says `store = true`. They answer other programs and agents, which shouldn't fill your store by surprise. |
+| `spendyard mcp` | No, unless the config says `store = true`. It answers agents, which shouldn't fill your store by surprise. |
 | `spendyard eval` | No. It uses a temporary store. |
 
 ### What's in it
@@ -721,7 +750,7 @@ pays.
 | One person's store (§8) | Cards' last four digits matched to people; spend per person and team |
 | Spending per vendor and month; subscriptions; price changes | Renewal calendar and alerts ("Linear renews yearly in 14 days"); the weekly email |
 | `push` and `pull` | AI tool spend for the whole company: seats vs usage per tool and month |
-| CLI, `serve`, `mcp`, `eval` | Expense exports for accounting (Fiken, Tripletex, Xero, QuickBooks) |
+| CLI, `mcp`, `exec`, `eval` | Expense exports for accounting (Fiken, Tripletex, Xero, QuickBooks) |
 | | Later: seats paid for vs used, by connecting Google Workspace, Microsoft 365 or GitHub |
 
 ### Cloud v1 for startups
@@ -797,7 +826,7 @@ document before launch.
 | **M2: Extract** | `Extractor` trait; `anthropic`, `openai`, `gemini` and `openai-compatible`; output schema; validation and evidence checks; `spendyard read`. Done: run end to end with a local model; the hosted providers still need a first real run. |
 | **M3: Decide** | `Decider` trait; `clef-flash`, `clef`, `jev`, `systemone`; routing and thresholds; LLM fallback. Built, with the extractor as the fallback; `spendyard decide`, `spendyard config`. Not yet run against a real decision model (no key). |
 | **M4: Eval** | `spendyard eval`, first 200 labelled documents, defaults chosen from the results. Built: `spendyard label` and `spendyard eval`; a first private set of 26. Still to do: grow it to 200 with real non-receipts from an inbox, review the drafts, then set the threshold and default models from it. |
-| **M5: Serve and MCP** | `spendyard serve` and `spendyard mcp`; `exec` provider. |
+| **M5: MCP and exec** | `spendyard mcp`; `exec` provider. Done; `serve` was dropped (the HTTP API is the cloud's). |
 | **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; `scan_mailbox` MCP tool; Gmail setup guide. |
 | **M5c: Store and reports** | `~/.spendyard` with SQLite (`rusqlite`, SQLite compiled in); `read` and `scan` store results; `report`, `subscriptions`, `receipts`, `edit`; exchange rates. Could come before M5b, fed by `read` on files. |
 | **M6: Vendor catalog** | First 200 vendors, AI tools first; processor rules. |

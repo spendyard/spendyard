@@ -15,7 +15,8 @@ use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 
-pub use questions::{Question, questions_for, state_for};
+pub use questions::{Question, images_for, questions_for, state_for};
+pub use systemone::parse_response as parse_answers;
 
 use crate::document::Document;
 use crate::extract::{ExtractError, Usage};
@@ -186,7 +187,7 @@ pub async fn decide(
     let state = state_for(document);
 
     let images = if decider.accepts_images() {
-        questions::images_for(document)
+        images_for(document)
     } else {
         Vec::new()
     };

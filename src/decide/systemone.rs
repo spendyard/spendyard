@@ -191,7 +191,9 @@ impl Decider for SystemOne {
     }
 }
 
-fn parse_response(response: &Value, asked_for: &str) -> Result<Decision, ExtractError> {
+/// Reads answers in the JEV response format. Also used by deciders
+/// outside this module, such as the CLI's `exec` provider.
+pub fn parse_response(response: &Value, asked_for: &str) -> Result<Decision, ExtractError> {
     // Cloudflare's REST API wraps results in { "result": …, "success": … }.
     let body = match response.get("result") {
         Some(result) if result.get("answers").is_some() => result,
