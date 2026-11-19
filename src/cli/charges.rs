@@ -44,6 +44,10 @@ pub struct ListOptions {
 #[derive(Debug, Clone, Serialize)]
 pub struct StoredCharge {
     pub id: i64,
+
+    /// The statement it was read from.
+    pub document_id: i64,
+
     pub date: String,
     pub merchant: String,
     pub card_last4: Option<String>,
@@ -281,42 +285,75 @@ fn summarize(
         .map(|(currency, value)| (currency, value.to_string()))
         .collect();
 
-    let cards: BTreeSet<&str> = charges
+    let covered = coverage(charges);
+
+    summary.receipts_without_charge = receipts
         .iter()
-        .filter_map(|charge| charge.card_last4.as_deref())
+        .filter(|receipt| !used_receipts.contains(&receipt.document_id))
+        .filter(|receipt| {
+            receipt
+                .card_last4
+                .as_deref()
+                .is_some_and(|card| is_covered(&covered, card, &receipt.date))
+        })
+        .map(|receipt| {
+            (
+                receipt.document_id,
+                receipt
+                    .vendor_name
+                    .clone()
+                    .or_else(|| receipt.vendor_id.clone())
+                    .unwrap_or_default(),
+                receipt.date.clone(),
+                receipt.total.to_string(),
+                receipt.currency.clone(),
+            )
+        })
         .collect();
 
-    let first = charges.iter().map(|charge| charge.date.as_str()).min();
-    let last = charges.iter().map(|charge| charge.date.as_str()).max();
+    summary
+}
 
-    if let (Some(first), Some(last)) = (first, last) {
-        summary.receipts_without_charge = receipts
-            .iter()
-            .filter(|receipt| !used_receipts.contains(&receipt.document_id))
-            .filter(|receipt| {
-                receipt
-                    .card_last4
-                    .as_deref()
-                    .is_some_and(|card| cards.contains(card))
-            })
-            .filter(|receipt| receipt.date.as_str() >= first && receipt.date.as_str() <= last)
-            .map(|receipt| {
-                (
-                    receipt.document_id,
-                    receipt
-                        .vendor_name
-                        .clone()
-                        .or_else(|| receipt.vendor_id.clone())
-                        .unwrap_or_default(),
-                    receipt.date.clone(),
-                    receipt.total.to_string(),
-                    receipt.currency.clone(),
-                )
-            })
-            .collect();
+/// The days each statement covers, per card: from its first charge to its
+/// last, as day numbers.
+fn coverage(charges: &[StoredCharge]) -> Vec<(String, i64, i64)> {
+    let mut ranges: std::collections::BTreeMap<(i64, String), (i64, i64)> =
+        std::collections::BTreeMap::new();
+
+    for charge in charges {
+        let (Some(card), Some(day)) = (&charge.card_last4, days(&charge.date)) else {
+            continue;
+        };
+
+        let range = ranges
+            .entry((charge.document_id, card.clone()))
+            .or_insert((day, day));
+
+        range.0 = range.0.min(day);
+        range.1 = range.1.max(day);
     }
 
-    summary
+    ranges
+        .into_iter()
+        .map(|((_, card), (first, last))| (card, first, last))
+        .collect()
+}
+
+/// Whether a receipt on `card` dated `date` falls in a statement's days,
+/// and so do the days after it in which its charge could come: a receipt
+/// near the end of the last statement may be charged on the next one.
+fn is_covered(ranges: &[(String, i64, i64)], card: &str, date: &str) -> bool {
+    let Some(day) = days(date) else {
+        return false;
+    };
+
+    let within = |day: i64| {
+        ranges
+            .iter()
+            .any(|(range_card, first, last)| range_card == card && *first <= day && day <= *last)
+    };
+
+    within(day) && within(day + DAYS_AFTER)
 }
 
 /// How well `receipt` fits `charge`: lower is better, `None` when it
@@ -354,7 +391,7 @@ fn score(store: &Store, charge: &StoredCharge, receipt: &Receipt) -> Result<Opti
 
 fn same_vendor(charge: &StoredCharge, receipt: &Receipt) -> bool {
     if let (Some(a), Some(b)) = (&charge.vendor_id, &receipt.vendor_id) {
-        return a == b;
+        return spendyard::catalog::catalog().same_or_related(a, b);
     }
 
     let key = |name: &Option<String>| name.as_deref().map(spendyard::catalog::name_key);
@@ -458,7 +495,7 @@ async fn ensure_rates(store: &Store, charges: &[StoredCharge], receipts: &[Recei
 fn load_charges(store: &Store) -> Result<Vec<StoredCharge>> {
     let mut statement = store.connection.prepare(
         "SELECT id, date, merchant, card_last4, amount, currency, original_amount,
-                original_currency, kind, vendor_id, vendor_name, receipt_id
+                original_currency, kind, vendor_id, vendor_name, receipt_id, document_id
          FROM charges ORDER BY date, document_id, position",
     )?;
 
@@ -476,6 +513,7 @@ fn load_charges(store: &Store) -> Result<Vec<StoredCharge>> {
             vendor_id: row.get(9)?,
             vendor_name: row.get(10)?,
             receipt_id: row.get(11)?,
+            document_id: row.get(12)?,
         })
     })?;
 
@@ -519,6 +557,15 @@ fn load_receipts(store: &Store) -> Result<Vec<Receipt>> {
         let Some(total) = amount(&total) else {
             continue;
         };
+
+        // Receipts read before the catalog knew their vendor's name.
+        let vendor_id = vendor_id.or_else(|| {
+            let name = vendor_name.as_deref()?;
+
+            let vendor = spendyard::catalog::catalog().by_name(name)?;
+
+            Some(vendor.id.clone())
+        });
 
         receipts.push(Receipt {
             document_id,
@@ -567,6 +614,9 @@ fn print_charge(charge: &StoredCharge) {
     );
 }
 
+/// How many receipts without a charge the summary lists.
+const SHOWN: usize = 10;
+
 /// The summary as `charges match` prints it.
 pub fn print_summary(summary: &MatchSummary) {
     if summary.charges == 0 {
@@ -607,8 +657,16 @@ pub fn print_summary(summary: &MatchSummary) {
             summary.receipts_without_charge.len()
         );
 
-        for (id, vendor, date, total, currency) in &summary.receipts_without_charge {
+        let shown = summary.receipts_without_charge.iter().take(SHOWN);
+
+        for (id, vendor, date, total, currency) in shown {
             println!("         {date}  {vendor}  {total} {currency}  (receipt {id})");
+        }
+
+        let more = summary.receipts_without_charge.len().saturating_sub(SHOWN);
+
+        if more > 0 {
+            println!("         … and {more} more (`spendyard charges match --json` has them all)");
         }
     }
 
@@ -675,6 +733,7 @@ mod tests {
     fn charge() -> StoredCharge {
         StoredCharge {
             id: 1,
+            document_id: 3,
             date: "2026-04-20".to_string(),
             merchant: "ANTHROPIC: CLAUDE TEAM, SAN FRANCISCO, US".to_string(),
             card_last4: Some("3776".to_string()),

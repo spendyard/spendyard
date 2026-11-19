@@ -494,6 +494,16 @@ fn conversion_problem(charge: &ChargeOutput) -> Option<String> {
     })
 }
 
+/// A checked statement from the models' answers for its groups, without
+/// read meta. For answers that came from elsewhere, and tests.
+pub fn assemble(outputs: Vec<StatementOutput>) -> Statement {
+    let mut statement = merge(outputs);
+
+    statement.checks = check(&statement);
+
+    statement
+}
+
 /// Puts the groups' answers together into one statement, in order. Rows
 /// listed twice are kept once.
 fn merge(outputs: Vec<StatementOutput>) -> Statement {

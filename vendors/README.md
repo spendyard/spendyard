@@ -11,6 +11,8 @@ category = "ai"
 pricing = ["usage", "seat"]              # seat, usage, plan, one_time
 descriptors = ["NOT JUST TI"]            # optional: how its charges start on card statements,
                                          # when the name or domain alone doesn't find it
+related = ["activecampaign.com"]         # optional: vendors whose name can be on its receipts
+                                         # or charges, such as a parent company that bills for it
 ```
 
 Categories: ai, dev-tools, infrastructure, observability, security, data,

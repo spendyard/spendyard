@@ -18,7 +18,7 @@ use spendyard::{Document, ReadResult};
 use super::config;
 
 /// Bump with every change to the tables, and add a step to `migrate`.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
@@ -152,6 +152,16 @@ CREATE TABLE IF NOT EXISTS scans (
 );
 "#;
 
+/// The same charge from two documents: the same statement sent twice, or
+/// an extract of one. Matched on card, date and amount, plus the row
+/// number when the statement numbers its lines, or the merchant when not.
+const SAME_CHARGE: &str = "d.document_id != c.document_id
+    AND d.date = c.date
+    AND d.amount = c.amount
+    AND d.card_last4 IS c.card_last4
+    AND ((c.row IS NOT NULL AND d.row = c.row)
+         OR (c.row IS NULL AND d.row IS NULL AND d.merchant = c.merchant))";
+
 pub struct Store {
     pub connection: Connection,
 }
@@ -203,6 +213,12 @@ impl Store {
 
         if version < SCHEMA_VERSION {
             self.connection.execute_batch(SCHEMA)?;
+
+            // Version 2 kept a charge once per document; from 3 once in all.
+            if version < 3 {
+                remove_copied_charges(&self.connection)?;
+            }
+
             self.connection
                 .pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
@@ -370,8 +386,23 @@ fn upsert_document(
 }
 
 /// Replaces the document's report rows with this result's.
+/// Deletes every charge that another document already has.
+fn remove_copied_charges(connection: &Connection) -> Result<usize> {
+    let removed = connection.execute(
+        &format!(
+            "DELETE FROM charges WHERE id IN (
+                 SELECT c.id FROM charges c
+                 WHERE EXISTS (SELECT 1 FROM charges d WHERE d.id < c.id AND {SAME_CHARGE}))"
+        ),
+        [],
+    )?;
+
+    Ok(removed)
+}
+
 /// A statement's charges, replacing any read from the same document
-/// before. Matches to receipts are made by `charges match`.
+/// before, and leaving out those another document already has (the same
+/// statement sent twice). Matches to receipts are made by `charges match`.
 fn write_charges(
     transaction: &rusqlite::Transaction<'_>,
     document_id: i64,
@@ -397,10 +428,17 @@ fn write_charges(
             .to_string();
 
         transaction.execute(
-            "INSERT INTO charges (document_id, position, issuer, row, date, posted, merchant,
+            &format!(
+                "INSERT INTO charges (document_id, position, issuer, row, date, posted, merchant,
                  card_last4, name_on_card, amount, currency, original_amount, original_currency,
                  rate, kind, vendor_id, vendor_name)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+             SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
+             WHERE NOT EXISTS (
+                 SELECT 1 FROM charges d,
+                     (SELECT ?1 AS document_id, ?5 AS date, ?10 AS amount, ?8 AS card_last4,
+                             ?4 AS row, ?7 AS merchant) c
+                 WHERE {SAME_CHARGE})"
+            ),
             params![
                 document_id,
                 position as i64,
@@ -680,6 +718,66 @@ mod tests {
             .unwrap();
 
         assert_eq!(name, "Your receipt from Acme Cloud, Inc. #2291-0007");
+
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_statement_sent_twice_keeps_its_charges_once() {
+        use spendyard::statement::{ChargeOutput, StatementOutput, assemble};
+
+        let (mut store, dir) = temporary_store();
+
+        let charge = |row: u32, amount: &str| ChargeOutput {
+            row: Some(row),
+            date: "2026-04-14".to_string(),
+            merchant: "VERCEL INC., COVINA, US".to_string(),
+            card_last4: Some("3776".to_string()),
+            amount: amount.to_string(),
+            ..ChargeOutput::default()
+        };
+
+        let whole = StatementOutput {
+            is_card_statement: true,
+            charges: vec![charge(1, "22.01"), charge(2, "192.07"), charge(3, "192.07")],
+            ..StatementOutput::default()
+        };
+
+        let extract = StatementOutput {
+            is_card_statement: true,
+            charges: vec![charge(2, "192.07")],
+            ..StatementOutput::default()
+        };
+
+        let mut result = spendyard::result::not_about_money(
+            spendyard::extract::schema::DocumentType::CardStatement,
+            0.9,
+        );
+
+        let source = Source {
+            origin: "file:statement.pdf".to_string(),
+            name: None,
+            received: None,
+        };
+
+        for (bytes, output) in [
+            (b"first copy".to_vec(), whole.clone()),
+            (b"second copy".to_vec(), whole),
+            (b"an extract".to_vec(), extract),
+        ] {
+            let document = spendyard::read(&bytes, None).unwrap();
+
+            result.statement = Some(assemble(vec![output]));
+
+            store.save(&bytes, &document, &source, &result).unwrap();
+        }
+
+        let charges: i64 = store
+            .connection
+            .query_row("SELECT count(*) FROM charges", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(charges, 3);
 
         std::fs::remove_dir_all(dir).ok();
     }

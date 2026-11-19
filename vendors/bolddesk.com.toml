@@ -2,3 +2,4 @@ name = "BoldDesk"
 aliases = ["Syncfusion"]
 category = "support"
 pricing = ["seat"]
+descriptors = ["WWW.SYNCFUSION.COM"]   # charged by Syncfusion, its maker

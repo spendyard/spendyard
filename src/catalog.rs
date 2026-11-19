@@ -50,6 +50,12 @@ pub struct Vendor {
     #[serde(default)]
     pub descriptors: Vec<String>,
 
+    /// Vendors whose name can be on this one's receipts or charges, such as
+    /// a parent company that bills for it: Postmark is billed by
+    /// ActiveCampaign. Either way round counts.
+    #[serde(default)]
+    pub related: Vec<String>,
+
     pub category: String,
 
     /// How it usually charges: `seat`, `usage`, `plan`, `one_time`.
@@ -330,6 +336,23 @@ impl Catalog {
         }
 
         None
+    }
+
+    /// Whether two vendor IDs are the same vendor, or one lists the other
+    /// in `related`.
+    pub fn same_or_related(&self, a: &str, b: &str) -> bool {
+        if a == b {
+            return true;
+        }
+
+        let lists = |from: &str, to: &str| {
+            self.vendors
+                .iter()
+                .find(|vendor| vendor.id == from)
+                .is_some_and(|vendor| vendor.related.iter().any(|id| id == to))
+        };
+
+        lists(a, b) || lists(b, a)
     }
 
     /// The vendor a receipt names, by domain first, then by name.
@@ -657,6 +680,7 @@ mod merchant_tests {
             ("DOCKER.INV-B7D0B995-7C, PALO ALTO, US", "docker.com"),
             ("DOCKER:INV-FA479FC4-B3, PALO ALTO, US", "docker.com"),
             ("XATA.IO, SAN FRANCISCO, US", "xata.io"),
+            ("WWW.SYNCFUSION.COM, MORRISVILLE, US", "bolddesk.com"),
         ];
 
         for (merchant, id) in cases {
@@ -672,5 +696,14 @@ mod merchant_tests {
                 .by_merchant("REMA 1000 MAJORSTUEN, OSLO, NO")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_vendor_billed_by_another_is_related_both_ways() {
+        let catalog = super::catalog();
+
+        assert!(catalog.same_or_related("postmarkapp.com", "activecampaign.com"));
+        assert!(catalog.same_or_related("activecampaign.com", "postmarkapp.com"));
+        assert!(!catalog.same_or_related("activecampaign.com", "slack.com"));
     }
 }
