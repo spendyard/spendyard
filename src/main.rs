@@ -45,6 +45,10 @@ enum Command {
         /// How many documents to read at once.
         #[arg(long, default_value_t = 4)]
         concurrency: usize,
+
+        /// Don't keep the results in ~/.spendyard/spendyard.db.
+        #[arg(long)]
+        no_store: bool,
     },
 
     /// Ask only the cheap first model what documents are: receipt or not,
@@ -197,6 +201,14 @@ enum Command {
         #[arg(long)]
         save: Option<PathBuf>,
 
+        /// Read messages again even when the store already has them.
+        #[arg(long)]
+        again: bool,
+
+        /// Don't use the store: no saved position, nothing kept.
+        #[arg(long)]
+        no_store: bool,
+
         #[arg(long, short)]
         extractor: Option<String>,
 
@@ -209,6 +221,85 @@ enum Command {
 
         #[arg(long, default_value_t = 4)]
         concurrency: usize,
+    },
+
+    /// List the receipts and invoices in the store, newest first.
+    Receipts {
+        /// Only this vendor (part of its name or domain).
+        #[arg(long)]
+        vendor: Option<String>,
+
+        /// YYYY-MM-DD.
+        #[arg(long)]
+        since: Option<String>,
+
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+
+        /// Everything stored, not only receipts, invoices and failed payments.
+        #[arg(long)]
+        all: bool,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Spending per vendor or per month, from the store, in one currency.
+    Report {
+        /// vendor or month.
+        #[arg(long, default_value = "vendor")]
+        by: String,
+
+        /// How many months back.
+        #[arg(long, default_value_t = 12)]
+        months: u32,
+
+        /// Currency to report in. Default: the one paid in most often.
+        #[arg(long)]
+        currency: Option<String>,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Recurring vendors: cost per month, interval, seats, card, next
+    /// renewal, and whether the last payment went through.
+    Subscriptions {
+        #[arg(long)]
+        currency: Option<String>,
+
+        #[arg(long)]
+        json: bool,
+
+        /// Also show subscriptions lapsed for more than a year.
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Correct a stored receipt by hand: personal, ignored, another vendor
+    /// name. Edits survive reading it again.
+    Edit {
+        /// The ID `spendyard receipts` shows.
+        id: i64,
+
+        /// Paid privately: left out of spend.
+        #[arg(long)]
+        personal: bool,
+
+        /// Not spend at all: left out everywhere.
+        #[arg(long)]
+        ignore: bool,
+
+        /// Undo --personal and --ignore.
+        #[arg(long)]
+        restore: bool,
+
+        /// Group it under this vendor name.
+        #[arg(long)]
+        vendor: Option<String>,
+
+        #[arg(long)]
+        note: Option<String>,
     },
 
     /// Show where the config lives, the models in effect and which keys
@@ -251,6 +342,7 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
             pretty,
             jsonl,
             concurrency,
+            no_store,
         } => {
             let options = cli::read::Options {
                 inputs,
@@ -259,6 +351,7 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
                 pretty,
                 jsonl,
                 concurrency,
+                no_store,
             };
 
             cli::read::run(options).await.map(|outcome| {
@@ -359,6 +452,8 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
             all,
             dry_run,
             save,
+            again,
+            no_store,
             extractor,
             decider,
             pretty,
@@ -374,11 +469,13 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
                     all,
                     dry_run,
                     save,
+                    again,
                     concurrency,
                 },
                 extractor,
                 decider,
                 pretty,
+                no_store,
             };
 
             cli::mailbox_commands::scan(command)
@@ -392,6 +489,73 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
                         ExitCode::from(1)
                     }
                 })
+        }
+
+        Command::Receipts {
+            vendor,
+            since,
+            limit,
+            all,
+            json,
+        } => cli::reports::receipts(cli::reports::ReceiptsOptions {
+            vendor,
+            since,
+            limit,
+            all,
+            json,
+        })
+        .map(|()| ExitCode::SUCCESS),
+
+        Command::Report {
+            by,
+            months,
+            currency,
+            json,
+        } => cli::reports::report(cli::reports::ReportOptions {
+            by,
+            months,
+            currency,
+            json,
+        })
+        .await
+        .map(|()| ExitCode::SUCCESS),
+
+        Command::Subscriptions {
+            currency,
+            json,
+            all,
+        } => cli::reports::subscriptions(cli::reports::SubscriptionsOptions {
+            currency,
+            json,
+            all,
+        })
+        .await
+        .map(|()| ExitCode::SUCCESS),
+
+        Command::Edit {
+            id,
+            personal,
+            ignore,
+            restore,
+            vendor,
+            note,
+        } => {
+            let flag = |set: bool| {
+                if restore {
+                    Some(false)
+                } else {
+                    set.then_some(true)
+                }
+            };
+
+            cli::reports::edit(cli::reports::EditOptions {
+                id,
+                personal: flag(personal),
+                ignore: flag(ignore),
+                vendor,
+                note,
+            })
+            .map(|()| ExitCode::SUCCESS)
         }
 
         Command::Mcp { extractor, decider } => {

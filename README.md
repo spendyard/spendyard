@@ -10,8 +10,8 @@ own model API keys. Nothing is sent anywhere except to the
 model providers you configure.
 
 > **Status:** early development. `parts`, `read`, `decide`, `config`, `label`,
-> `eval`, `mcp`, and `login`/`scan` for Outlook work;
-> mailboxes and the store come next. The design is in
+> `eval`, `mcp`, `login`/`scan` for Outlook, and the store with its reports work;
+> Gmail, IMAP and the cloud come next. The design is in
 > [docs/design.md](docs/design.md).
 
 ## How it works
@@ -90,12 +90,21 @@ spendyard scan outlook --folder Receipts --since 2026-01-01 --save ./receipts
 spendyard accounts
 ```
 
+Everything read or scanned is kept in `~/.spendyard/spendyard.db`
+(`--no-store` to skip), and reported from there:
+
+```bash
+spendyard report                           # spend per vendor, last 12 months
+spendyard report --by month --currency NOK # converted with ECB rates
+spendyard subscriptions                    # cost per month, seats, card, next renewal, status
+spendyard receipts --vendor slack          # the receipts behind a number
+spendyard edit 412 --personal              # leave one out of the spend
+```
+
 ### Coming later
 
 ```bash
 spendyard login gmail
-spendyard report --by vendor --months 12
-spendyard subscriptions
 ```
 
 ## Building

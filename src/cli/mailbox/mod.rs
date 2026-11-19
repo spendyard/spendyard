@@ -4,19 +4,18 @@
 pub mod accounts;
 pub mod outlook;
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{Value, json};
 use spendyard::ReadResult;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
-use super::config;
 use super::models::Models;
+use super::store::{Source, Store};
 
 /// What a mailbox says about a message before it's downloaded.
 #[derive(Debug, Clone, Serialize)]
@@ -115,36 +114,6 @@ pub fn likely_about_money(header: &Header) -> bool {
     has_word || billing_sender || (header.has_attachments && has_amount)
 }
 
-/// Where the last scan of a folder stopped.
-#[derive(Debug, Default, Serialize, Deserialize)]
-struct ScanState {
-    /// The newest message seen, RFC 3339.
-    newest: String,
-
-    /// Messages received exactly at `newest`, so a rescan from there
-    /// doesn't repeat them.
-    seen_at_newest: Vec<String>,
-}
-
-fn state_path() -> PathBuf {
-    config::home().join("scans.json")
-}
-
-fn load_states() -> BTreeMap<String, ScanState> {
-    std::fs::read_to_string(state_path())
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
-}
-
-fn save_states(states: &BTreeMap<String, ScanState>) -> Result<()> {
-    std::fs::create_dir_all(config::home())?;
-
-    std::fs::write(state_path(), serde_json::to_string_pretty(states)? + "\n")?;
-
-    Ok(())
-}
-
 pub struct ScanOptions {
     pub account: Option<String>,
     pub folder: Option<String>,
@@ -163,6 +132,9 @@ pub struct ScanOptions {
     /// Also save each message read as `.eml` here.
     pub save: Option<PathBuf>,
 
+    /// Read messages again even when the store already has them.
+    pub again: bool,
+
     pub concurrency: usize,
 }
 
@@ -172,17 +144,34 @@ pub struct Scanned {
     pub result: Result<ReadResult>,
 }
 
+/// A message read: its bytes and document, kept to save in the store.
+struct Read {
+    mime: Vec<u8>,
+    document: spendyard::Document,
+    result: ReadResult,
+}
+
 pub struct ScanReport {
     pub account: String,
     pub folder: String,
     pub since: String,
     pub listed: usize,
     pub candidates: Vec<Header>,
+
+    /// Likely about money, but already in the store.
+    pub already_stored: usize,
+
     pub scanned: Vec<Scanned>,
 }
 
 /// Scans an Outlook mailbox. Models are only needed when not a dry run.
-pub async fn scan_outlook(options: ScanOptions, models: Option<Arc<Models>>) -> Result<ScanReport> {
+/// With a store, it continues where the last scan stopped, skips messages
+/// already stored, and saves what it reads.
+pub async fn scan_outlook(
+    options: ScanOptions,
+    models: Option<Arc<Models>>,
+    mut store: Option<&mut Store>,
+) -> Result<ScanReport> {
     let account = accounts::find("outlook", options.account.as_deref())?;
 
     let session = Arc::new(outlook::Session::open(&account).await?);
@@ -194,18 +183,19 @@ pub async fn scan_outlook(options: ScanOptions, models: Option<Arc<Models>>) -> 
 
     let state_key = format!("{}:{folder_label}", account.key());
 
-    let mut states = load_states();
+    let previous = match &store {
+        Some(store) => store.scan_state(&state_key)?,
+        None => None,
+    };
 
-    let previous = states.get(&state_key);
-
-    let since = match (&options.since, previous) {
+    let since = match (&options.since, &previous) {
         (Some(date), _) => date_to_rfc3339(date),
-        (None, Some(state)) => state.newest.clone(),
+        (None, Some((newest, _))) => newest.clone(),
         (None, None) => days_ago(30),
     };
 
-    let already_seen: Vec<String> = match (&options.since, previous) {
-        (None, Some(state)) => state.seen_at_newest.clone(),
+    let already_seen: Vec<String> = match (&options.since, &previous) {
+        (None, Some((_, seen))) => seen.clone(),
         _ => Vec::new(),
     };
 
@@ -223,11 +213,27 @@ pub async fn scan_outlook(options: ScanOptions, models: Option<Arc<Models>>) -> 
         .cloned()
         .collect();
 
-    let candidates: Vec<Header> = fresh
+    let likely: Vec<Header> = fresh
         .iter()
         .filter(|header| options.all || likely_about_money(header))
         .cloned()
         .collect();
+
+    let mut candidates = Vec::new();
+    let mut already_stored = 0;
+
+    for header in likely {
+        let stored = match (&store, &header.message_id) {
+            (Some(store), Some(message_id)) if !options.again => store.has_message(message_id)?,
+            _ => false,
+        };
+
+        if stored {
+            already_stored += 1;
+        } else {
+            candidates.push(header);
+        }
+    }
 
     let mut report = ScanReport {
         account: account.address.clone(),
@@ -235,6 +241,7 @@ pub async fn scan_outlook(options: ScanOptions, models: Option<Arc<Models>>) -> 
         since,
         listed,
         candidates: candidates.clone(),
+        already_stored,
         scanned: Vec::new(),
     };
 
@@ -261,9 +268,9 @@ pub async fn scan_outlook(options: ScanOptions, models: Option<Arc<Models>>) -> 
         tasks.spawn(async move {
             let _permit = limit.acquire_owned().await;
 
-            let result = read_message(&session, &header, &models, save.as_deref()).await;
+            let outcome = read_message(&session, &header, &models, save.as_deref()).await;
 
-            (position, Scanned { header, result })
+            (position, header, outcome)
         });
     }
 
@@ -273,9 +280,29 @@ pub async fn scan_outlook(options: ScanOptions, models: Option<Arc<Models>>) -> 
         scanned.push(joined?);
     }
 
-    scanned.sort_by_key(|(position, _)| *position);
+    scanned.sort_by_key(|(position, _, _)| *position);
 
-    report.scanned = scanned.into_iter().map(|(_, scanned)| scanned).collect();
+    for (_, header, outcome) in scanned {
+        let result = match outcome {
+            Ok(read) => {
+                if let Some(store) = store.as_deref_mut() {
+                    let source = Source {
+                        origin: account.key(),
+                        name: Some(&header.subject),
+                        received: Some(&header.received),
+                    };
+
+                    store.save(&read.mime, &read.document, &source, &read.result)?;
+                }
+
+                Ok(read.result)
+            }
+
+            Err(error) => Err(error),
+        };
+
+        report.scanned.push(Scanned { header, result });
+    }
 
     // Remember where this scan got to, unless it was a one-off window or
     // the listing was cut short (older messages would be skipped next time).
@@ -283,21 +310,15 @@ pub async fn scan_outlook(options: ScanOptions, models: Option<Arc<Models>>) -> 
         && !cut_short
         && let Some(newest) = headers.first()
     {
-        let seen_at_newest = headers
+        let seen_at_newest: Vec<String> = headers
             .iter()
             .filter(|header| header.received == newest.received)
             .map(|header| header.id.clone())
             .collect();
 
-        states.insert(
-            state_key,
-            ScanState {
-                newest: newest.received.clone(),
-                seen_at_newest,
-            },
-        );
-
-        save_states(&states)?;
+        if let Some(store) = store {
+            store.set_scan_state(&state_key, &newest.received, &seen_at_newest)?;
+        }
     }
 
     Ok(report)
@@ -308,7 +329,7 @@ async fn read_message(
     header: &Header,
     models: &Models,
     save: Option<&std::path::Path>,
-) -> Result<ReadResult> {
+) -> Result<Read> {
     let mime = session.mime(&header.id).await?;
 
     if let Some(dir) = save {
@@ -325,7 +346,11 @@ async fn read_message(
 
     let result = spendyard::understand(&document, &models.pipeline()).await?;
 
-    Ok(result)
+    Ok(Read {
+        mime,
+        document,
+        result,
+    })
 }
 
 /// A JSON line for one scanned message: the result plus where it came from.

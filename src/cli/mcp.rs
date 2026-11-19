@@ -149,14 +149,27 @@ impl Server {
             all: false,
             dry_run: input.dry_run.unwrap_or(false),
             save: None,
+            again: false,
             concurrency: 4,
         };
 
-        let report =
-            match super::mailbox::scan_outlook(options, Some(Arc::clone(&self.models))).await {
-                Ok(report) => report,
-                Err(error) => return Ok(failure(format!("{error:#}"))),
-            };
+        // Scans keep what they read and where they stopped, as on the
+        // command line; the other tools don't touch the store.
+        let mut store = match super::store::Store::open() {
+            Ok(store) => store,
+            Err(error) => return Ok(failure(format!("{error:#}"))),
+        };
+
+        let report = match super::mailbox::scan_outlook(
+            options,
+            Some(Arc::clone(&self.models)),
+            Some(&mut store),
+        )
+        .await
+        {
+            Ok(report) => report,
+            Err(error) => return Ok(failure(format!("{error:#}"))),
+        };
 
         let results: Vec<Value> = report
             .scanned

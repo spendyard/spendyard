@@ -562,9 +562,10 @@ when there is no keychain), rotated on every use. `spendyard scan outlook`:
 4. prints one JSON line per message with a `source` (account, Message-ID,
    date, sender, subject), or summaries with `--pretty`; `--save` keeps the
    `.eml` files and `--dry-run` only lists;
-5. remembers the newest message seen in `~/.spendyard/scans.json` (until
-   the store exists), unless `--since` was given or `--limit` cut the
-   listing short.
+5. saves what it reads in the store (§8), skips mail the store already
+   has by Message-ID (`--again` reads it anyway), and remembers the newest
+   message seen in the store's `scans` table, unless `--since` was given or
+   `--limit` cut the listing short. `--no-store` does none of this.
 
 Run on the first real mailbox (2026-11-19): the pre-filter kept 91 of the
 400 newest messages; of 14 kept among the newest 60, Clef-flash skipped 7
@@ -659,21 +660,36 @@ by ID.
 ### Reports
 
 ```bash
-spendyard report                          # this month and last, per vendor
-spendyard report --by vendor --months 12
+spendyard report                          # the last 12 months, per vendor
 spendyard report --by month --currency NOK
-spendyard subscriptions                   # vendor, plan, interval, seats, last amount, next renewal, card
-spendyard receipts --vendor cursor.com    # the receipts behind a number
-spendyard edit <receipt> --personal       # leave it out of the company's spend
+spendyard subscriptions                   # vendor, interval, cost per month, seats, card, next renewal, status
+spendyard receipts --vendor cursor        # the receipts behind a number, with their IDs
+spendyard edit 412 --personal             # leave it out of the company's spend
+spendyard edit 412 --vendor "Atlassian"   # group it under another name
 ```
 
-Each command prints a table, or JSON with `--json`. Reports are plain SQL
-over the store, and the SQL is documented, so `sqlite3 ~/.spendyard/spendyard.db`
-works for anything the commands don't cover.
+Each command prints a table, or JSON with `--json`, and
+`sqlite3 ~/.spendyard/spendyard.db` works for anything they don't cover.
 
-Subscriptions are worked out from receipts: the same vendor and account
-(`vendor.account`, §6) billed at a regular interval is one subscription. A
-price per seat that changes between two receipts is a price change.
+**As built (M5c).** The tables are those above, in one SQLite file with
+`PRAGMA user_version` for migrations. A document is found again by its
+SHA-256 or its Message-ID; every result is kept, and the newest fills
+`receipts`, `lines` and `payments`. Spend is what was paid: receipts and
+paid invoices, positive totals, not marked personal or ignored, and each
+counted once (same vendor, invoice or receipt number and total). Amounts
+are added as exact decimals, converted through the euro with the ECB's
+reference rate on or before each receipt's date; rates are fetched from
+the ECB's data API when a report needs them and kept in `rates`. The
+report currency defaults to the one paid in most often.
+
+`subscriptions` groups recurring documents by vendor (the edit's name,
+else the vendor's domain, else its name). For each: the interval seen,
+the last paid amount as a monthly cost, seats and card from the newest
+document that has them, the next renewal (stated, or estimated from the
+last payment and the interval), and a status: `payment failed` or `due`
+when the newest document says so, `lapsed?` when the last payment is older
+than the interval allows, otherwise `active`. Grouping by vendor and
+account, and price changes, come later.
 
 ### To the cloud and back
 
@@ -859,7 +875,7 @@ document before launch.
 | **M4: Eval** | `spendyard eval`, first 200 labelled documents, defaults chosen from the results. Built: `spendyard label` and `spendyard eval`; a first private set of 26. Still to do: grow it to 200 with real non-receipts from an inbox, review the drafts, then set the threshold and default models from it. |
 | **M5: MCP and exec** | `spendyard mcp`; `exec` provider. Done; `serve` was dropped (the HTTP API is the cloud's). |
 | **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; `scan_mailbox` MCP tool; Gmail setup guide. Outlook done and run on a real mailbox; still to do: Gmail, IMAP, registering Spendyard's own Entra app. |
-| **M5c: Store and reports** | `~/.spendyard` with SQLite (`rusqlite`, SQLite compiled in); `read` and `scan` store results; `report`, `subscriptions`, `receipts`, `edit`; exchange rates. Could come before M5b, fed by `read` on files. |
+| **M5c: Store and reports** | `~/.spendyard` with SQLite (`rusqlite`, SQLite compiled in); `read` and `scan` store results; `report`, `subscriptions`, `receipts`, `edit`; exchange rates. Done; still to do: grouping by account, price changes. |
 | **M6: Vendor catalog** | First 200 vendors, AI tools first; processor rules. |
 | **M7: Public release** | Docs, Homebrew, crates.io, announcement. |
 | **Cloud C1** | Forwarding address, storage, subscriptions, renewals, AI spend, weekly email. |

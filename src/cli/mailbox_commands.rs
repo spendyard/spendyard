@@ -8,6 +8,7 @@ use super::config::{self, Config};
 use super::mailbox::{self, ScanOptions, accounts};
 use super::models::Models;
 use super::pretty;
+use super::store::Store;
 
 /// The Outlook app and tenant to sign in with: flags first, then
 /// `[mailboxes.outlook]` in the config.
@@ -102,6 +103,9 @@ pub struct ScanCommand {
     pub extractor: Option<String>,
     pub decider: Option<String>,
     pub pretty: bool,
+
+    /// Don't use the store: no position, no skipping, nothing saved.
+    pub no_store: bool,
 }
 
 /// Returns how many receipts or invoices were found and how many errors
@@ -125,10 +129,22 @@ pub async fn scan(command: ScanCommand) -> Result<(usize, usize)> {
 
     let dry_run = command.options.dry_run;
 
-    let report = mailbox::scan_outlook(command.options, models).await?;
+    let mut store = if command.no_store {
+        None
+    } else {
+        Some(Store::open()?)
+    };
+
+    let report = mailbox::scan_outlook(command.options, models, store.as_mut()).await?;
+
+    let stored_note = if report.already_stored > 0 {
+        format!(" ({} more already in the store)", report.already_stored)
+    } else {
+        String::new()
+    };
 
     eprintln!(
-        "{} · {} · since {}: {} messages, {} likely about money",
+        "{} · {} · since {}: {} messages, {} likely about money to read{stored_note}",
         report.account,
         report.folder,
         report.since,
