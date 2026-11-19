@@ -684,6 +684,7 @@ mod merchant_tests {
             ("DASHO, NEW YORK, US", "dash0.com"),
             ("DOKPLOY TECHNOLOGY INC, DOVER, US", "dokploy.com"),
             ("POLYMER.CO, WILMINGTON, US", "polymer.co"),
+            ("LIVESTORM* LIVESTORM, LYON, FR", "livestorm.co"),
         ];
 
         for (merchant, id) in cases {
