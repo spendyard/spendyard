@@ -15,7 +15,7 @@ use rust_decimal::Decimal;
 use serde::Serialize;
 
 use super::store::rates::amount;
-use super::store::{Store, civil_from_days};
+use super::store::{SAME_PAYMENT_DAYS, Store, civil_from_days, day_number};
 
 /// How many days after a receipt's date its charge may be: some vendors
 /// send the receipt when the invoice is made and charge the card later.
@@ -83,6 +83,9 @@ struct Receipt {
     card_last4: Option<String>,
     invoice_number: Option<String>,
     receipt_number: Option<String>,
+
+    /// `receipt` or `invoice`.
+    kind: String,
 }
 
 /// What a round of matching found.
@@ -258,7 +261,19 @@ fn same_payment(receipts: &[Receipt]) -> std::collections::HashMap<i64, Vec<i64>
         let numbers = [&receipt.invoice_number, &receipt.receipt_number];
 
         for number in numbers.into_iter().flatten() {
-            let key = (vendor.clone(), amount.clone(), number.trim().to_uppercase());
+            // Letters and digits only: `B085EFDD-0038` on the email is
+            // `B085EFDD 0038` on its PDF.
+            let plain: String = number
+                .chars()
+                .filter(char::is_ascii_alphanumeric)
+                .collect::<String>()
+                .to_uppercase();
+
+            if plain.is_empty() {
+                continue;
+            }
+
+            let key = (vendor.clone(), amount.clone(), plain);
 
             groups.entry(key).or_default().push(receipt.document_id);
         }
@@ -274,7 +289,51 @@ fn same_payment(receipts: &[Receipt]) -> std::collections::HashMap<i64, Vec<i64>
         }
     }
 
+    // A paid invoice and a receipt with no number in common (Plain's PDFs
+    // have only the invoice number, its emails only the receipt number):
+    // same vendor and amount, a few days apart. Each receipt pairs once.
+    let mut paired = HashSet::new();
+
+    for invoice in receipts.iter().filter(|r| r.kind == "invoice") {
+        let partner = receipts.iter().find(|receipt| {
+            receipt.kind == "receipt"
+                && !paired.contains(&receipt.document_id)
+                && receipt.total.abs() == invoice.total.abs()
+                && receipt.currency == invoice.currency
+                && same_vendor_id(receipt, invoice)
+                && days_apart(&receipt.date, &invoice.date)
+                    .is_some_and(|apart| apart <= SAME_PAYMENT_DAYS)
+        });
+
+        let Some(partner) = partner else {
+            continue;
+        };
+
+        paired.insert(partner.document_id);
+
+        partners
+            .entry(invoice.document_id)
+            .or_default()
+            .push(partner.document_id);
+
+        partners
+            .entry(partner.document_id)
+            .or_default()
+            .push(invoice.document_id);
+    }
+
     partners
+}
+
+fn same_vendor_id(a: &Receipt, b: &Receipt) -> bool {
+    match (&a.vendor_id, &b.vendor_id) {
+        (Some(a), Some(b)) => spendyard::catalog::catalog().same_or_related(a, b),
+        _ => false,
+    }
+}
+
+fn days_apart(a: &str, b: &str) -> Option<i64> {
+    Some((days(a)? - days(b)?).abs())
 }
 
 /// Looks each charge's vendor up again from its merchant, so additions to
@@ -581,7 +640,7 @@ fn load_receipts(store: &Store) -> Result<Vec<Receipt>> {
     let mut statement = store.connection.prepare(
         "SELECT r.document_id, COALESCE(e.vendor_id, r.vendor_id),
                 COALESCE(e.vendor_name, r.vendor_name), r.date, r.total, r.currency, r.card_last4,
-                r.invoice_number, r.receipt_number
+                r.invoice_number, r.receipt_number, coalesce(r.type, '')
          FROM receipts r LEFT JOIN edits e ON e.document_id = r.document_id
          WHERE (r.is_receipt = 1 OR r.is_invoice = 1)
            AND COALESCE(e.ignored, 0) = 0
@@ -602,6 +661,7 @@ fn load_receipts(store: &Store) -> Result<Vec<Receipt>> {
             row.get::<_, Option<String>>(6)?,
             row.get::<_, Option<String>>(7)?,
             row.get::<_, Option<String>>(8)?,
+            row.get::<_, String>(9)?,
         ))
     })?;
 
@@ -618,6 +678,7 @@ fn load_receipts(store: &Store) -> Result<Vec<Receipt>> {
             card_last4,
             invoice_number,
             receipt_number,
+            kind,
         ) = row?;
 
         let Some(total) = amount(&total) else {
@@ -643,6 +704,7 @@ fn load_receipts(store: &Store) -> Result<Vec<Receipt>> {
             card_last4,
             invoice_number,
             receipt_number,
+            kind,
         });
     }
 
@@ -754,27 +816,8 @@ fn truncate(text: &str, width: usize) -> String {
     format!("{cut}…")
 }
 
-/// Days since 1970-01-01 for a `YYYY-MM-DD` date (Howard Hinnant's
-/// algorithm, the inverse of [`civil_from_days`]).
 fn days(date: &str) -> Option<i64> {
-    let mut parts = date.get(..10)?.split('-');
-
-    let year: i64 = parts.next()?.parse().ok()?;
-    let month: i64 = parts.next()?.parse().ok()?;
-    let day: i64 = parts.next()?.parse().ok()?;
-
-    let shifted_year = if month <= 2 { year - 1 } else { year };
-
-    let era = shifted_year.div_euclid(400);
-    let year_of_era = shifted_year - era * 400;
-
-    let month_index = if month > 2 { month - 3 } else { month + 9 };
-
-    let day_of_year = (153 * month_index + 2) / 5 + day - 1;
-
-    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
-
-    Some(era * 146_097 + day_of_era - 719_468)
+    day_number(date)
 }
 
 #[cfg(test)]
@@ -827,6 +870,7 @@ mod tests {
             card_last4: card.map(str::to_string),
             invoice_number: None,
             receipt_number: None,
+            kind: "receipt".to_string(),
         }
     }
 
@@ -840,7 +884,7 @@ mod tests {
 
         let paid = Receipt {
             document_id: 151,
-            invoice_number: Some("ca7b0ddd-0001".to_string()),
+            invoice_number: Some("ca7b0ddd 0001".to_string()),
             receipt_number: Some("2244-2550".to_string()),
             ..receipt("34.99", "2023-04-19", None)
         };
@@ -856,6 +900,33 @@ mod tests {
         assert_eq!(partners.get(&150), Some(&vec![151]));
         assert_eq!(partners.get(&151), Some(&vec![150]));
         assert!(!partners.contains_key(&167));
+    }
+
+    #[test]
+    fn a_paid_invoice_and_a_receipt_without_a_shared_number_are_one_payment() {
+        let invoice_pdf = Receipt {
+            document_id: 1,
+            invoice_number: Some("829".to_string()),
+            kind: "invoice".to_string(),
+            ..receipt("714.00", "2026-04-21", None)
+        };
+
+        let receipt_email = Receipt {
+            document_id: 2,
+            receipt_number: Some("1750-3785".to_string()),
+            ..receipt("714.00", "2026-04-22", None)
+        };
+
+        let other_month = Receipt {
+            document_id: 3,
+            receipt_number: Some("1169-0929".to_string()),
+            ..receipt("714.00", "2026-05-22", None)
+        };
+
+        let partners = same_payment(&[invoice_pdf, receipt_email, other_month]);
+
+        assert_eq!(partners.get(&1), Some(&vec![2]));
+        assert!(!partners.contains_key(&3));
     }
 
     fn store() -> (Store, std::path::PathBuf) {

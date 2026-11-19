@@ -813,6 +813,17 @@ banks through open banking, so the matching is written once.
    charge (often someone's own card, or one that isn't connected). Fees,
    interest and payments to the card account need no receipt.
 
+**One payment, several documents.** The same payment often comes as
+more than one document: a receipt saved as an email and as its PDF, the
+invoice and the receipt Stripe sends for it, the same statement sent
+twice. Matching and spend reports treat these as one: receipts with the
+same vendor, amount and invoice or receipt number (compared by letters and
+digits, since `B085EFDD-0038` on an email is `B085EFDD 0038` on its PDF),
+and a paid invoice with a receipt for the same vendor and amount within
+three days when they share no number (Plain's PDFs carry only the invoice
+number, its emails only the receipt number). Charges are kept once across
+statements by card, date, amount and row (or merchant).
+
 **As built.** A PDF text layer whose fonts don't decode (DNB's comes out
 as `Na!$ on &ar#`) is now treated as no text, measured by symbols per
 letter, so the model gets the pages. Extractors answer in any output

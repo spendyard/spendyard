@@ -612,6 +612,34 @@ pub fn now() -> String {
     )
 }
 
+/// Days since 1970-01-01 for a `YYYY-MM-DD` date, or the start of a longer
+/// timestamp (Howard Hinnant's algorithm, the inverse of
+/// [`civil_from_days`]).
+pub fn day_number(date: &str) -> Option<i64> {
+    let mut parts = date.get(..10)?.split('-');
+
+    let year: i64 = parts.next()?.parse().ok()?;
+    let month: i64 = parts.next()?.parse().ok()?;
+    let day: i64 = parts.next()?.parse().ok()?;
+
+    let shifted_year = if month <= 2 { year - 1 } else { year };
+
+    let era = shifted_year.div_euclid(400);
+    let year_of_era = shifted_year - era * 400;
+
+    let month_index = if month > 2 { month - 3 } else { month + 9 };
+
+    let day_of_year = (153 * month_index + 2) / 5 + day - 1;
+
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+
+    Some(era * 146_097 + day_of_era - 719_468)
+}
+
+/// How many days a paid invoice and the receipt for the same payment may
+/// be apart.
+pub const SAME_PAYMENT_DAYS: i64 = 3;
+
 /// Days since 1970-01-01 to a calendar date (Howard Hinnant's algorithm).
 pub fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let shifted = days + 719_468;

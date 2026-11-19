@@ -14,7 +14,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use super::store::rates::amount;
-use super::store::{Store, now};
+use super::store::{SAME_PAYMENT_DAYS, Store, day_number, now};
 
 /// One stored document's report row.
 #[derive(Debug, Clone, Serialize)]
@@ -111,6 +111,48 @@ fn catalog_key(catalog: &spendyard::catalog::Catalog, id: Option<&str>, name: &s
 
 /// Paid receipts that count as spend, each once.
 fn spend(rows: &[Row]) -> Vec<Row> {
+    let once = once_by_number(rows);
+
+    without_invoice_copies(once)
+}
+
+/// Drops a paid invoice when a receipt for the same payment is kept: same
+/// vendor, amount and currency, a few days apart. Plain's invoice PDFs
+/// carry only the invoice number and its receipt emails only the receipt
+/// number, so numbers can't link them. Each receipt pairs once.
+fn without_invoice_copies(rows: Vec<Row>) -> Vec<Row> {
+    let mut paired = BTreeSet::new();
+    let mut dropped = BTreeSet::new();
+
+    for invoice in rows.iter().filter(|row| row.kind == "invoice") {
+        let partner = rows.iter().find(|row| {
+            row.kind == "receipt"
+                && !paired.contains(&row.id)
+                && row.vendor_key == invoice.vendor_key
+                && row.currency == invoice.currency
+                && row.total.as_deref().and_then(amount)
+                    == invoice.total.as_deref().and_then(amount)
+                && days_apart(&row.date, &invoice.date)
+                    .is_some_and(|apart| apart <= SAME_PAYMENT_DAYS)
+        });
+
+        if let Some(partner) = partner {
+            paired.insert(partner.id);
+            dropped.insert(invoice.id);
+        }
+    }
+
+    rows.into_iter()
+        .filter(|row| !dropped.contains(&row.id))
+        .collect()
+}
+
+fn days_apart(a: &str, b: &str) -> Option<i64> {
+    Some((day_number(a)? - day_number(b)?).abs())
+}
+
+/// Each payment once by its number: the same receipt saved twice.
+fn once_by_number(rows: &[Row]) -> Vec<Row> {
     let mut seen = BTreeSet::new();
 
     rows.iter()
@@ -122,7 +164,17 @@ fn spend(rows: &[Row]) -> Vec<Row> {
                 .is_some_and(|total| total > Decimal::ZERO)
         })
         .filter(|row| {
-            let key = match &row.number {
+            // Letters and digits only: the same receipt as an email
+            // (`B085EFDD-0038`) and as its PDF (`B085EFDD 0038`).
+            let plain = row.number.as_deref().map(|number| {
+                number
+                    .chars()
+                    .filter(char::is_ascii_alphanumeric)
+                    .collect::<String>()
+                    .to_uppercase()
+            });
+
+            let key = match plain.filter(|number| !number.is_empty()) {
                 Some(number) => format!(
                     "{}|{number}|{}",
                     row.vendor_key,
