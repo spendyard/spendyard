@@ -1,10 +1,10 @@
 //! The Spendyard pipeline: read a document, decide what it is, extract the
 //! details and validate them.
 //!
-//! This crate holds everything that works on a single document. It must
-//! compile to `wasm32-unknown-unknown` so the same code can run in a
-//! Cloudflare Worker: no filesystem, threads or blocking I/O here. Those
-//! belong in `spendyard-cli`.
+//! The library holds everything that works on a single document; `main.rs`
+//! is the CLI around it. Keep filesystem, keychain and terminal code out of
+//! the library: it moves into its own WebAssembly-ready crate when the cloud
+//! work starts.
 
 /// The version of this crate, reported as `meta.spendyard_version`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

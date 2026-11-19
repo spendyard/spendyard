@@ -75,7 +75,10 @@ The binary is written in Rust.
   rasterize scanned PDFs without bundling pdfium.
 - **WebAssembly.** The core (reading, validation, model calls over HTTP)
   can compile to `wasm32` and run in a Cloudflare Worker. The cloud can then
-  run the exact same code that people run locally.
+  run the exact same code that people run locally. Until the cloud work
+  starts, Spendyard is one crate (a library plus the CLI). The core moves
+  into its own WebAssembly-ready crate then; meanwhile filesystem, keychain
+  and terminal code stays out of the library.
 - **Crates for the rest:** `clap` (CLI), `axum` (HTTP), `rmcp` (MCP),
   `reqwest`, `serde`, `schemars` (JSON Schema for structured output).
 
@@ -554,7 +557,7 @@ document before launch.
 
 | Milestone | Scope |
 |---|---|
-| **M0: Repo** | Cargo workspace, CI, release builds for macOS and Linux (arm64 and x86_64), Apache 2.0 licence, README. |
+| **M0: Repo** | One Cargo package (library plus CLI), CI, release builds for macOS and Linux (arm64 and x86_64), Apache 2.0 licence, README. |
 | **M1: Read** | `Document` from eml, msg, PDF (text layer), images, HTML and text; `spendyard parts`. Pick the PDF crates and the HEIC approach. |
 | **M2: Extract** | `Extractor` trait; `anthropic`, `openai`, `gemini` and `openai-compatible`; output schema; validation and evidence checks; `spendyard read`. |
 | **M3: Decide** | `Decider` trait; `clef-flash`, `clef`, `jev`, `systemone`; routing and thresholds; LLM fallback. |

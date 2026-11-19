@@ -50,12 +50,6 @@ cargo build --release
 
 The binary is `target/release/spendyard`.
 
-`crates/spendyard-core` must also build for WebAssembly:
-
-```bash
-cargo build -p spendyard-core --target wasm32-unknown-unknown
-```
-
 ## Licence
 
 [Apache 2.0](LICENSE).
