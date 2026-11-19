@@ -211,8 +211,9 @@ impl Meta {
     }
 }
 
-/// The result when the first model is sure the document isn't about
-/// money: no extraction ran.
+/// The result when the first model settled what the document is without
+/// the extractor: not about money, or a card statement (which `charges
+/// read` reads). No extraction ran.
 pub fn not_about_money(kind: DocumentType, certainty: f64) -> ReadResult {
     ReadResult {
         document: DocumentSummary {

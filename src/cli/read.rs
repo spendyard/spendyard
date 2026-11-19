@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde_json::json;
 use spendyard::ReadResult;
+use spendyard::extract::schema::DocumentType;
 
 use super::input::{for_each_as_done, read_input};
 use super::models::Models;
@@ -81,6 +82,12 @@ pub async fn run(options: Options) -> Result<Outcome> {
                 }
 
                 print(&name, &read.result, options.pretty, jsonl)?;
+
+                if read.result.document.kind == DocumentType::CardStatement {
+                    eprintln!(
+                        "spendyard: {name} is a card statement: use `spendyard charges read {name}`"
+                    );
+                }
             }
 
             Err(error) => {

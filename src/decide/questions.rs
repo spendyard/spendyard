@@ -125,6 +125,10 @@ pub fn questions_for(document: &Document) -> Vec<Question> {
                 ),
                 ("trial_ending", "A free trial is about to end."),
                 (
+                    "card_statement",
+                    "A card issuer's statement or card invoice listing many card purchases from different merchants, even when it is titled invoice.",
+                ),
+                (
                     "other",
                     "Anything else: newsletters, marketing, login codes, shipping updates, personal messages that only mention money.",
                 ),

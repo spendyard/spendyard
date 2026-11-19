@@ -16,7 +16,9 @@ How to judge:
 - A receipt proves a payment was made. An invoice asks for payment; a paid invoice is an invoice \
 with status paid. A notice that a subscription will renew or a card will be charged is a \
 renewal_notice with status upcoming, even when it shows an amount. A failed or declined payment is \
-payment_failed. Newsletters, login codes, shipping notices and marketing are other.
+payment_failed. A card issuer's statement listing many card purchases from different merchants \
+is card_statement, even when it is titled invoice; leave its lines empty. Newsletters, login \
+codes, shipping notices and marketing are other.
 - The vendor is the company providing the product. When Stripe, Paddle, Lemon Squeezy, \
 FastSpring, Chargebee, Apple, Google Play or another processor sent the receipt on the vendor's \
 behalf, the vendor is still the company being paid for the product, and the processor goes in \

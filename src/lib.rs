@@ -109,6 +109,23 @@ pub async fn understand(
         return Ok(result);
     }
 
+    // A card statement is many payments, read by `charges read`; the
+    // receipt extractor would only make one invoice of it.
+    if let Some(decision) = &decision
+        && let Some(("card_statement", probability)) = decision.choice("document_type")
+        && probability >= pipeline.threshold
+    {
+        let mut result = result::not_about_money(DocumentType::CardStatement, probability);
+
+        result.warnings = warnings;
+
+        attach_decision(&mut result, decision, pipeline);
+
+        result.meta.ms = started.elapsed().as_millis() as u64;
+
+        return Ok(result);
+    }
+
     let mut prompt = extract::prompt::build(document, pipeline.extractor.accepts());
 
     if !prompt.has_content() {
