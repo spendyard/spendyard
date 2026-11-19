@@ -2,3 +2,8 @@
 /dist
 .DS_Store
 *.local.toml
+
+# Local secrets
+.env
+.env.*
+!.env.example
