@@ -345,6 +345,9 @@ fn main() -> ExitCode {
     // Before the async runtime starts any threads: this sets variables.
     let env_files = cli::env_files::load();
 
+    // Local vendor files join the catalog before anything looks one up.
+    cli::vendors::load_local();
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

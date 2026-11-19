@@ -745,6 +745,14 @@ or address>` finds one, `vendors list --category ai` lists, and `vendors
 unknown` lists vendors on stored receipts the catalog lacks: the to-do list
 for contributions. On the first real store it found 5, none of them SaaS.
 
+**Local vendors.** The built-in catalog only changes with a release, so
+files in `~/.spendyard/vendors/*.toml`, in the same format, are read at
+startup on top of it: one named like a built-in vendor replaces it, others
+are added, and broken ones are skipped with a warning. The library takes
+them as text from the CLI (it never reads files itself), so the cloud can
+pass its own. Fetching a newer catalog (`spendyard vendors update` from a
+release, or `pull` from the cloud) comes later.
+
 **Logos** aren't stored. A vendor's ID is its domain, so the dashboard
 fetches its icon from `https://www.google.com/s2/favicons?domain={id}&sz={size}`.
 In the cloud that goes through our own cached proxy, so viewers' browsers

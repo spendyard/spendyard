@@ -13,9 +13,15 @@
 //! Payment processors that send receipts for other vendors are in
 //! `vendors/_processors.toml`; a receipt from one of them names its vendor
 //! in the text, not in the sender.
+//!
+//! Local vendor files, in the same format, can be added on top before the
+//! catalog is first used ([`use_local`]): a file whose name matches a
+//! built-in vendor replaces it, any other is added. The library never reads
+//! files itself; the CLI reads `~/.spendyard/vendors/*.toml` and passes
+//! them in.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -44,6 +50,10 @@ pub struct Vendor {
     /// How it usually charges: `seat`, `usage`, `plan`, `one_time`.
     #[serde(default)]
     pub pricing: Vec<String>,
+
+    /// Came from a local file rather than the built-in catalog.
+    #[serde(skip)]
+    pub local: bool,
 }
 
 /// A payment processor or billing platform.
@@ -71,11 +81,59 @@ pub struct Catalog {
     by_name: HashMap<String, usize>,
 }
 
-static LOADED: LazyLock<Catalog> = LazyLock::new(|| {
-    let file: File = toml::from_str(CATALOG).expect("the compiled-in vendor catalog is valid");
+/// Local vendor files given by [`use_local`], parsed.
+static LOCAL: OnceLock<Vec<Vendor>> = OnceLock::new();
 
-    Catalog::new(file.vendor, file.processor)
+static LOADED: LazyLock<Catalog> = LazyLock::new(|| {
+    let local = LOCAL.get().cloned().unwrap_or_default();
+
+    Catalog::built_in_with(local)
 });
+
+/// A local vendor file: its ID (the file name without `.toml`) and text.
+pub struct LocalFile {
+    pub id: String,
+    pub text: String,
+}
+
+/// Adds local vendor files on top of the built-in catalog. Must be called
+/// before [`catalog`] is first used, and only once; later calls are
+/// ignored. Returns a message for each file that couldn't be used.
+pub fn use_local(files: Vec<LocalFile>) -> Vec<String> {
+    let mut vendors = Vec::new();
+    let mut problems = Vec::new();
+
+    for file in files {
+        match parse_local(&file) {
+            Ok(vendor) => vendors.push(vendor),
+            Err(problem) => problems.push(format!("{}.toml: {problem}", file.id)),
+        }
+    }
+
+    if LOCAL.set(vendors).is_err() {
+        problems.push("local vendors were given after the catalog was in use; ignored".to_string());
+    }
+
+    problems
+}
+
+fn parse_local(file: &LocalFile) -> Result<Vendor, String> {
+    let id = file.id.trim().to_lowercase();
+
+    if !id.contains('.') || id.contains(['/', '\\', ' ']) {
+        return Err(
+            "the file name must be the vendor's domain, such as example.com.toml".to_string(),
+        );
+    }
+
+    let text = format!("file = {id:?}\n{}", file.text);
+
+    let mut vendor: Vendor = toml::from_str(&text).map_err(|error| error.message().to_string())?;
+
+    vendor.local = true;
+
+    Ok(vendor)
+}
 
 /// The compiled-in catalog.
 pub fn catalog() -> &'static Catalog {
@@ -83,11 +141,41 @@ pub fn catalog() -> &'static Catalog {
 }
 
 impl Catalog {
+    /// The built-in catalog with `local` vendors on top: a local vendor
+    /// with a built-in vendor's ID replaces it; others are added.
+    pub fn built_in_with(local: Vec<Vendor>) -> Catalog {
+        let file: File = toml::from_str(CATALOG).expect("the compiled-in vendor catalog is valid");
+
+        let mut vendors = file.vendor;
+
+        for vendor in local {
+            match vendors.iter().position(|existing| existing.id == vendor.id) {
+                Some(index) => vendors[index] = vendor,
+                None => vendors.push(vendor),
+            }
+        }
+
+        Catalog::new(vendors, file.processor)
+    }
+
+    /// Indexes vendors by domain and name. Local vendors are indexed last,
+    /// so a name or domain they claim points at them.
     fn new(vendors: Vec<Vendor>, processors: Vec<Processor>) -> Catalog {
         let mut by_domain = HashMap::new();
         let mut by_name = HashMap::new();
 
-        for (index, vendor) in vendors.iter().enumerate() {
+        let built_in_first = vendors
+            .iter()
+            .enumerate()
+            .filter(|(_, vendor)| !vendor.local)
+            .chain(
+                vendors
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, vendor)| vendor.local),
+            );
+
+        for (index, vendor) in built_in_first {
             by_domain.insert(vendor.id.to_lowercase(), index);
 
             for domain in &vendor.domains {
@@ -391,6 +479,56 @@ mod tests {
             "Stripe"
         );
         assert!(catalog.by_domain("stripe.com").is_none());
+    }
+
+    #[test]
+    fn local_vendors_add_to_and_replace_the_built_in_ones() {
+        let local = |id: &str, text: &str| {
+            parse_local(&LocalFile {
+                id: id.to_string(),
+                text: text.to_string(),
+            })
+            .unwrap()
+        };
+
+        let catalog = Catalog::built_in_with(vec![
+            local("hackerx.org", "name = \"HackerX\"\ncategory = \"hr\""),
+            local(
+                "anthropic.com",
+                "name = \"Anthropic (ours)\"\naliases = [\"Anthropic, PBC\"]\ncategory = \"ai\"",
+            ),
+        ]);
+
+        let added = catalog.by_domain("events@hackerx.org").unwrap();
+
+        assert_eq!(added.name, "HackerX");
+        assert!(added.local);
+
+        let replaced = catalog.by_name("Anthropic, PBC").unwrap();
+
+        assert_eq!(replaced.name, "Anthropic (ours)");
+        assert_eq!(
+            catalog
+                .vendors
+                .iter()
+                .filter(|vendor| vendor.id == "anthropic.com")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn bad_local_files_are_reported() {
+        let file = |id: &str, text: &str| LocalFile {
+            id: id.to_string(),
+            text: text.to_string(),
+        };
+
+        assert!(parse_local(&file("notadomain", "name = \"X\"\ncategory = \"ai\"")).is_err());
+        assert!(
+            parse_local(&file("x.com", "name = \"X\"")).is_err(),
+            "category is required"
+        );
     }
 
     #[test]

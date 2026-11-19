@@ -5,7 +5,52 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use spendyard::catalog::{self, Vendor};
 
+use super::config;
 use super::store::Store;
+
+/// Where local vendor files live: `~/.spendyard/vendors/`.
+pub fn local_dir() -> std::path::PathBuf {
+    config::home().join("vendors")
+}
+
+/// Reads `~/.spendyard/vendors/*.toml` and adds them to the catalog. Runs
+/// once at startup, before anything looks a vendor up; problems are
+/// warnings, never errors.
+pub fn load_local() {
+    let Ok(entries) = std::fs::read_dir(local_dir()) else {
+        return;
+    };
+
+    let mut files = Vec::new();
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        let is_toml = path
+            .extension()
+            .is_some_and(|extension| extension == "toml");
+
+        let Some(id) = path
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+        else {
+            continue;
+        };
+
+        if !is_toml || id.starts_with('_') || id.starts_with('.') {
+            continue;
+        }
+
+        match std::fs::read_to_string(&path) {
+            Ok(text) => files.push(catalog::LocalFile { id, text }),
+            Err(error) => eprintln!("spendyard: ignoring {}: {error}", path.display()),
+        }
+    }
+
+    for problem in catalog::use_local(files) {
+        eprintln!("spendyard: ignoring local vendor {problem}");
+    }
+}
 
 pub fn summary() {
     let catalog = catalog::catalog();
@@ -16,11 +61,17 @@ pub fn summary() {
         *by_category.entry(vendor.category.as_str()).or_default() += 1;
     }
 
+    let local = catalog.vendors.iter().filter(|vendor| vendor.local).count();
+
     println!(
         "{} vendors and {} payment processors in the catalog",
         catalog.vendors.len(),
         catalog.processors.len()
     );
+
+    if local > 0 {
+        println!("{local} of them from {}", local_dir().display());
+    }
     println!();
 
     for (category, count) in by_category {
@@ -66,6 +117,10 @@ fn print_vendor(vendor: &Vendor) {
 
     if !vendor.pricing.is_empty() {
         details.push(vendor.pricing.join("+"));
+    }
+
+    if vendor.local {
+        details.push("local".to_string());
     }
 
     println!(
@@ -127,7 +182,10 @@ pub fn unknown() -> Result<()> {
     }
 
     println!();
-    println!("Add one as vendors/<domain>.toml in the repo.");
+    println!(
+        "Add one as {}/<domain>.toml (see vendors/README.md in the repo for the format), and send it upstream as a pull request.",
+        local_dir().display()
+    );
 
     Ok(())
 }
