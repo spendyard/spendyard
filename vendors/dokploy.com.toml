@@ -1,0 +1,4 @@
+name = "Dokploy"
+aliases = ["Dokploy Technology Inc"]
+category = "infrastructure"
+pricing = ["plan"]

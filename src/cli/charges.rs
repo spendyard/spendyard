@@ -81,6 +81,8 @@ struct Receipt {
     total: Decimal,
     currency: String,
     card_last4: Option<String>,
+    invoice_number: Option<String>,
+    receipt_number: Option<String>,
 }
 
 /// What a round of matching found.
@@ -193,6 +195,8 @@ pub async fn match_all(store: &Store) -> Result<MatchSummary> {
 
     candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
 
+    let partners = same_payment(&receipts);
+
     let mut used_charges = HashSet::new();
     let mut used_receipts = HashSet::new();
     let mut pairs = Vec::new();
@@ -204,6 +208,11 @@ pub async fn match_all(store: &Store) -> Result<MatchSummary> {
 
         used_charges.insert(charge_id);
         used_receipts.insert(receipt_id);
+
+        // The invoice and the receipt for the same payment: one charge.
+        for partner in partners.get(&receipt_id).into_iter().flatten() {
+            used_receipts.insert(*partner);
+        }
 
         pairs.push((charge_id, receipt_id));
     }
@@ -222,6 +231,50 @@ pub async fn match_all(store: &Store) -> Result<MatchSummary> {
     let summary = summarize(&charges, &receipts, &used_charges, &used_receipts);
 
     Ok(summary)
+}
+
+/// Receipts that are the same payment as another: the invoice and the
+/// receipt a vendor sends for it (Stripe sends both), or the same receipt
+/// read twice. Same vendor, same amount and currency, and the same invoice
+/// or receipt number.
+fn same_payment(receipts: &[Receipt]) -> std::collections::HashMap<i64, Vec<i64>> {
+    let mut groups: std::collections::HashMap<(String, String, String), Vec<i64>> =
+        std::collections::HashMap::new();
+
+    for receipt in receipts {
+        let vendor = receipt
+            .vendor_id
+            .clone()
+            .or_else(|| {
+                receipt
+                    .vendor_name
+                    .as_deref()
+                    .map(spendyard::catalog::name_key)
+            })
+            .unwrap_or_default();
+
+        let amount = format!("{} {}", receipt.total.abs().normalize(), receipt.currency);
+
+        let numbers = [&receipt.invoice_number, &receipt.receipt_number];
+
+        for number in numbers.into_iter().flatten() {
+            let key = (vendor.clone(), amount.clone(), number.trim().to_uppercase());
+
+            groups.entry(key).or_default().push(receipt.document_id);
+        }
+    }
+
+    let mut partners: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
+
+    for ids in groups.values().filter(|ids| ids.len() > 1) {
+        for id in ids {
+            let others = ids.iter().filter(|other| *other != id).copied();
+
+            partners.entry(*id).or_default().extend(others);
+        }
+    }
+
+    partners
 }
 
 /// Looks each charge's vendor up again from its merchant, so additions to
@@ -527,7 +580,8 @@ fn load_charges(store: &Store) -> Result<Vec<StoredCharge>> {
 fn load_receipts(store: &Store) -> Result<Vec<Receipt>> {
     let mut statement = store.connection.prepare(
         "SELECT r.document_id, COALESCE(e.vendor_id, r.vendor_id),
-                COALESCE(e.vendor_name, r.vendor_name), r.date, r.total, r.currency, r.card_last4
+                COALESCE(e.vendor_name, r.vendor_name), r.date, r.total, r.currency, r.card_last4,
+                r.invoice_number, r.receipt_number
          FROM receipts r LEFT JOIN edits e ON e.document_id = r.document_id
          WHERE (r.is_receipt = 1 OR r.is_invoice = 1)
            AND COALESCE(e.ignored, 0) = 0
@@ -546,13 +600,25 @@ fn load_receipts(store: &Store) -> Result<Vec<Receipt>> {
             total,
             row.get::<_, String>(5)?,
             row.get::<_, Option<String>>(6)?,
+            row.get::<_, Option<String>>(7)?,
+            row.get::<_, Option<String>>(8)?,
         ))
     })?;
 
     let mut receipts = Vec::new();
 
     for row in rows {
-        let (document_id, vendor_id, vendor_name, date, total, currency, card_last4) = row?;
+        let (
+            document_id,
+            vendor_id,
+            vendor_name,
+            date,
+            total,
+            currency,
+            card_last4,
+            invoice_number,
+            receipt_number,
+        ) = row?;
 
         let Some(total) = amount(&total) else {
             continue;
@@ -575,6 +641,8 @@ fn load_receipts(store: &Store) -> Result<Vec<Receipt>> {
             total,
             currency: currency.to_uppercase(),
             card_last4,
+            invoice_number,
+            receipt_number,
         });
     }
 
@@ -757,7 +825,37 @@ mod tests {
             total: amount(total).unwrap(),
             currency: "USD".to_string(),
             card_last4: card.map(str::to_string),
+            invoice_number: None,
+            receipt_number: None,
         }
+    }
+
+    #[test]
+    fn an_invoice_and_its_receipt_are_one_payment() {
+        let invoice = Receipt {
+            document_id: 150,
+            invoice_number: Some("CA7B0DDD-0001".to_string()),
+            ..receipt("34.99", "2023-04-19", None)
+        };
+
+        let paid = Receipt {
+            document_id: 151,
+            invoice_number: Some("ca7b0ddd-0001".to_string()),
+            receipt_number: Some("2244-2550".to_string()),
+            ..receipt("34.99", "2023-04-19", None)
+        };
+
+        let next_month = Receipt {
+            document_id: 167,
+            invoice_number: Some("CA7B0DDD-0002".to_string()),
+            ..receipt("34.99", "2023-05-19", None)
+        };
+
+        let partners = same_payment(&[invoice, paid, next_month]);
+
+        assert_eq!(partners.get(&150), Some(&vec![151]));
+        assert_eq!(partners.get(&151), Some(&vec![150]));
+        assert!(!partners.contains_key(&167));
     }
 
     fn store() -> (Store, std::path::PathBuf) {

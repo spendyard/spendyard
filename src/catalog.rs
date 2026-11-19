@@ -681,6 +681,8 @@ mod merchant_tests {
             ("DOCKER:INV-FA479FC4-B3, PALO ALTO, US", "docker.com"),
             ("XATA.IO, SAN FRANCISCO, US", "xata.io"),
             ("WWW.SYNCFUSION.COM, MORRISVILLE, US", "bolddesk.com"),
+            ("DASHO, NEW YORK, US", "dash0.com"),
+            ("DOKPLOY TECHNOLOGY INC, DOVER, US", "dokploy.com"),
         ];
 
         for (merchant, id) in cases {

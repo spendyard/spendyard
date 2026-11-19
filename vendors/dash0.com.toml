@@ -2,3 +2,4 @@ name = "Dash0"
 aliases = ["Dash0 Inc"]
 category = "observability"
 pricing = ["usage"]
+descriptors = ["DASHO"]   # the 0 read as a letter O on statements
