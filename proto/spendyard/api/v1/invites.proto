@@ -1,0 +1,143 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "spendyard/api/v1/model.proto";
+import "spendyard/api/v1/options.proto";
+
+// InviteService brings people into the active organisation: invites by
+// email, and the organisation's invite link. People join on the dashboard's
+// /join/<org>/<token>, signing in on the way if need be; signing in with an
+// invited email joins by itself.
+service InviteService {
+  // CreateInvites invites people by email with a role. Each gets an email
+  // with their link; someone already in the organisation or already invited,
+  // or what isn't an email, is a problem rather than an error.
+  rpc CreateInvites(CreateInvitesRequest) returns (CreateInvitesResponse) {
+    option (spendyard.api.v1.permission) = "invites:manage";
+    option (spendyard.api.v1.interactive_only) = true;
+  }
+  // ListInvites lists the invites not yet accepted, revoked or expired.
+  rpc ListInvites(ListInvitesRequest) returns (ListInvitesResponse) {
+    option (spendyard.api.v1.permission) = "invites:read";
+  }
+  // ResendInvite sends the invite again with a new link and a new expiry.
+  rpc ResendInvite(ResendInviteRequest) returns (ResendInviteResponse) {
+    option (spendyard.api.v1.permission) = "invites:manage";
+  }
+  // RevokeInvite cancels an invite; its link stops working.
+  rpc RevokeInvite(RevokeInviteRequest) returns (RevokeInviteResponse) {
+    option (spendyard.api.v1.permission) = "invites:manage";
+  }
+  // GetInviteLink returns the organisation's invite link; none while it's off
+  // (the default) or expired. Only those who manage invites see it.
+  rpc GetInviteLink(GetInviteLinkRequest) returns (GetInviteLinkResponse) {
+    option (spendyard.api.v1.permission) = "invites:manage";
+    option (spendyard.api.v1.interactive_only) = true;
+  }
+  // ResetInviteLink turns the invite link on, or replaces it, optionally
+  // with another role; an old one stops working.
+  rpc ResetInviteLink(ResetInviteLinkRequest) returns (ResetInviteLinkResponse) {
+    option (spendyard.api.v1.permission) = "invites:manage";
+    option (spendyard.api.v1.interactive_only) = true;
+  }
+  // DisableInviteLink turns the invite link off; it stops working.
+  rpc DisableInviteLink(DisableInviteLinkRequest) returns (DisableInviteLinkResponse) {
+    option (spendyard.api.v1.permission) = "invites:manage";
+  }
+}
+
+message CreateInvitesRequest {
+  // Emails: "ada@fjordtech.no", or "Ada <ada@fjordtech.no>".
+  repeated string invitees = 1 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 50
+  }];
+  // ROLE_ADMIN, ROLE_MEMBER or ROLE_ACCOUNTANT: nobody is invited as owner.
+  Role role = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    in: [
+      2,
+      3,
+      4
+    ]
+  }];
+}
+
+message CreateInvitesResponse {
+  repeated Invite invites = 1;
+  // Invitees that weren't invited, and why: already in the organisation,
+  // already invited, not an email.
+  repeated InviteProblem problems = 2;
+}
+
+message InviteProblem {
+  string invitee = 1;
+  string reason = 2;
+}
+
+message Invite {
+  string id = 1;
+  string email = 2;
+  Role role = 3;
+  User invited_by = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp expires_at = 6;
+  // The invite's own link, only in CreateInvites' and ResendInvite's
+  // answers: to send by hand when no email went out.
+  string url = 7;
+  // An email went out with the link.
+  bool emailed = 8;
+}
+
+message ListInvitesRequest {}
+
+message ListInvitesResponse {
+  repeated Invite invites = 1;
+}
+
+message ResendInviteRequest {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message ResendInviteResponse {
+  Invite invite = 1;
+}
+
+message RevokeInviteRequest {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message RevokeInviteResponse {}
+
+message InviteLink {
+  string url = 1;
+  Role role = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+message GetInviteLinkRequest {}
+
+message GetInviteLinkResponse {
+  // Unset while the link is off.
+  InviteLink link = 1;
+}
+
+message ResetInviteLinkRequest {
+  // The role people join with: ROLE_ADMIN, ROLE_MEMBER or ROLE_ACCOUNTANT;
+  // the current one, or member, when unset.
+  Role role = 1 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [1]
+  }];
+}
+
+message ResetInviteLinkResponse {
+  InviteLink link = 1;
+}
+
+message DisableInviteLinkRequest {}
+
+message DisableInviteLinkResponse {}
