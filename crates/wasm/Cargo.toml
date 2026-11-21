@@ -15,8 +15,15 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 spendyard-core.workspace = true
+# The providers, posting through the host's function rather than reqwest.
+spendyard-models = { workspace = true, default-features = false }
+async-trait.workspace = true
+js-sys = "0.3"
+send_wrapper = { version = "0.6", features = ["futures"] }
+serde.workspace = true
 serde_json.workspace = true
 wasm-bindgen = "=0.2.130"
+wasm-bindgen-futures = "0.4"
 
 [lints]
 workspace = true

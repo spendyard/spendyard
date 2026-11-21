@@ -51,7 +51,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # The core must keep building without files, network, a clock or the OS: Spendyard Cloud runs it in a Worker.
+      # The core and the providers must keep building without files, a clock or the OS, and the providers without
+      # reqwest: Spendyard Cloud runs them in a Worker, posting with its fetch.
       - name: Build the core for wasm32
         run: cargo build -p spendyard-core -p spendyard-wasm --target wasm32-unknown-unknown --locked
 
@@ -73,4 +74,7 @@ jobs:
 
       - name: Read every fixture both ways
         run: node crates/wasm/tests/compare.mjs
+
+      - name: Read with the pipeline, the host posting
+        run: node crates/wasm/tests/understand.mjs
 

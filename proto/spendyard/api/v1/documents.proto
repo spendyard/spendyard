@@ -1,0 +1,153 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "buf/validate/validate.proto";
+import "spendyard/api/v1/options.proto";
+
+// DocumentService is the active organisation's documents: what arrived (files
+// dropped in the browser, forwarded mail, later mailboxes and the CLI's
+// pushes), where each is in being read, and what was read from it. Reading
+// happens on its own, in the background, as each arrives.
+//
+// Files go to and come from the blob store directly, by signed URL, not
+// through the API: CreateDocumentUpload gives a URL to PUT a file to,
+// AddDocument takes it in, GetDocumentOriginal gives a URL to download one
+// from.
+service DocumentService {
+  // ListDocuments lists the documents, newest first, a page at a time. A
+  // member sees the ones they added; the owner, admins and an accountant see
+  // them all.
+  rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse) {
+    option (spendyard.api.v1.permission) = "documents:read";
+  }
+  // CreateDocumentUpload gives a URL to PUT one file to, good for a few
+  // minutes, and the headers to send with it. Once it's there, AddDocument
+  // takes it in. At most 25 MB. One call per file: several files are several
+  // uploads, each taken in on its own.
+  rpc CreateDocumentUpload(CreateDocumentUploadRequest) returns (CreateDocumentUploadResponse) {
+    option (spendyard.api.v1.permission) = "documents:write";
+  }
+  // AddDocument takes in a file put where CreateDocumentUpload said: kept as
+  // it came, once (the same bytes, or the same mail by Message-ID, are the
+  // document there already), and queued to be read when it's new.
+  rpc AddDocument(AddDocumentRequest) returns (AddDocumentResponse) {
+    option (spendyard.api.v1.permission) = "documents:write";
+  }
+  // GetDocumentOriginal gives a URL to download a document as it came, good
+  // for a few minutes. NOT_FOUND when it isn't the caller's to see, or its
+  // original isn't kept.
+  rpc GetDocumentOriginal(GetDocumentOriginalRequest) returns (GetDocumentOriginalResponse) {
+    option (spendyard.api.v1.permission) = "documents:read";
+  }
+  // ReadDocumentAgain queues a document to be read again: one that failed,
+  // or one whose reading should be redone. NOT_FOUND when it isn't the
+  // caller's to see, or is being read now.
+  rpc ReadDocumentAgain(ReadDocumentAgainRequest) returns (ReadDocumentAgainResponse) {
+    option (spendyard.api.v1.permission) = "documents:write";
+  }
+}
+
+// Where a document is in being read.
+enum DocumentState {
+  DOCUMENT_STATE_UNSPECIFIED = 0;
+  // Waiting to be read.
+  DOCUMENT_STATE_QUEUED = 1;
+  // Being read now.
+  DOCUMENT_STATE_READING = 2;
+  // Read: what was read is in its reading.
+  DOCUMENT_STATE_READ = 3;
+  // Couldn't be read: `error` says why.
+  DOCUMENT_STATE_FAILED = 4;
+}
+
+// Document is one document an organisation has, and what was read from it.
+message Document {
+  // The organisation's own number for it.
+  int64 id = 1;
+  // The file's name, or the mail's subject.
+  string name = 2;
+  // Where it came from: `upload:<user id>`, `forward:<address>`, `cli:<machine>`.
+  string source = 3;
+  // Who sent it, for mail.
+  string sender = 4;
+  // When it arrived, RFC 3339: the mail's date, or when it was uploaded.
+  string received = 5;
+  // `email`, `pdf`, `image`, `html`, `text`.
+  string format = 6;
+  int64 size = 7;
+  DocumentState state = 8;
+  // Why it couldn't be read, and at which stage (`read`, `options`,
+  // `understand`); empty unless it failed.
+  string error = 9;
+  string error_stage = 10;
+  // What was read, when it's about money: the vendor (as edited, if it was),
+  // the total and its currency, and the day it was issued (YYYY-MM-DD).
+  string vendor_name = 11;
+  string total = 12;
+  string currency = 13;
+  string date = 14;
+}
+
+message ListDocumentsRequest {
+  // At most this many; 50 when unset.
+  int32 page_size = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 500
+  }];
+  // The page after another: the last id it ended with.
+  int64 before_id = 2;
+}
+
+message ListDocumentsResponse {
+  repeated Document documents = 1;
+}
+
+message ReadDocumentAgainRequest {
+  int64 id = 1 [(buf.validate.field).int64.gt = 0];
+}
+
+message ReadDocumentAgainResponse {}
+
+message CreateDocumentUploadRequest {
+  // The file's name, as it was chosen.
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 255
+  }];
+  // Its MIME type, as the browser says; empty when it doesn't.
+  string content_type = 2 [(buf.validate.field).string.max_len = 255];
+  // Its size in bytes.
+  int64 size = 3 [(buf.validate.field).int64 = {
+    gt: 0
+    lte: 26214400
+  }];
+}
+
+message CreateDocumentUploadResponse {
+  // For AddDocument, once the file is there.
+  string upload_id = 1;
+  // Where to PUT it, and the headers to send with it.
+  string url = 2;
+  map<string, string> headers = 3;
+}
+
+message AddDocumentRequest {
+  string upload_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message AddDocumentResponse {
+  Document document = 1;
+  // It was there already: the same file, or the same mail.
+  bool seen = 2;
+}
+
+message GetDocumentOriginalRequest {
+  int64 id = 1 [(buf.validate.field).int64.gt = 0];
+}
+
+message GetDocumentOriginalResponse {
+  // Where to GET it; it downloads under its own name.
+  string url = 1;
+}
+

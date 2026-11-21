@@ -14,7 +14,9 @@ A Cargo workspace:
   checking it, the rows a store keeps. No file, network, clock or OS: it
   builds for `wasm32-unknown-unknown`, because Spendyard Cloud runs it in a
   Worker. The test fixtures are its, in `crates/core/tests/fixtures`.
-- `crates/models` (`spendyard-models`): the model providers over HTTP.
+- `crates/models` (`spendyard-models`): the model providers, posting
+  through a `Transport`: reqwest natively (its default `reqwest` feature),
+  the host's function in WebAssembly.
 - `crates/wasm` (`spendyard-wasm`): the core for JavaScript, built by
   `scripts/build-wasm.sh` into the npm package `@spendyard/core`.
 - `src/` (`spendyard`): the CLI: commands, the local store, mailboxes, the
@@ -43,6 +45,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 cargo build -p spendyard-core --target wasm32-unknown-unknown
 scripts/build-wasm.sh && node crates/wasm/tests/compare.mjs   # the core as WebAssembly reads as native does
+node crates/wasm/tests/understand.mjs                          # the pipeline as WebAssembly, the host posting
 ```
 
 Commit straight to `main`.

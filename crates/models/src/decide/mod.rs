@@ -8,9 +8,23 @@ mod systemone;
 use spendyard_core::decide::*;
 use spendyard_core::extract::ExtractError;
 
-/// Builds the decider `settings` describe.
+use std::sync::Arc;
+
+use crate::extract::Transport;
+
+/// Builds the decider `settings` describe, posting natively.
+#[cfg(feature = "reqwest")]
 pub fn build(settings: Settings) -> Result<Box<dyn Decider>, ExtractError> {
-    let decider = systemone::SystemOne::new(settings)?;
+    build_with(settings, crate::extract::http::native())
+}
+
+/// Builds the decider `settings` describe, posting through `transport`: a
+/// host's own, in WebAssembly.
+pub fn build_with(
+    settings: Settings,
+    transport: Arc<dyn Transport>,
+) -> Result<Box<dyn Decider>, ExtractError> {
+    let decider = systemone::SystemOne::new(settings, transport)?;
 
     Ok(Box::new(decider))
 }

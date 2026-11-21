@@ -2,8 +2,9 @@
 //! LM Studio, llama.cpp and many hosted services. Text and images only;
 //! PDFs without a text layer can't be sent.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
 use super::{
@@ -17,7 +18,7 @@ const DEFAULT_URL: &str = "http://localhost:11434/v1";
 const IMAGES: &[&str] = &["image/jpeg", "image/png", "image/webp"];
 
 pub struct OpenAiCompatible {
-    client: reqwest::Client,
+    transport: Arc<dyn http::Transport>,
     key: Option<String>,
     url: String,
     model: String,
@@ -25,13 +26,16 @@ pub struct OpenAiCompatible {
 }
 
 impl OpenAiCompatible {
-    pub fn new(settings: Settings) -> Result<Self, ExtractError> {
+    pub fn new(
+        settings: Settings,
+        transport: Arc<dyn http::Transport>,
+    ) -> Result<Self, ExtractError> {
         let model = required_model(&settings)?;
 
         let base = settings.base_url.as_deref().unwrap_or(DEFAULT_URL);
 
         let compatible = OpenAiCompatible {
-            client: http::client(),
+            transport,
             key: settings.api_key.filter(|key| !key.is_empty()),
             url: format!("{}/chat/completions", base.trim_end_matches('/')),
             model,
@@ -41,13 +45,11 @@ impl OpenAiCompatible {
         Ok(compatible)
     }
 
-    fn headers(&self) -> HeaderMap {
-        let mut headers = HeaderMap::new();
+    fn headers(&self) -> http::Headers {
+        let mut headers = http::Headers::new();
 
-        if let Some(key) = &self.key
-            && let Ok(value) = HeaderValue::from_str(&format!("Bearer {key}"))
-        {
-            headers.insert("authorization", value);
+        if let Some(key) = &self.key {
+            headers.push(("authorization".to_string(), format!("Bearer {key}")));
         }
 
         headers
@@ -89,13 +91,10 @@ impl Extractor for OpenAiCompatible {
     }
 
     async fn answer(&self, prompt: &Prompt, format: &OutputFormat) -> Result<Reply, ExtractError> {
-        let response = http::post_json(
-            &self.client,
-            &self.url,
-            self.headers(),
-            &self.body(prompt, format),
-        )
-        .await?;
+        let response = self
+            .transport
+            .post_json(&self.url, &self.headers(), &self.body(prompt, format))
+            .await?;
 
         parse_response(&response, &self.model)
     }
@@ -158,15 +157,18 @@ mod tests {
 
     #[test]
     fn works_without_a_key_and_defaults_to_ollama() {
-        let compatible = OpenAiCompatible::new(Settings {
-            provider: "openai-compatible".to_string(),
-            model: Some("qwen3".to_string()),
-            ..Settings::default()
-        })
+        let compatible = OpenAiCompatible::new(
+            Settings {
+                provider: "openai-compatible".to_string(),
+                model: Some("qwen3".to_string()),
+                ..Settings::default()
+            },
+            http::nowhere(),
+        )
         .unwrap();
 
         assert_eq!(compatible.url, "http://localhost:11434/v1/chat/completions");
-        assert!(compatible.headers().get("authorization").is_none());
+        assert!(http::header(&compatible.headers(), "authorization").is_none());
 
         let prompt = Prompt {
             system: "instructions",

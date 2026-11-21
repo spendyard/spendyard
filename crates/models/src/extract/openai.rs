@@ -1,8 +1,9 @@
 //! OpenAI's Responses API, with a strict JSON Schema
 //! (`text.format.type = "json_schema"`).
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
 use super::{
@@ -15,7 +16,7 @@ const DEFAULT_URL: &str = "https://api.openai.com/v1";
 const IMAGES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 pub struct OpenAi {
-    client: reqwest::Client,
+    transport: Arc<dyn http::Transport>,
     key: String,
     url: String,
     model: String,
@@ -23,14 +24,17 @@ pub struct OpenAi {
 }
 
 impl OpenAi {
-    pub fn new(settings: Settings) -> Result<Self, ExtractError> {
+    pub fn new(
+        settings: Settings,
+        transport: Arc<dyn http::Transport>,
+    ) -> Result<Self, ExtractError> {
         let key = required_key(&settings)?;
         let model = required_model(&settings)?;
 
         let base = settings.base_url.as_deref().unwrap_or(DEFAULT_URL);
 
         let openai = OpenAi {
-            client: http::client(),
+            transport,
             key,
             url: format!("{}/responses", base.trim_end_matches('/')),
             model,
@@ -40,16 +44,8 @@ impl OpenAi {
         Ok(openai)
     }
 
-    fn headers(&self) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-
-        let bearer = format!("Bearer {}", self.key);
-
-        if let Ok(value) = HeaderValue::from_str(&bearer) {
-            headers.insert("authorization", value);
-        }
-
-        headers
+    fn headers(&self) -> http::Headers {
+        vec![("authorization".to_string(), format!("Bearer {}", self.key))]
     }
 
     fn body(&self, prompt: &Prompt, format: &OutputFormat) -> Value {
@@ -86,13 +82,10 @@ impl Extractor for OpenAi {
     }
 
     async fn answer(&self, prompt: &Prompt, format: &OutputFormat) -> Result<Reply, ExtractError> {
-        let response = http::post_json(
-            &self.client,
-            &self.url,
-            self.headers(),
-            &self.body(prompt, format),
-        )
-        .await?;
+        let response = self
+            .transport
+            .post_json(&self.url, &self.headers(), &self.body(prompt, format))
+            .await?;
 
         parse_response(&response, &self.model)
     }
@@ -169,12 +162,15 @@ mod tests {
 
     #[test]
     fn builds_a_strict_schema_request() {
-        let openai = OpenAi::new(Settings {
-            provider: "openai".to_string(),
-            model: Some("some-model".to_string()),
-            api_key: Some("sk-test".to_string()),
-            ..Settings::default()
-        })
+        let openai = OpenAi::new(
+            Settings {
+                provider: "openai".to_string(),
+                model: Some("some-model".to_string()),
+                api_key: Some("sk-test".to_string()),
+                ..Settings::default()
+            },
+            http::nowhere(),
+        )
         .unwrap();
 
         let prompt = Prompt {
@@ -204,7 +200,10 @@ mod tests {
                 .starts_with("data:application/pdf;base64,")
         );
 
-        assert_eq!(openai.headers()["authorization"], "Bearer sk-test");
+        assert_eq!(
+            http::header(&openai.headers(), "authorization").unwrap(),
+            "Bearer sk-test"
+        );
     }
 
     #[test]

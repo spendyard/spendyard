@@ -1,8 +1,9 @@
 //! Google's Gemini API (`generateContent`), with a JSON Schema response
 //! (`responseJsonSchema`).
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
 use super::{
@@ -22,7 +23,7 @@ const IMAGES: &[&str] = &[
 ];
 
 pub struct Gemini {
-    client: reqwest::Client,
+    transport: Arc<dyn http::Transport>,
     key: String,
     url: String,
     model: String,
@@ -30,14 +31,17 @@ pub struct Gemini {
 }
 
 impl Gemini {
-    pub fn new(settings: Settings) -> Result<Self, ExtractError> {
+    pub fn new(
+        settings: Settings,
+        transport: Arc<dyn http::Transport>,
+    ) -> Result<Self, ExtractError> {
         let key = required_key(&settings)?;
         let model = required_model(&settings)?;
 
         let base = settings.base_url.as_deref().unwrap_or(DEFAULT_URL);
 
         let gemini = Gemini {
-            client: http::client(),
+            transport,
             key,
             url: format!(
                 "{}/models/{model}:generateContent",
@@ -50,14 +54,8 @@ impl Gemini {
         Ok(gemini)
     }
 
-    fn headers(&self) -> HeaderMap {
-        let mut headers = HeaderMap::new();
-
-        if let Ok(value) = HeaderValue::from_str(&self.key) {
-            headers.insert("x-goog-api-key", value);
-        }
-
-        headers
+    fn headers(&self) -> http::Headers {
+        vec![("x-goog-api-key".to_string(), self.key.clone())]
     }
 
     fn body(&self, prompt: &Prompt, format: &OutputFormat) -> Value {
@@ -89,13 +87,10 @@ impl Extractor for Gemini {
     }
 
     async fn answer(&self, prompt: &Prompt, format: &OutputFormat) -> Result<Reply, ExtractError> {
-        let response = http::post_json(
-            &self.client,
-            &self.url,
-            self.headers(),
-            &self.body(prompt, format),
-        )
-        .await?;
+        let response = self
+            .transport
+            .post_json(&self.url, &self.headers(), &self.body(prompt, format))
+            .await?;
 
         parse_response(&response, &self.model)
     }
@@ -173,12 +168,15 @@ mod tests {
 
     #[test]
     fn builds_a_json_schema_request() {
-        let gemini = Gemini::new(Settings {
-            provider: "gemini".to_string(),
-            model: Some("some-model".to_string()),
-            api_key: Some("key".to_string()),
-            ..Settings::default()
-        })
+        let gemini = Gemini::new(
+            Settings {
+                provider: "gemini".to_string(),
+                model: Some("some-model".to_string()),
+                api_key: Some("key".to_string()),
+                ..Settings::default()
+            },
+            http::nowhere(),
+        )
         .unwrap();
 
         assert!(gemini.url.ends_with("/models/some-model:generateContent"));
@@ -203,7 +201,10 @@ mod tests {
             body["contents"][0]["parts"][0]["inlineData"]["mimeType"],
             "image/heic"
         );
-        assert_eq!(gemini.headers()["x-goog-api-key"], "key");
+        assert_eq!(
+            http::header(&gemini.headers(), "x-goog-api-key").unwrap(),
+            "key"
+        );
     }
 
     #[test]

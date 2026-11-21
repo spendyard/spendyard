@@ -6,9 +6,10 @@
 //! - `clef`, `clef-flash`: Cloudflare Workers AI over REST. Takes images.
 //! - `systemone`: a self-hosted server (SGLang, llama.cpp) at `base_url`.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use base64::Engine;
-use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Map, Value, json};
 
 use spendyard_core::decide::parse_answers as parse_response;
@@ -23,7 +24,7 @@ const DEFAULT_JEV_MODEL: &str = "jev-latest";
 const CLOUDFLARE_URL: &str = "https://api.cloudflare.com/client/v4";
 
 pub struct SystemOne {
-    client: reqwest::Client,
+    transport: Arc<dyn http::Transport>,
     provider: String,
     url: String,
     key: Option<String>,
@@ -32,7 +33,10 @@ pub struct SystemOne {
 }
 
 impl SystemOne {
-    pub fn new(settings: Settings) -> Result<Self, ExtractError> {
+    pub fn new(
+        settings: Settings,
+        transport: Arc<dyn http::Transport>,
+    ) -> Result<Self, ExtractError> {
         let key = settings.api_key.clone().filter(|key| !key.is_empty());
 
         let missing_key = || {
@@ -111,7 +115,7 @@ impl SystemOne {
         };
 
         let system_one = SystemOne {
-            client: http::client(),
+            transport,
             provider: settings.provider,
             url,
             key,
@@ -122,13 +126,11 @@ impl SystemOne {
         Ok(system_one)
     }
 
-    fn headers(&self) -> HeaderMap {
-        let mut headers = HeaderMap::new();
+    fn headers(&self) -> http::Headers {
+        let mut headers = http::Headers::new();
 
-        if let Some(key) = &self.key
-            && let Ok(value) = HeaderValue::from_str(&format!("Bearer {key}"))
-        {
-            headers.insert("authorization", value);
+        if let Some(key) = &self.key {
+            headers.push(("authorization".to_string(), format!("Bearer {key}")));
         }
 
         headers
@@ -186,7 +188,10 @@ impl Decider for SystemOne {
     ) -> Result<Decision, ExtractError> {
         let body = self.body(state, questions, images);
 
-        let response = http::post_json(&self.client, &self.url, self.headers(), &body).await?;
+        let response = self
+            .transport
+            .post_json(&self.url, &self.headers(), &body)
+            .await?;
 
         parse_response(&response, &self.model)
     }
@@ -207,23 +212,29 @@ mod tests {
 
     #[test]
     fn urls_per_provider() {
-        let jev = SystemOne::new(settings("jev")).unwrap();
+        let jev = SystemOne::new(settings("jev"), http::nowhere()).unwrap();
 
         assert_eq!(jev.url, "https://api.typesafe.ai/v1/systemone");
         assert_eq!(jev.model, "jev-latest");
-        assert_eq!(jev.headers()["authorization"], "Bearer key");
+        assert_eq!(
+            http::header(&jev.headers(), "authorization").unwrap(),
+            "Bearer key"
+        );
 
-        let codiv = SystemOne::new(Settings {
-            base_url: Some("https://api.codiv.ai".to_string()),
-            model: Some("openjev-latest".to_string()),
-            ..settings("jev")
-        })
+        let codiv = SystemOne::new(
+            Settings {
+                base_url: Some("https://api.codiv.ai".to_string()),
+                model: Some("openjev-latest".to_string()),
+                ..settings("jev")
+            },
+            http::nowhere(),
+        )
         .unwrap();
 
         assert_eq!(codiv.url, "https://api.codiv.ai/v1/systemone");
         assert_eq!(codiv.name(), "jev/openjev-latest");
 
-        let clef = SystemOne::new(settings("clef-flash")).unwrap();
+        let clef = SystemOne::new(settings("clef-flash"), http::nowhere()).unwrap();
 
         assert_eq!(
             clef.url,
@@ -235,24 +246,30 @@ mod tests {
 
     #[test]
     fn keys_and_accounts_are_required() {
-        let no_key = SystemOne::new(Settings {
-            api_key: None,
-            ..settings("jev")
-        });
+        let no_key = SystemOne::new(
+            Settings {
+                api_key: None,
+                ..settings("jev")
+            },
+            http::nowhere(),
+        );
 
         assert!(matches!(no_key, Err(ExtractError::MissingKey(_))));
 
-        let no_account = SystemOne::new(Settings {
-            account_id: None,
-            ..settings("clef")
-        });
+        let no_account = SystemOne::new(
+            Settings {
+                account_id: None,
+                ..settings("clef")
+            },
+            http::nowhere(),
+        );
 
         assert!(matches!(no_account, Err(ExtractError::MissingKey(_))));
     }
 
     #[test]
     fn body_has_model_state_questions_and_images_for_clef() {
-        let clef = SystemOne::new(settings("clef-flash")).unwrap();
+        let clef = SystemOne::new(settings("clef-flash"), http::nowhere()).unwrap();
 
         let questions = vec![Question::YesNo {
             name: "paid_by_card",
@@ -272,7 +289,7 @@ mod tests {
         assert_eq!(body["questions"]["paid_by_card"]["type"], "noul");
         assert_eq!(body["images"][0]["content_type"], "image/png");
 
-        let jev = SystemOne::new(settings("jev")).unwrap();
+        let jev = SystemOne::new(settings("jev"), http::nowhere()).unwrap();
 
         assert!(
             jev.body(&json!({}), &questions, &images)

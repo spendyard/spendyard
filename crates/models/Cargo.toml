@@ -1,6 +1,6 @@
 # The model providers: Anthropic, OpenAI, Gemini, OpenAI-compatible and
-# SystemOne over HTTP, implementing the core's Extractor and Decider. The CLI
-# uses them; Spendyard Cloud calls its models itself.
+# SystemOne, implementing the core's Extractor and Decider, over a Transport:
+# reqwest natively (the CLI), the host's fetch in WebAssembly (the cloud).
 [package]
 name = "spendyard-models"
 description = "The model providers Spendyard reads documents with."
@@ -10,13 +10,19 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = ["reqwest"]
+# Posting natively, with reqwest and tokio. Off in WebAssembly, where the host
+# posts (spendyard-wasm gives the providers the Worker's fetch).
+reqwest = ["dep:reqwest", "dep:tokio"]
+
 [dependencies]
 spendyard-core.workspace = true
 async-trait.workspace = true
 base64.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, optional = true }
 serde_json.workspace = true
-tokio = { workspace = true, features = ["time"] }
+tokio = { workspace = true, features = ["time"], optional = true }
 
 [dev-dependencies]
 tokio.workspace = true

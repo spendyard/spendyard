@@ -1,0 +1,14 @@
+{
+  "content": [
+    {
+      "text": "{\"document_type\":\"receipt\",\"status\":\"paid\",\"source_part\":null,\"confidence\":0.95,\"vendor\":{\"name\":\"Vercel\",\"domain\":\"vercel.com\",\"processor\":null,\"account_email\":null,\"account_workspace\":null,\"account_customer_id\":null},\"payments\":[{\"method\":\"card\",\"brand\":\"visa\",\"last4\":\"3776\",\"amount\":\"20.00\"}],\"amount\":{\"total\":\"20.00\",\"subtotal\":null,\"tax\":null,\"currency\":\"USD\"},\"billing\":{\"model\":\"unknown\",\"interval\":null,\"period_start\":null,\"period_end\":null,\"next_renewal\":null},\"lines\":[{\"kind\":\"seat\",\"product\":\"Vercel Pro\",\"plan\":null,\"description\":\"Pro seat\",\"quantity\":1.0,\"unit\":null,\"unit_price\":null,\"amount\":\"20.00\",\"interval\":null}],\"invoice_number\":null,\"receipt_number\":\"2291-0007\",\"issued\":\"2026-11-19\",\"evidence\":[]}",
+      "type": "text"
+    }
+  ],
+  "model": "claude-haiku-5-5",
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 1200,
+    "output_tokens": 300
+  }
+}

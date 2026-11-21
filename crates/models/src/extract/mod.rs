@@ -3,21 +3,37 @@
 
 mod anthropic;
 mod gemini;
-pub(crate) mod http;
+pub mod http;
 mod openai;
 mod openai_compatible;
+
+use std::sync::Arc;
+
+pub use http::{Headers, Transport};
 
 // What the providers build on, as they had it beside them before the split.
 #[allow(unused_imports)]
 use spendyard_core::extract::*;
 
-/// Builds the extractor `settings` describe.
+/// Builds the extractor `settings` describe, posting natively.
+#[cfg(feature = "reqwest")]
 pub fn build(settings: Settings) -> Result<Box<dyn Extractor>, ExtractError> {
+    build_with(settings, http::native())
+}
+
+/// Builds the extractor `settings` describe, posting through `transport`: a
+/// host's own, in WebAssembly.
+pub fn build_with(
+    settings: Settings,
+    transport: Arc<dyn Transport>,
+) -> Result<Box<dyn Extractor>, ExtractError> {
     let extractor: Box<dyn Extractor> = match settings.provider.as_str() {
-        "anthropic" => Box::new(anthropic::Anthropic::new(settings)?),
-        "openai" => Box::new(openai::OpenAi::new(settings)?),
-        "gemini" => Box::new(gemini::Gemini::new(settings)?),
-        "openai-compatible" => Box::new(openai_compatible::OpenAiCompatible::new(settings)?),
+        "anthropic" => Box::new(anthropic::Anthropic::new(settings, transport)?),
+        "openai" => Box::new(openai::OpenAi::new(settings, transport)?),
+        "gemini" => Box::new(gemini::Gemini::new(settings, transport)?),
+        "openai-compatible" => Box::new(openai_compatible::OpenAiCompatible::new(
+            settings, transport,
+        )?),
         other => return Err(ExtractError::UnknownProvider(other.to_string())),
     };
 

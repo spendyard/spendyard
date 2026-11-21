@@ -1,8 +1,9 @@
 //! Anthropic's Messages API, with structured outputs
 //! (`output_config.format`).
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
-use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Value, json};
 
 use super::{
@@ -33,7 +34,7 @@ const OAUTH_BETA: &str = "oauth-2025-04-20";
 const IMAGES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 pub struct Anthropic {
-    client: reqwest::Client,
+    transport: Arc<dyn http::Transport>,
     credential: Credential,
     url: String,
     model: String,
@@ -47,7 +48,10 @@ enum Credential {
 }
 
 impl Anthropic {
-    pub fn new(settings: Settings) -> Result<Self, ExtractError> {
+    pub fn new(
+        settings: Settings,
+        transport: Arc<dyn http::Transport>,
+    ) -> Result<Self, ExtractError> {
         let credential = match (&settings.api_key, &settings.auth_token) {
             (Some(key), _) if !key.is_empty() => Credential::ApiKey(key.clone()),
             (_, Some(token)) if !token.is_empty() => Credential::Token(token.clone()),
@@ -57,7 +61,7 @@ impl Anthropic {
         let base = settings.base_url.as_deref().unwrap_or(DEFAULT_URL);
 
         let anthropic = Anthropic {
-            client: http::client(),
+            transport,
             credential,
             url: format!("{}/v1/messages", base.trim_end_matches('/')),
             model: settings
@@ -74,18 +78,18 @@ impl Anthropic {
         FALLBACK_MODELS.contains(&self.model.as_str())
     }
 
-    fn headers(&self) -> HeaderMap {
-        let mut headers = HeaderMap::new();
+    fn headers(&self) -> http::Headers {
+        let mut headers = http::Headers::new();
 
         let mut betas = Vec::new();
 
         match &self.credential {
             Credential::ApiKey(key) => {
-                headers.insert("x-api-key", header(key));
+                headers.push(("x-api-key".to_string(), key.clone()));
             }
 
             Credential::Token(token) => {
-                headers.insert("authorization", header(&format!("Bearer {token}")));
+                headers.push(("authorization".to_string(), format!("Bearer {token}")));
 
                 betas.push(OAUTH_BETA);
             }
@@ -95,10 +99,10 @@ impl Anthropic {
             betas.push(FALLBACK_BETA);
         }
 
-        headers.insert("anthropic-version", header(API_VERSION));
+        headers.push(("anthropic-version".to_string(), API_VERSION.to_string()));
 
         if !betas.is_empty() {
-            headers.insert("anthropic-beta", header(&betas.join(",")));
+            headers.push(("anthropic-beta".to_string(), betas.join(",")));
         }
 
         headers
@@ -148,13 +152,10 @@ impl Extractor for Anthropic {
     }
 
     async fn answer(&self, prompt: &Prompt, format: &OutputFormat) -> Result<Reply, ExtractError> {
-        let response = http::post_json(
-            &self.client,
-            &self.url,
-            self.headers(),
-            &self.body(prompt, format),
-        )
-        .await?;
+        let response = self
+            .transport
+            .post_json(&self.url, &self.headers(), &self.body(prompt, format))
+            .await?;
 
         parse_response(&response, &self.model)
     }
@@ -230,22 +231,21 @@ fn parse_response(response: &Value, asked_for: &str) -> Result<Reply, ExtractErr
     Ok(reply)
 }
 
-fn header(value: &str) -> HeaderValue {
-    HeaderValue::from_str(value).unwrap_or_else(|_| HeaderValue::from_static(""))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn extractor(model: &str) -> Anthropic {
-        Anthropic::new(Settings {
-            provider: "anthropic".to_string(),
-            model: Some(model.to_string()),
-            api_key: Some("sk-ant-test".to_string()),
-            effort: Some("low".to_string()),
-            ..Settings::default()
-        })
+        Anthropic::new(
+            Settings {
+                provider: "anthropic".to_string(),
+                model: Some(model.to_string()),
+                api_key: Some("sk-ant-test".to_string()),
+                effort: Some("low".to_string()),
+                ..Settings::default()
+            },
+            http::nowhere(),
+        )
         .unwrap()
     }
 
@@ -282,9 +282,15 @@ mod tests {
 
         let headers = anthropic.headers();
 
-        assert_eq!(headers["x-api-key"], "sk-ant-test");
-        assert_eq!(headers["anthropic-version"], API_VERSION);
-        assert_eq!(headers["anthropic-beta"], FALLBACK_BETA);
+        assert_eq!(http::header(&headers, "x-api-key").unwrap(), "sk-ant-test");
+        assert_eq!(
+            http::header(&headers, "anthropic-version").unwrap(),
+            API_VERSION
+        );
+        assert_eq!(
+            http::header(&headers, "anthropic-beta").unwrap(),
+            FALLBACK_BETA
+        );
     }
 
     #[test]
@@ -297,7 +303,7 @@ mod tests {
                 .get("fallbacks")
                 .is_none()
         );
-        assert!(anthropic.headers().get("anthropic-beta").is_none());
+        assert!(http::header(&anthropic.headers(), "anthropic-beta").is_none());
     }
 
     #[test]
