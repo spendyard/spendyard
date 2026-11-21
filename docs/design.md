@@ -836,10 +836,10 @@ opening-and-closing-balance check for statements that print balances.
 ### To the cloud and back
 
 ```bash
-spendyard login cloud
-spendyard push                # new and changed rows since the last push
-spendyard push --with-files   # originals too
-spendyard pull                # edits made in the cloud, such as fixed vendors
+spendyard cloud login
+spendyard cloud push                # new and changed rows since the last push
+spendyard cloud push --with-files   # originals too
+spendyard cloud pull                # edits made in the cloud, such as fixed vendors
 ```
 
 Rows are matched by document SHA-256 and message ID, so pushing twice, or
@@ -1013,12 +1013,18 @@ A company can also run `spendyard` itself, on a laptop or a server of its
 own, and send results to the cloud:
 
 ```bash
-spendyard login cloud                    # device code: open a URL, type the code
+spendyard cloud login                    # device code: open a URL, type the code
 spendyard scan gmail --new --push        # scan into the local store, then push
-spendyard push                           # new and changed rows from the store (§8)
-spendyard push --with-files              # originals too
-spendyard pull                           # edits made in the cloud
+spendyard cloud push                     # new and changed rows from the store (§8)
+spendyard cloud push --with-files        # originals too
+spendyard cloud pull                     # edits made in the cloud
 ```
+
+Everything about the cloud itself is under `spendyard cloud` (`login`,
+`logout`, `status`, `orgs`, `push`, `pull`), so what talks to Spendyard is
+easy to see: those, and three flags on commands that already exist,
+`--push`, `--cloud` and `-e cloud`. `spendyard login`, `logout` and
+`accounts` stay about mailboxes.
 
 - By default only **rows** are sent: results, receipts, lines and edits.
   Documents stay where they are, which suits companies that won't hand
@@ -1053,7 +1059,7 @@ document before launch.
 | **M6b: Charges** | `card_statement` in the decision; `read` reads PDF and CSV statements into the `charges` table, checked; `descriptors` and `by_merchant` in the catalog; matching against receipts; `charges list` and `charges match`. Done and run on a real 11-page DNB statement (91 charges, every check held). Still to do: CSV mappings per issuer, personal charges, balances. |
 | **M7: Public release** | Docs, Homebrew, crates.io, announcement. |
 | **Cloud C1** | Forwarding address, storage, subscriptions, renewals, AI spend, weekly email. |
-| **Cloud C2** | `spendyard login cloud`, `push` and `pull` against the shared store; cloud services the CLI can call (models, catalog, storage); a verified Google app for the cloud. |
+| **Cloud C2** | `spendyard cloud login`, `cloud push` and `cloud pull` against the shared store; cloud services the CLI can call (models, catalog, storage); a verified Google app for the cloud. |
 
 ## 13. Open questions
 
