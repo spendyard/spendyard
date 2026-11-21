@@ -7,8 +7,8 @@ later, with `spendyard login cloud`, `push` and `pull` (C2 in the platform's
 docs/cloud.md).
 
 ```bash
-buf lint && buf build      # here
-buf breaking --against '.git#subdir=proto'
+buf lint && buf build                               # here
+(cd .. && buf breaking proto --against '.git#subdir=proto')   # against the last commit
 ```
 
 Published as the public module
