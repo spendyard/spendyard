@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "google/protobuf/descriptor.proto";
+
+// What calling an RPC of Spendyard's API takes. Every RPC declares one
+// permission:
+//
+//   rpc UpdateMemberRole(UpdateMemberRoleRequest) returns (UpdateMemberRoleResponse) {
+//     option (spendyard.api.v1.permission) = "members:manage";
+//   }
+//
+// A permission is `<collection>:<action>`: the collection plural and in lower
+// snake_case, as the API names it (`receipts`, `subscriptions`, `members`),
+// and the action `read`, `write`, `manage` (an organisation's settings), or a
+// named verb where a role needs one (`exports:create`). Lowercase throughout,
+// never a role's name, no wildcards.
+//
+// Which roles hold which permission is the server's, not the contract's:
+// roles can change without a change to any client. A call is refused with
+// PERMISSION_DENIED when the caller doesn't hold it. The same names are meant
+// to become a token's scopes, so a CLI token can do less than its person.
+//
+// What the permission allows is the kind of call; which records the caller
+// sees (a member's own receipts) is still each method's.
+extend google.protobuf.MethodOptions {
+  // The permission calling this RPC takes: `receipts:read`, `members:manage`.
+  //
+  // 50001: in the range protobuf keeps for an organization's own options
+  // (50000–99999).
+  string permission = 50001;
+
+  // Only a person signed in to the dashboard may call this RPC: a CLI's token
+  // is refused with PERMISSION_DENIED, whatever its person may do. For the
+  // few changes no program should make, such as who is an admin or who can
+  // join.
+  bool interactive_only = 50002;
+}

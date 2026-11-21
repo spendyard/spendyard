@@ -4,16 +4,26 @@ package spendyard.api.v1;
 
 import "buf/validate/validate.proto";
 import "spendyard/api/v1/model.proto";
+import "spendyard/api/v1/options.proto";
 
 // OrgService creates organisations and moves between them. Every other
 // service acts in the session's active organisation.
 service OrgService {
   // CreateOrg creates an organisation with the caller as its owner, and
   // makes it the session's active one.
-  rpc CreateOrg(CreateOrgRequest) returns (CreateOrgResponse);
+  rpc CreateOrg(CreateOrgRequest) returns (CreateOrgResponse) {
+    option (spendyard.api.v1.permission) = "orgs:create";
+  }
+  // ListOrgs lists the organisations the caller belongs to, and what they may
+  // do in the active one.
+  rpc ListOrgs(ListOrgsRequest) returns (ListOrgsResponse) {
+    option (spendyard.api.v1.permission) = "orgs:read";
+  }
   // SwitchOrg makes another of the caller's organisations the active one for
   // this session. NOT_FOUND when they're not in it.
-  rpc SwitchOrg(SwitchOrgRequest) returns (SwitchOrgResponse);
+  rpc SwitchOrg(SwitchOrgRequest) returns (SwitchOrgResponse) {
+    option (spendyard.api.v1.permission) = "orgs:switch";
+  }
 }
 
 message CreateOrgRequest {
@@ -25,13 +35,27 @@ message CreateOrgRequest {
 }
 
 message CreateOrgResponse {
-  Org org = 1;
+  Membership membership = 1;
+}
+
+message ListOrgsRequest {}
+
+message ListOrgsResponse {
+  // The session's active organisation; empty when the caller is in none.
+  string active_org_id = 1;
+  // In the order they joined.
+  repeated Membership memberships = 2;
+  // The permissions the caller holds in the active organisation, those anyone
+  // signed in holds among them, e.g. "members:manage": for clients to offer
+  // only what they may do. The server checks every call anyway.
+  repeated string permissions = 3;
 }
 
 message SwitchOrgRequest {
-  string org_id = 1 [(buf.validate.field).string.min_len = 1];
+  // A slug of an organisation the caller belongs to.
+  string slug = 1 [(buf.validate.field).string.min_len = 1];
 }
 
 message SwitchOrgResponse {
-  Org org = 1;
+  Membership membership = 1;
 }

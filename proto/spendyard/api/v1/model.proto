@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package spendyard.api.v1;
 
+import "google/protobuf/timestamp.proto";
+
 // User is someone who signs in to Spendyard Cloud.
 message User {
   string id = 1;
@@ -28,9 +30,14 @@ enum Role {
 // Org is a company on Spendyard Cloud, with one shared store of receipts.
 message Org {
   string id = 1;
-  // In addresses: "fjordtech".
+  // In addresses and the CLI: "fjordtech".
   string slug = 2;
   string name = 3;
-  // The caller's role in it.
-  Role role = 4;
+  google.protobuf.Timestamp create_time = 4;
+}
+
+// Membership is a user's place in one organisation.
+message Membership {
+  Org org = 1;
+  Role role = 2;
 }

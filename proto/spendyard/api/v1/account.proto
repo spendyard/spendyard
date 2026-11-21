@@ -4,24 +4,29 @@ package spendyard.api.v1;
 
 import "buf/validate/validate.proto";
 import "spendyard/api/v1/model.proto";
+import "spendyard/api/v1/options.proto";
 
 // AccountService is the signed-in person's own account. It follows them
-// across organisations.
+// across organisations, and anyone signed in may use it.
 service AccountService {
-  // GetMe returns who's calling, their organisations, and the one this
-  // session acts in.
-  rpc GetMe(GetMeRequest) returns (GetMeResponse);
+  // GetAccount returns the caller's profile.
+  rpc GetAccount(GetAccountRequest) returns (GetAccountResponse) {
+    option (spendyard.api.v1.permission) = "account:read";
+  }
   // UpdateProfile changes what the caller is called.
-  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
+  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse) {
+    option (spendyard.api.v1.permission) = "account:write";
+  }
 }
 
-message GetMeRequest {}
-
-message GetMeResponse {
+message Account {
   User user = 1;
-  repeated Org orgs = 2;
-  // The organisation this session acts in; empty when they're in none yet.
-  string active_org_id = 3;
+}
+
+message GetAccountRequest {}
+
+message GetAccountResponse {
+  Account account = 1;
 }
 
 message UpdateProfileRequest {
@@ -32,5 +37,5 @@ message UpdateProfileRequest {
 }
 
 message UpdateProfileResponse {
-  User user = 1;
+  Account account = 1;
 }
