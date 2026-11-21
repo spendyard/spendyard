@@ -3,16 +3,12 @@
 //! rate on or before the receipt's date.
 
 use std::collections::BTreeSet;
-use std::str::FromStr;
 
 use anyhow::{Context, Result};
 use rusqlite::{OptionalExtension, params};
 use rust_decimal::Decimal;
-use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
 
 use super::Store;
-
-const ECB: &str = "https://data-api.ecb.europa.eu/service/data/EXR";
 
 impl Store {
     /// Fetches rates for `currencies` from `since` onwards, where the store
@@ -50,13 +46,9 @@ impl Store {
             _ => since.to_string(),
         };
 
-        let keys = wanted
-            .iter()
-            .map(|currency| currency.as_str())
-            .collect::<Vec<_>>()
-            .join("+");
-
-        let url = format!("{ECB}/D.{keys}.EUR.SP00.A?format=csvdata&startPeriod={start}");
+        let Some(url) = spendyard_core::rates::ecb_url(currencies, &start) else {
+            return Ok(0);
+        };
 
         let csv = reqwest::get(&url)
             .await
@@ -65,44 +57,18 @@ impl Store {
             .text()
             .await?;
 
+        let Some(rates) = spendyard_core::rates::parse_ecb_csv(&csv) else {
+            anyhow::bail!("the ECB's answer wasn't the CSV expected");
+        };
+
         let mut added = 0;
 
         let transaction = self.connection.unchecked_transaction()?;
 
-        let mut lines = csv.lines();
-
-        let header: Vec<&str> = lines.next().unwrap_or_default().split(',').collect();
-
-        let column = |name: &str| header.iter().position(|field| *field == name);
-
-        let (Some(currency_at), Some(date_at), Some(value_at)) = (
-            column("CURRENCY"),
-            column("TIME_PERIOD"),
-            column("OBS_VALUE"),
-        ) else {
-            anyhow::bail!("the ECB's answer wasn't the CSV expected");
-        };
-
-        // The fields needed come before any quoted ones, so a plain split
-        // is enough for them.
-        for line in lines {
-            let fields: Vec<&str> = line.split(',').collect();
-
-            let (Some(currency), Some(date), Some(value)) = (
-                fields.get(currency_at),
-                fields.get(date_at),
-                fields.get(value_at),
-            ) else {
-                continue;
-            };
-
-            let Ok(per_eur) = value.parse::<f64>() else {
-                continue;
-            };
-
+        for rate in rates {
             added += transaction.execute(
                 "INSERT OR IGNORE INTO rates (date, currency, per_eur) VALUES (?1, ?2, ?3)",
-                params![date, currency, per_eur],
+                params![rate.date, rate.currency, rate.per_eur],
             )?;
         }
 
@@ -112,11 +78,7 @@ impl Store {
     }
 
     /// Units of `currency` per euro on `date`, or the newest rate before it.
-    fn per_eur(&self, currency: &str, date: &str) -> Result<Option<f64>> {
-        if currency == "EUR" {
-            return Ok(Some(1.0));
-        }
-
+    fn per_eur_stored(&self, currency: &str, date: &str) -> Result<Option<f64>> {
         let rate = self
             .connection
             .query_row(
@@ -138,27 +100,19 @@ impl Store {
         to: &str,
         date: &str,
     ) -> Result<Option<Decimal>> {
-        if from == to {
-            return Ok(Some(amount));
-        }
+        Ok(spendyard_core::rates::convert(self, amount, from, to, date))
+    }
+}
 
-        let (Some(from_rate), Some(to_rate)) = (self.per_eur(from, date)?, self.per_eur(to, date)?)
-        else {
-            return Ok(None);
-        };
-
-        let euros = amount.to_f64().unwrap_or(0.0) / from_rate;
-
-        let converted = Decimal::from_f64(euros * to_rate).map(|value| value.round_dp(2));
-
-        Ok(converted)
+/// The store's rates, for the core's conversions. A rate it can't read is missing.
+impl spendyard_core::rates::Rates for Store {
+    fn per_eur(&self, currency: &str, date: &str) -> Option<f64> {
+        self.per_eur_stored(currency, date).ok().flatten()
     }
 }
 
 /// Parses a stored amount.
-pub fn amount(text: &str) -> Option<Decimal> {
-    Decimal::from_str(text).ok()
-}
+pub use spendyard_core::spend::amount;
 
 #[cfg(test)]
 mod tests {

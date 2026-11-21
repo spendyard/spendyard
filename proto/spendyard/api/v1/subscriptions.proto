@@ -1,0 +1,89 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "spendyard/api/v1/options.proto";
+import "spendyard/api/v1/receipts.proto";
+
+// SubscriptionService is the active organisation's subscriptions: every
+// vendor it pays again and again, worked out from its receipts as the CLI's
+// `spendyard subscriptions` does, with what each costs a month, how often,
+// on which card, and whether the last payment went through.
+//
+// Amounts are in the organisation's currency (Org.currency, else the one it
+// pays in most), converted with the European Central Bank's rates of the
+// day paid; the last payment is also given as it was paid. A member sees
+// the subscriptions in the receipts they added; the owner, admins and an
+// accountant see them all.
+service SubscriptionService {
+  // ListSubscriptions lists the subscriptions: live ones first, the most
+  // expensive first.
+  rpc ListSubscriptions(ListSubscriptionsRequest) returns (ListSubscriptionsResponse) {
+    option (spendyard.api.v1.permission) = "subscriptions:read";
+  }
+}
+
+// Where a subscription's payments stand.
+enum SubscriptionStatus {
+  SUBSCRIPTION_STATUS_UNSPECIFIED = 0;
+  // Paid, and not overdue for the next payment.
+  SUBSCRIPTION_STATUS_ACTIVE = 1;
+  // The newest document says a payment didn't go through.
+  SUBSCRIPTION_STATUS_PAYMENT_FAILED = 2;
+  // The newest document is an invoice not paid yet.
+  SUBSCRIPTION_STATUS_DUE = 3;
+  // No payment since it was due, with some grace: likely cancelled.
+  SUBSCRIPTION_STATUS_LAPSED = 4;
+  // Notices, but no payment yet.
+  SUBSCRIPTION_STATUS_UNPAID = 5;
+}
+
+// Subscription is one vendor paid again and again.
+message Subscription {
+  // The vendor's ID: its catalog ID (its domain) when the catalog knows it,
+  // else its name's key. For its icon, and its receipts.
+  string vendor_id = 1;
+  string vendor_name = 2;
+  // The catalog's category: `ai`, `dev-tools`, `infrastructure`, …; empty
+  // when the catalog doesn't know the vendor.
+  string category = 3;
+  // How often it's paid; unset when no document says.
+  Interval interval = 4;
+  SubscriptionStatus status = 5;
+  // What it costs a month, from the last payment, in the response's
+  // currency: a plain decimal (`20.00`); empty when it can't be converted,
+  // or nothing was paid.
+  string per_month = 6;
+  // The last payment: its day, YYYY-MM-DD, and its amount as it was paid.
+  string last_paid = 7;
+  string last_total = 8;
+  string last_currency = 9;
+  // The receipt of the last payment, or the newest document without one.
+  int64 last_document_id = 10;
+  // When it renews next, YYYY-MM-DD: as a document says, else a month,
+  // quarter or year from the last payment.
+  string next_renewal = 11;
+  // Seats paid for, as the newest receipt with seats says.
+  double seats = 12;
+  // The card it's paid with: "visa 3776".
+  string card = 13;
+  // How many of its documents there are.
+  int32 documents = 14;
+  // Its newest document: the notice of a failed payment, an invoice due.
+  int64 newest_document_id = 15;
+  // Its documents, newest first: ListReceipts' document_ids lists them.
+  repeated int64 document_ids = 16;
+}
+
+message ListSubscriptionsRequest {
+  // Also those lapsed for more than a year.
+  bool include_lapsed = 1;
+}
+
+message ListSubscriptionsResponse {
+  repeated Subscription subscriptions = 1;
+  // The currency the amounts are in.
+  string currency = 2;
+  // What the active ones cost a month, together: a plain decimal.
+  string monthly = 3;
+}

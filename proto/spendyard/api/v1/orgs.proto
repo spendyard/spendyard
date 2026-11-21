@@ -51,8 +51,9 @@ service OrgService {
     option (spendyard.api.v1.permission) = "orgs:transfer";
     option (spendyard.api.v1.interactive_only) = true;
   }
-  // UpdateOrg changes the active organisation's name; the owner and admins.
-  // Its slug stays: it's in links and the CLI's commands.
+  // UpdateOrg changes the active organisation's name, and the currency its
+  // amounts are shown in; the owner and admins. Its slug stays: it's in
+  // links and the CLI's commands.
   rpc UpdateOrg(UpdateOrgRequest) returns (UpdateOrgResponse) {
     option (spendyard.api.v1.permission) = "orgs:manage";
   }
@@ -156,6 +157,9 @@ message UpdateOrgRequest {
     min_len: 1
     max_len: 80
   }];
+  // The currency to show amounts in, ISO 4217 ("NOK"); empty for the one it
+  // pays in most. Left as it is when unset.
+  optional string currency = 2 [(buf.validate.field).string.pattern = "^([A-Z]{3})?$"];
 }
 
 message UpdateOrgResponse {

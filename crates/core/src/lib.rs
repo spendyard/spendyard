@@ -9,15 +9,18 @@
 //! prompts and parses their answers here.
 
 pub mod catalog;
+pub mod dates;
 pub mod decide;
 pub mod document;
 pub mod eval;
 pub mod extract;
 pub mod format;
 pub mod money;
+pub mod rates;
 pub mod read;
 pub mod result;
 pub mod rows;
+pub mod spend;
 pub mod statement;
 pub mod text;
 pub mod validate;

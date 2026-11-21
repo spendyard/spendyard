@@ -7,6 +7,13 @@
 //!   providers and prompts, posting through a function the host gives: the
 //!   Worker's `fetch` to AI Gateway and Workers AI. With the result come the
 //!   rows a store keeps from it.
+//! - [`subscriptions`]: the recurring vendors in a store's rows
+//!   (`spendyard subscriptions`), from the rows of the core's `ROWS_SQL`,
+//!   with the rates the host keeps.
+//! - [`rows_sql`]: the query for those rows, which the host's store runs.
+//! - [`rates_needed`], [`rates_url`] and [`parse_rates`]: which exchange
+//!   rates converting needs, where to ask the ECB for them, and its answer
+//!   read.
 //!
 //! [`read_json`] builds natively too, so the same answer can be checked both
 //! ways (`examples/read.rs`, `tests/compare.mjs`).
@@ -40,6 +47,111 @@ pub fn read(bytes: &[u8]) -> String {
 #[wasm_bindgen]
 pub fn version() -> String {
     spendyard_core::VERSION.to_string()
+}
+
+/// What [`subscriptions`] works with: how (the currency, today, whether
+/// lapsed ones too) and the rates it converts with.
+#[derive(Debug, Default, Deserialize)]
+struct SpendOptions {
+    #[serde(flatten)]
+    options: spendyard_core::spend::SubscriptionOptions,
+
+    #[serde(default)]
+    rates: Vec<spendyard_core::rates::Rate>,
+}
+
+/// The rows of `ROWS_SQL` (JSON, its columns as named), grouped by vendor.
+fn report_rows(rows: &str) -> Result<Vec<spendyard_core::spend::Row>, String> {
+    let stored: Vec<spendyard_core::spend::StoredRow> =
+        serde_json::from_str(rows).map_err(|error| error.to_string())?;
+
+    let catalog = spendyard_core::catalog::catalog();
+
+    Ok(stored
+        .into_iter()
+        .map(|row| spendyard_core::spend::Row::from_stored(row, catalog))
+        .collect())
+}
+
+/// The recurring vendors in a store's rows, as `spendyard subscriptions
+/// --json` has them: `{"currency", "subscriptions", "monthly"}`, or
+/// `{"error": "…"}`. `options` is `{"currency"?, "today", "all"?, "rates"?}`.
+pub fn subscriptions_json(rows: &str, options: &str) -> String {
+    let answer = (|| -> Result<Value, String> {
+        let rows = report_rows(rows)?;
+        let asked: SpendOptions =
+            serde_json::from_str(options).map_err(|error| error.to_string())?;
+
+        let rates = spendyard_core::rates::RateTable::new(asked.rates);
+        let found = spendyard_core::spend::subscriptions(&rows, &asked.options, &rates);
+
+        serde_json::to_value(found).map_err(|error| error.to_string())
+    })();
+
+    answer
+        .unwrap_or_else(|error| json!({ "error": error }))
+        .to_string()
+}
+
+/// [`subscriptions_json`], for JavaScript.
+#[wasm_bindgen]
+pub fn subscriptions(rows: &str, options: &str) -> String {
+    subscriptions_json(rows, options)
+}
+
+/// The query for a store's rows (the core's `ROWS_SQL`): what
+/// [`subscriptions`] takes, its columns as named.
+#[wasm_bindgen]
+pub fn rows_sql() -> String {
+    spendyard_core::spend::ROWS_SQL.to_string()
+}
+
+/// What converting a store's rows into `currency` (empty: the most common
+/// one paid in) needs: `{"currency", "currencies", "since"}`, the rates of
+/// which currencies from which day on (none when nothing needs
+/// converting); or `{"error": "…"}`.
+pub fn rates_needed_json(rows: &str, currency: &str) -> String {
+    let answer = (|| -> Result<Value, String> {
+        let rows = report_rows(rows)?;
+
+        let paid = spendyard_core::spend::spend(&rows);
+        let currency = spendyard_core::spend::report_currency(Some(currency.to_string()), &paid);
+
+        let (currencies, since) =
+            spendyard_core::spend::rates_needed(&paid, &currency).unwrap_or_default();
+
+        Ok(json!({ "currency": currency, "currencies": currencies, "since": since }))
+    })();
+
+    answer
+        .unwrap_or_else(|error| json!({ "error": error }))
+        .to_string()
+}
+
+/// [`rates_needed_json`], for JavaScript.
+#[wasm_bindgen]
+pub fn rates_needed(rows: &str, currency: &str) -> String {
+    rates_needed_json(rows, currency)
+}
+
+/// Where to ask the ECB for the daily rates of `currencies` (JSON, a list)
+/// from `start` on; empty when only the euro is asked for.
+#[wasm_bindgen]
+pub fn rates_url(currencies: &str, start: &str) -> String {
+    let currencies: std::collections::BTreeSet<String> =
+        serde_json::from_str(currencies).unwrap_or_default();
+
+    spendyard_core::rates::ecb_url(&currencies, start).unwrap_or_default()
+}
+
+/// The rates in the ECB's CSV answer: `[{"date", "currency", "per_eur"}]`,
+/// or `{"error": "…"}` when it isn't the CSV expected.
+#[wasm_bindgen]
+pub fn parse_rates(csv: &str) -> String {
+    match spendyard_core::rates::parse_ecb_csv(csv) {
+        Some(rates) => json!(rates).to_string(),
+        None => json!({ "error": "the ECB's answer wasn't the CSV expected" }).to_string(),
+    }
 }
 
 /// What [`understand`] reads with, as JSON.
@@ -173,5 +285,75 @@ fn decider_settings(options: ModelOptions) -> decide::Settings {
         api_key: options.api_key,
         account_id: options.account_id,
         base_url: options.base_url,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn works_out_subscriptions_from_rows_as_json() {
+        let rows = json!([
+            {
+                "id": 2, "date": "2026-11-19", "kind": "receipt", "status": "paid", "is_receipt": 1,
+                "vendor_id": "vercel.com", "vendor_name": "Vercel", "total": "20.00", "currency": "USD",
+                "billing_model": "subscription", "interval": "month", "flags": 0, "personal": 0, "ignored": 0
+            },
+            {
+                "id": 1, "date": "2026-10-19", "kind": "receipt", "status": "paid", "is_receipt": 1,
+                "vendor_id": "vercel.com", "vendor_name": "Vercel", "total": "20.00", "currency": "USD",
+                "billing_model": "subscription", "interval": "month", "flags": 0, "personal": 0, "ignored": 0
+            }
+        ]);
+
+        let options = json!({
+            "currency": "EUR",
+            "today": "2026-11-21",
+            "rates": [{ "date": "2026-11-19", "currency": "USD", "per_eur": 1.25 }]
+        });
+
+        let answer: Value =
+            serde_json::from_str(&subscriptions_json(&rows.to_string(), &options.to_string()))
+                .unwrap();
+
+        assert_eq!(answer["currency"], "EUR");
+        assert_eq!(answer["monthly"], "16.00");
+        assert_eq!(answer["subscriptions"][0]["vendor"], "Vercel");
+        assert_eq!(answer["subscriptions"][0]["status"], "active");
+        assert_eq!(answer["subscriptions"][0]["documents"], 2);
+    }
+
+    #[test]
+    fn says_which_rates_converting_needs() {
+        let rows = json!([{
+            "id": 1, "date": "2026-11-19", "kind": "receipt", "status": "paid", "is_receipt": 1,
+            "vendor_name": "Vercel", "total": "20.00", "currency": "USD", "flags": 0, "personal": 0, "ignored": 0
+        }]);
+
+        let needed: Value =
+            serde_json::from_str(&rates_needed_json(&rows.to_string(), "NOK")).unwrap();
+
+        assert_eq!(
+            needed,
+            json!({ "currency": "NOK", "currencies": ["NOK", "USD"], "since": "2026-11-12" })
+        );
+
+        let nothing: Value =
+            serde_json::from_str(&rates_needed_json(&rows.to_string(), "")).unwrap();
+
+        assert_eq!(
+            nothing,
+            json!({ "currency": "USD", "currencies": [], "since": "" })
+        );
+    }
+
+    #[test]
+    fn says_why_when_the_rows_arent_rows() {
+        let answer: Value =
+            serde_json::from_str(&subscriptions_json("[{}]", "{\"today\": \"2026-11-21\"}"))
+                .unwrap();
+
+        assert!(answer["error"].is_string());
     }
 }
