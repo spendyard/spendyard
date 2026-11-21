@@ -1,0 +1,87 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "spendyard/api/v1/options.proto";
+
+// SourceService is how documents come into the active organisation: for now
+// its forwarding addresses (later mailboxes and CLI machines too). Mail sent
+// or forwarded to an address is read like an upload.
+//
+// An address is `<org>-<random>@<domain>`: the random part so nobody outside
+// can guess it and send fake receipts into the books. A new one can be made at
+// any time; the one in use before keeps working for 30 days, so forwarding
+// rules can be changed first, unless it's retired now. Mail to a retired
+// address bounces, saying to ask an admin for the new one.
+service SourceService {
+  // ListForwardAddresses lists the organisation's addresses, the one in use
+  // first, each with who has forwarded to it.
+  rpc ListForwardAddresses(ListForwardAddressesRequest) returns (ListForwardAddressesResponse) {
+    option (spendyard.api.v1.permission) = "sources:read";
+  }
+  // CreateForwardAddress makes a new address and puts it in use; the one in
+  // use before keeps working for 30 days.
+  rpc CreateForwardAddress(CreateForwardAddressRequest) returns (CreateForwardAddressResponse) {
+    option (spendyard.api.v1.permission) = "sources:manage";
+    option (spendyard.api.v1.interactive_only) = true;
+  }
+  // RetireForwardAddress stops an address working at once: mail to it
+  // bounces. NOT_FOUND when it isn't the organisation's, or is retired.
+  rpc RetireForwardAddress(RetireForwardAddressRequest) returns (RetireForwardAddressResponse) {
+    option (spendyard.api.v1.permission) = "sources:manage";
+    option (spendyard.api.v1.interactive_only) = true;
+  }
+}
+
+// Whether mail to an address is read.
+enum ForwardAddressState {
+  FORWARD_ADDRESS_STATE_UNSPECIFIED = 0;
+  // The one to forward to.
+  FORWARD_ADDRESS_STATE_IN_USE = 1;
+  // Still read, until retire_at: a newer one is in use.
+  FORWARD_ADDRESS_STATE_RETIRING = 2;
+  // No longer read: mail to it bounces.
+  FORWARD_ADDRESS_STATE_RETIRED = 3;
+}
+
+// ForwardAddress is one of an organisation's forwarding addresses.
+message ForwardAddress {
+  // The whole address: "fjordtech-k7q3x9m2@in.spendyard.com".
+  string address = 1;
+  ForwardAddressState state = 2;
+  google.protobuf.Timestamp created_at = 3;
+  // When it stops (stopped) working; unset while it's in use.
+  google.protobuf.Timestamp retire_at = 4;
+  // Who has sent or forwarded mail to it, most recently first: so their
+  // rules can be changed before it's retired.
+  repeated Forwarder forwarders = 5;
+}
+
+// Forwarder is a mailbox that has sent or forwarded mail to an address.
+message Forwarder {
+  // As the mail came: the forwarding mailbox's address.
+  string sender = 1;
+  google.protobuf.Timestamp last_at = 2;
+  int64 count = 3;
+}
+
+message ListForwardAddressesRequest {}
+
+message ListForwardAddressesResponse {
+  repeated ForwardAddress addresses = 1;
+}
+
+message CreateForwardAddressRequest {}
+
+message CreateForwardAddressResponse {
+  ForwardAddress address = 1;
+}
+
+message RetireForwardAddressRequest {
+  // The whole address.
+  string address = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message RetireForwardAddressResponse {}
