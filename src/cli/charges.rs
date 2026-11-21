@@ -252,7 +252,7 @@ fn same_payment(receipts: &[Receipt]) -> std::collections::HashMap<i64, Vec<i64>
                 receipt
                     .vendor_name
                     .as_deref()
-                    .map(spendyard::catalog::name_key)
+                    .map(spendyard_core::catalog::name_key)
             })
             .unwrap_or_default();
 
@@ -327,7 +327,7 @@ fn same_payment(receipts: &[Receipt]) -> std::collections::HashMap<i64, Vec<i64>
 
 fn same_vendor_id(a: &Receipt, b: &Receipt) -> bool {
     match (&a.vendor_id, &b.vendor_id) {
-        (Some(a), Some(b)) => spendyard::catalog::catalog().same_or_related(a, b),
+        (Some(a), Some(b)) => spendyard_core::catalog::catalog().same_or_related(a, b),
         _ => false,
     }
 }
@@ -339,7 +339,7 @@ fn days_apart(a: &str, b: &str) -> Option<i64> {
 /// Looks each charge's vendor up again from its merchant, so additions to
 /// the catalog reach charges read before them.
 fn refresh_vendors(store: &Store, charges: &mut [StoredCharge]) -> Result<()> {
-    let catalog = spendyard::catalog::catalog();
+    let catalog = spendyard_core::catalog::catalog();
 
     for charge in charges.iter_mut() {
         let vendor = catalog.by_merchant(&charge.merchant);
@@ -503,10 +503,10 @@ fn score(store: &Store, charge: &StoredCharge, receipt: &Receipt) -> Result<Opti
 
 fn same_vendor(charge: &StoredCharge, receipt: &Receipt) -> bool {
     if let (Some(a), Some(b)) = (&charge.vendor_id, &receipt.vendor_id) {
-        return spendyard::catalog::catalog().same_or_related(a, b);
+        return spendyard_core::catalog::catalog().same_or_related(a, b);
     }
 
-    let key = |name: &Option<String>| name.as_deref().map(spendyard::catalog::name_key);
+    let key = |name: &Option<String>| name.as_deref().map(spendyard_core::catalog::name_key);
 
     let charge_name = key(&charge.vendor_name);
 
@@ -689,7 +689,7 @@ fn load_receipts(store: &Store) -> Result<Vec<Receipt>> {
         let vendor_id = vendor_id.or_else(|| {
             let name = vendor_name.as_deref()?;
 
-            let vendor = spendyard::catalog::catalog().by_name(name)?;
+            let vendor = spendyard_core::catalog::catalog().by_name(name)?;
 
             Some(vendor.id.clone())
         });

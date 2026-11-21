@@ -1,10 +1,12 @@
 //! The Spendyard pipeline: read a document, decide what it is, extract the
-//! details and validate them.
+//! details and validate them, and the rows a store keeps from the result.
 //!
-//! The library holds everything that works on a single document; `main.rs`
-//! is the CLI around it. Keep filesystem, keychain and terminal code out of
-//! the library: it moves into its own WebAssembly-ready crate when the cloud
-//! work starts.
+//! Everything that works on a single document, and nothing else: no file,
+//! network, clock or OS, so it builds for `wasm32-unknown-unknown` and
+//! Spendyard Cloud runs exactly this code (`spendyard-wasm`). The models are
+//! the host's: [`Decider`] and [`Extractor`] are implemented over HTTP by
+//! `spendyard-models` for the CLI, and the cloud calls its own with the same
+//! prompts and parses their answers here.
 
 pub mod catalog;
 pub mod decide;
@@ -15,11 +17,12 @@ pub mod format;
 pub mod money;
 pub mod read;
 pub mod result;
+pub mod rows;
 pub mod statement;
 pub mod text;
 pub mod validate;
 
-use std::time::Instant;
+use web_time::Instant;
 
 pub use decide::Decider;
 pub use document::{Document, EmailHeaders, Format, Part, PartKind};

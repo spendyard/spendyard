@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use spendyard::extract::{self, Settings};
+use spendyard_core::extract::{self, Settings};
 
 /// What the config file holds. Everything is optional.
 #[derive(Debug, Default, Deserialize)]
@@ -168,7 +168,7 @@ pub fn extractor_settings(config: &Config, flag: Option<&str>) -> Settings {
 pub fn decider_settings(
     config: &Config,
     flag: Option<&str>,
-) -> Option<spendyard::decide::Settings> {
+) -> Option<spendyard_core::decide::Settings> {
     let (flag_provider, flag_model) = match flag {
         Some(value) => match value.split_once('/') {
             Some((provider, model)) => (Some(provider.to_string()), Some(model.to_string())),
@@ -196,9 +196,9 @@ pub fn decider_settings(
 
     let key_variable = provider_config
         .and_then(|settings| settings.api_key_env.clone())
-        .or_else(|| spendyard::decide::key_variable(&provider).map(str::to_string));
+        .or_else(|| spendyard_core::decide::key_variable(&provider).map(str::to_string));
 
-    let settings = spendyard::decide::Settings {
+    let settings = spendyard_core::decide::Settings {
         api_key: key_variable.and_then(|variable| env(&variable)),
         account_id: env("CLOUDFLARE_ACCOUNT_ID"),
         base_url: provider_config.and_then(|settings| settings.base_url.clone()),
@@ -214,7 +214,7 @@ pub fn threshold(config: &Config) -> f64 {
     config
         .decider
         .threshold
-        .unwrap_or(spendyard::decide::DEFAULT_THRESHOLD)
+        .unwrap_or(spendyard_core::decide::DEFAULT_THRESHOLD)
 }
 
 fn env(name: &str) -> Option<String> {

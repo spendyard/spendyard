@@ -1,0 +1,37 @@
+# Everything about a single document: reading it, the vendor catalog, money,
+# card statements, the prompts and questions for models and parsing their
+# answers, the result and checking it, and the rows the store keeps from it.
+# No file, network, clock or OS: it builds for wasm32-unknown-unknown, so
+# Spendyard Cloud reads documents with exactly this code (crates/wasm).
+[package]
+name = "spendyard-core"
+description = "Reads receipts, invoices and card statements: the Spendyard pipeline, without I/O."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+cfb = "0.16"
+futures-util.workspace = true
+html2text = "0.17"
+lopdf = { version = "0.47", default-features = false }
+mail-parser.workspace = true
+pdf-extract = "0.12.1"
+rust_decimal.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror = "2"
+toml.workspace = true
+# std's Instant panics on wasm32-unknown-unknown; this one is std's natively.
+web-time = "1"
+
+[dev-dependencies]
+tokio.workspace = true
+
+[lints]
+workspace = true

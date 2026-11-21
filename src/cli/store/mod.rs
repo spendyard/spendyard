@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
-use serde_json::Value;
 use sha2::{Digest, Sha256};
-use spendyard::{Document, ReadResult};
+use spendyard_core::rows::{self, ChargeRow, Rows};
+use spendyard_core::{Document, ReadResult};
 
 use super::config;
 
@@ -280,9 +280,13 @@ impl Store {
                 .and_then(|headers| headers.date.clone())
         });
 
-        write_receipt(&transaction, document_id, result_id, result, fallback_date)?;
+        let rows = rows::rows(result, fallback_date.as_deref());
 
-        write_charges(&transaction, document_id, result)?;
+        write_receipt(&transaction, document_id, result_id, &rows)?;
+
+        if let Some(charges) = &rows.charges {
+            write_charges(&transaction, document_id, charges)?;
+        }
 
         transaction.commit()?;
 
@@ -406,27 +410,14 @@ fn remove_copied_charges(connection: &Connection) -> Result<usize> {
 fn write_charges(
     transaction: &rusqlite::Transaction<'_>,
     document_id: i64,
-    result: &ReadResult,
+    charges: &[ChargeRow],
 ) -> Result<()> {
-    let Some(statement) = &result.statement else {
-        return Ok(());
-    };
-
     transaction.execute(
         "DELETE FROM charges WHERE document_id = ?1",
         params![document_id],
     )?;
 
-    let catalog = spendyard::catalog::catalog();
-
-    for (position, charge) in statement.charges.iter().enumerate() {
-        let vendor = catalog.by_merchant(&charge.merchant);
-
-        let kind = serde_json::to_value(charge.kind)?
-            .as_str()
-            .unwrap_or("purchase")
-            .to_string();
-
+    for charge in charges {
         transaction.execute(
             &format!(
                 "INSERT INTO charges (document_id, position, issuer, row, date, posted, merchant,
@@ -441,8 +432,8 @@ fn write_charges(
             ),
             params![
                 document_id,
-                position as i64,
-                statement.issuer,
+                charge.position,
+                charge.issuer,
                 charge.row,
                 charge.date,
                 charge.posted,
@@ -450,13 +441,13 @@ fn write_charges(
                 charge.card_last4,
                 charge.name_on_card,
                 charge.amount,
-                statement.currency,
+                charge.currency,
                 charge.original_amount,
                 charge.original_currency,
                 charge.rate,
-                kind,
-                vendor.map(|vendor| vendor.id.clone()),
-                vendor.map(|vendor| vendor.name.clone()),
+                charge.kind,
+                charge.vendor_id,
+                charge.vendor_name,
             ],
         )?;
     }
@@ -464,12 +455,12 @@ fn write_charges(
     Ok(())
 }
 
+/// Replaces the document's `receipts`, `lines` and `payments` with these.
 fn write_receipt(
     transaction: &rusqlite::Transaction<'_>,
     document_id: i64,
     result_id: i64,
-    result: &ReadResult,
-    fallback_date: Option<String>,
+    rows: &Rows,
 ) -> Result<()> {
     transaction.execute(
         "DELETE FROM receipts WHERE document_id = ?1",
@@ -484,31 +475,7 @@ fn write_receipt(
         params![document_id],
     )?;
 
-    let word = |value: Value| value.as_str().map(str::to_string);
-
-    let vendor = result.vendor.as_ref();
-    let amount = result.amount.as_ref();
-    let billing = result.billing.as_ref();
-    let card = result
-        .payments
-        .iter()
-        .find(|payment| payment.last4.is_some());
-
-    let date = result
-        .issued
-        .clone()
-        .or_else(|| fallback_date.map(|date| date.chars().take(10).collect()));
-
-    let seats: Option<f64> = {
-        let quantities: Vec<f64> = result
-            .lines
-            .iter()
-            .filter(|line| line.kind == spendyard::extract::schema::LineKind::Seat)
-            .filter_map(|line| line.quantity)
-            .collect();
-
-        (!quantities.is_empty()).then(|| quantities.iter().sum())
-    };
+    let receipt = &rows.receipt;
 
     transaction.execute(
         "INSERT INTO receipts (
@@ -520,41 +487,41 @@ fn write_receipt(
         params![
             document_id,
             result_id,
-            word(serde_json::to_value(result.document.kind)?),
-            word(serde_json::to_value(result.document.status)?),
-            result.document.is_receipt,
-            result.document.is_invoice,
-            vendor.and_then(|vendor| vendor.id.clone()),
-            vendor.map(|vendor| vendor.name.clone()),
-            vendor.and_then(|vendor| vendor.processor.clone()),
-            vendor.and_then(|vendor| vendor.account.email.clone()),
-            vendor.and_then(|vendor| vendor.account.workspace.clone()),
-            date,
-            amount.and_then(|amount| amount.total.clone()),
-            amount.and_then(|amount| amount.tax.clone()),
-            amount.and_then(|amount| amount.currency.clone()),
-            billing.and_then(|billing| word(serde_json::to_value(billing.model).ok()?)),
-            billing.and_then(|billing| billing.interval).and_then(|interval| word(serde_json::to_value(interval).ok()?)),
-            billing.and_then(|billing| billing.period.as_ref()).and_then(|period| period.start.clone()),
-            billing.and_then(|billing| billing.period.as_ref()).and_then(|period| period.end.clone()),
-            billing.and_then(|billing| billing.next_renewal.clone()),
-            result.invoice_number,
-            result.receipt_number,
-            card.and_then(|payment| payment.brand.clone()),
-            card.and_then(|payment| payment.last4.clone()),
-            seats,
-            result.flags.len() as i64,
+            receipt.r#type,
+            receipt.status,
+            receipt.is_receipt,
+            receipt.is_invoice,
+            receipt.vendor_id,
+            receipt.vendor_name,
+            receipt.processor,
+            receipt.account_email,
+            receipt.account_workspace,
+            receipt.date,
+            receipt.total,
+            receipt.tax,
+            receipt.currency,
+            receipt.billing_model,
+            receipt.interval,
+            receipt.period_start,
+            receipt.period_end,
+            receipt.next_renewal,
+            receipt.invoice_number,
+            receipt.receipt_number,
+            receipt.card_brand,
+            receipt.card_last4,
+            receipt.seats,
+            receipt.flags,
         ],
     )?;
 
-    for (position, line) in result.lines.iter().enumerate() {
+    for line in &rows.lines {
         transaction.execute(
             "INSERT INTO lines (document_id, position, kind, product, plan, description, quantity, unit, unit_price, amount, interval)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 document_id,
-                position as i64,
-                word(serde_json::to_value(line.kind)?),
+                line.position,
+                line.kind,
                 line.product,
                 line.plan,
                 line.description,
@@ -562,18 +529,18 @@ fn write_receipt(
                 line.unit,
                 line.unit_price,
                 line.amount,
-                line.interval.and_then(|interval| word(serde_json::to_value(interval).ok()?)),
+                line.interval,
             ],
         )?;
     }
 
-    for (position, payment) in result.payments.iter().enumerate() {
+    for payment in &rows.payments {
         transaction.execute(
             "INSERT INTO payments (document_id, position, method, brand, last4, amount) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 document_id,
-                position as i64,
-                word(serde_json::to_value(payment.method)?),
+                payment.position,
+                payment.method,
                 payment.brand,
                 payment.last4,
                 payment.amount,
@@ -690,7 +657,7 @@ mod tests {
 
     fn fixture(name: &str) -> Vec<u8> {
         std::fs::read(format!(
-            "{}/tests/fixtures/{name}",
+            "{}/crates/core/tests/fixtures/{name}",
             env!("CARGO_MANIFEST_DIR")
         ))
         .unwrap()
@@ -702,10 +669,10 @@ mod tests {
 
         let bytes = fixture("receipt.eml");
 
-        let document = spendyard::read(&bytes, None).unwrap();
+        let document = spendyard_core::read(&bytes, None).unwrap();
 
-        let result = spendyard::result::not_about_money(
-            spendyard::extract::schema::DocumentType::Other,
+        let result = spendyard_core::result::not_about_money(
+            spendyard_core::extract::schema::DocumentType::Other,
             0.9,
         );
 
@@ -752,7 +719,7 @@ mod tests {
 
     #[test]
     fn a_statement_sent_twice_keeps_its_charges_once() {
-        use spendyard::statement::{ChargeOutput, StatementOutput, assemble};
+        use spendyard_core::statement::{ChargeOutput, StatementOutput, assemble};
 
         let (mut store, dir) = temporary_store();
 
@@ -777,8 +744,8 @@ mod tests {
             ..StatementOutput::default()
         };
 
-        let mut result = spendyard::result::not_about_money(
-            spendyard::extract::schema::DocumentType::CardStatement,
+        let mut result = spendyard_core::result::not_about_money(
+            spendyard_core::extract::schema::DocumentType::CardStatement,
             0.9,
         );
 
@@ -793,7 +760,7 @@ mod tests {
             (b"second copy".to_vec(), whole),
             (b"an extract".to_vec(), extract),
         ] {
-            let document = spendyard::read(&bytes, None).unwrap();
+            let document = spendyard_core::read(&bytes, None).unwrap();
 
             result.statement = Some(assemble(vec![output]));
 

@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::Result;
-use spendyard::catalog::{self, Vendor};
+use spendyard_core::catalog::{self, Vendor};
 
 use super::config;
 use super::store::Store;

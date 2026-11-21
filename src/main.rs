@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 
 /// Reads receipts and invoices and works out what you're paying for.
 #[derive(Parser)]
-#[command(name = "spendyard", version = spendyard::VERSION, about)]
+#[command(name = "spendyard", version = spendyard_core::VERSION, about)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -730,8 +730,8 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
 }
 
 fn print_version() {
-    println!("spendyard {}", spendyard::VERSION);
-    println!("schema {}", spendyard::SCHEMA_VERSION);
+    println!("spendyard {}", spendyard_core::VERSION);
+    println!("schema {}", spendyard_core::SCHEMA_VERSION);
 }
 
 #[cfg(test)]

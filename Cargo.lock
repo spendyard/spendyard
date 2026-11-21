@@ -2985,15 +2985,11 @@ dependencies = [
  "async-imap",
  "async-trait",
  "base64",
- "cfb",
  "clap",
  "dotenvy",
  "futures-util",
- "html2text",
  "keyring",
- "lopdf 0.47.0",
  "mail-parser",
- "pdf-extract",
  "reqwest",
  "rmcp",
  "rpassword",
@@ -3004,10 +3000,54 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "thiserror 2.0.21",
+ "spendyard-core",
+ "spendyard-models",
  "tokio",
  "tokio-rustls",
  "toml",
+]
+
+[[package]]
+name = "spendyard-core"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "cfb",
+ "futures-util",
+ "html2text",
+ "lopdf 0.47.0",
+ "mail-parser",
+ "pdf-extract",
+ "rust_decimal",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml",
+ "web-time",
+]
+
+[[package]]
+name = "spendyard-models"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "base64",
+ "reqwest",
+ "serde_json",
+ "spendyard-core",
+ "tokio",
+]
+
+[[package]]
+name = "spendyard-wasm"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
+ "spendyard-core",
+ "wasm-bindgen",
 ]
 
 [[package]]

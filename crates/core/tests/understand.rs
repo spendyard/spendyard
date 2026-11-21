@@ -5,9 +5,11 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use serde_json::json;
-use spendyard::decide::{Answer, Decider, Decision, Image, Question};
-use spendyard::extract::{Accepts, ExtractError, Extractor, OutputFormat, Prompt, Reply, Usage};
-use spendyard::{Pipeline, read, understand};
+use spendyard_core::decide::{Answer, Decider, Decision, Image, Question};
+use spendyard_core::extract::{
+    Accepts, ExtractError, Extractor, OutputFormat, Prompt, Reply, Usage,
+};
+use spendyard_core::{Pipeline, read, understand};
 
 /// Returns a fixed answer and remembers the prompt it was given.
 struct Fake {
@@ -300,7 +302,7 @@ async fn an_unsure_first_model_hands_over_with_hints() {
         .expect("the extractor ran");
 
     let hints_sent = prompt.blocks.iter().any(|block| {
-        matches!(block, spendyard::extract::Block::Text(text) if text.contains("<first-model>"))
+        matches!(block, spendyard_core::extract::Block::Text(text) if text.contains("<first-model>"))
     });
 
     assert!(hints_sent);

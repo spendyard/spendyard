@@ -78,10 +78,13 @@ The binary is written in Rust.
   real-world MIME well, and there are pure-Rust crates for PDFs (§3.1).
 - **WebAssembly.** The core (reading, validation, model calls over HTTP)
   can compile to `wasm32` and run in a Cloudflare Worker. The cloud can then
-  run the exact same code that people run locally. Until the cloud work
-  starts, Spendyard is one crate (a library plus the CLI). The core moves
-  into its own WebAssembly-ready crate then; meanwhile filesystem, keychain
-  and terminal code stays out of the library.
+  run the exact same code that people run locally. So the repository is a
+  workspace: `spendyard-core` (no file, network, clock or OS; builds for
+  `wasm32`), `spendyard-models` (the providers over HTTP), `spendyard-wasm`
+  (the core for JavaScript, the npm package `@spendyard/core`) and the CLI.
+  Models are called from the host: the CLI through `spendyard-models`, the
+  cloud through Workers AI and AI Gateway, both with the core's prompts and
+  its parsing of the answers.
 - **Crates for the rest:** `clap` (CLI), `axum` (HTTP), `rmcp` (MCP),
   `reqwest`, `serde`, `schemars` (JSON Schema for structured output).
 
@@ -849,7 +852,8 @@ two people pushing the same forwarded receipt, adds it once. Details in
 ## 9. Vendor catalog
 
 One file per vendor in `vendors/`, named by the vendor's ID (its main
-domain), compiled into the binary by `build.rs`:
+domain), compiled into the core by `crates/core/build.rs`, so the CLI and the cloud's
+WebAssembly carry the same catalog:
 
 ```toml
 # vendors/anthropic.com.toml

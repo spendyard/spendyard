@@ -3,14 +3,14 @@
 use std::path::Path;
 
 use anyhow::Result;
-use spendyard::{Document, Part};
+use spendyard_core::{Document, Part};
 
 use super::input::read_input;
 
 pub fn run(input: &Path, json: bool, with_text: bool) -> Result<()> {
     let (bytes, name) = read_input(input)?;
 
-    let document = spendyard::read(&bytes, name.as_deref())?;
+    let document = spendyard_core::read(&bytes, name.as_deref())?;
 
     if json {
         let output = serde_json::to_string_pretty(&document)?;

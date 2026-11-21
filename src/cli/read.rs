@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use serde_json::json;
-use spendyard::ReadResult;
+use spendyard_core::ReadResult;
 
 use super::input::{for_each_as_done, read_input};
 use super::models::Models;
@@ -27,7 +27,7 @@ pub struct Options {
 /// A document read, with what's needed to keep it.
 struct Read {
     bytes: Vec<u8>,
-    document: spendyard::Document,
+    document: spendyard_core::Document,
     result: ReadResult,
 }
 
@@ -146,9 +146,9 @@ fn save(store: &mut Store, input: &Path, read: &Read) -> Result<()> {
 async fn read_one(input: &Path, models: &Models) -> Result<Read> {
     let (bytes, name) = read_input(input)?;
 
-    let document = spendyard::read(&bytes, name.as_deref())?;
+    let document = spendyard_core::read(&bytes, name.as_deref())?;
 
-    let result = spendyard::understand(&document, &models.pipeline()).await?;
+    let result = spendyard_core::understand(&document, &models.pipeline()).await?;
 
     Ok(Read {
         bytes,

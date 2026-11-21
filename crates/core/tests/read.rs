@@ -1,6 +1,6 @@
 //! Reading the fixtures in `tests/fixtures`.
 
-use spendyard::{Format, PartKind, read};
+use spendyard_core::{Format, PartKind, read};
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));

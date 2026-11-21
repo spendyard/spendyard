@@ -1,0 +1,22 @@
+# The core for a JavaScript host, through wasm-bindgen: what Spendyard Cloud's
+# Worker reads documents with. Built by scripts/build-wasm.sh into pkg/, the
+# npm package @spendyard/core.
+[package]
+name = "spendyard-wasm"
+description = "The Spendyard core for JavaScript: reads receipts and invoices in a Worker or a browser."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+spendyard-core.workspace = true
+serde_json.workspace = true
+wasm-bindgen = "=0.2.130"
+
+[lints]
+workspace = true

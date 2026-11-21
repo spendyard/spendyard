@@ -6,8 +6,8 @@
 //! decide what a document is and where to look, and the extractor reads
 //! names, amounts and dates.
 
+mod answers;
 mod questions;
-mod systemone;
 
 use std::collections::BTreeMap;
 
@@ -15,8 +15,8 @@ use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 
+pub use answers::parse_answers;
 pub use questions::{Question, images_for, questions_for, state_for};
-pub use systemone::parse_response as parse_answers;
 
 use crate::document::Document;
 use crate::extract::{ExtractError, Usage};
@@ -166,12 +166,6 @@ pub fn key_variable(provider: &str) -> Option<&'static str> {
         "systemone" => Some("SYSTEMONE_API_KEY"),
         _ => None,
     }
-}
-
-pub fn build(settings: Settings) -> Result<Box<dyn Decider>, ExtractError> {
-    let decider = systemone::SystemOne::new(settings)?;
-
-    Ok(Box::new(decider))
 }
 
 /// How sure the first model must be that a document is not about money

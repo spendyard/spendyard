@@ -124,6 +124,11 @@ cargo build --release
 
 The binary is `target/release/spendyard`.
 
+The reading itself is a library, `spendyard-core` in `crates/core`, which
+also builds for WebAssembly: `scripts/build-wasm.sh` makes it the npm package
+`@spendyard/core` (in `crates/wasm/pkg`), which Spendyard Cloud reads
+documents with.
+
 ## Licence
 
 [Apache 2.0](LICENSE).

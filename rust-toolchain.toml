@@ -1,3 +1,5 @@
 [toolchain]
 channel = "stable"
 components = ["rustfmt", "clippy"]
+# The core also builds for WebAssembly, for Spendyard Cloud (crates/wasm).
+targets = ["wasm32-unknown-unknown"]

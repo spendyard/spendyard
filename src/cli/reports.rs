@@ -57,7 +57,7 @@ fn rows(store: &Store) -> Result<Vec<Row>> {
          ORDER BY 2 DESC, d.id DESC",
     )?;
 
-    let catalog = spendyard::catalog::catalog();
+    let catalog = spendyard_core::catalog::catalog();
 
     let mapped = statement.query_map([], |row| {
         let vendor_id: Option<String> = row.get(5)?;
@@ -70,7 +70,7 @@ fn rows(store: &Store) -> Result<Vec<Row>> {
 
             None => match catalog.find(vendor_id.as_deref(), Some(&read_name)) {
                 Some(vendor) => (vendor.id.clone(), vendor.name.clone()),
-                None => (spendyard::catalog::name_key(&read_name), read_name),
+                None => (spendyard_core::catalog::name_key(&read_name), read_name),
             },
         };
 
@@ -102,10 +102,10 @@ fn rows(store: &Store) -> Result<Vec<Row>> {
 
 /// The grouping key for a name: the catalog ID when the catalog knows the
 /// name, else the name without legal suffixes.
-fn catalog_key(catalog: &spendyard::catalog::Catalog, id: Option<&str>, name: &str) -> String {
+fn catalog_key(catalog: &spendyard_core::catalog::Catalog, id: Option<&str>, name: &str) -> String {
     match catalog.find(id, Some(name)) {
         Some(vendor) => vendor.id.clone(),
-        None => spendyard::catalog::name_key(name),
+        None => spendyard_core::catalog::name_key(name),
     }
 }
 

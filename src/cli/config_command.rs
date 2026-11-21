@@ -60,11 +60,11 @@ pub fn show(env_files: &[std::path::PathBuf]) -> Result<()> {
         .model
         .clone()
         .unwrap_or_else(|| match extractor.provider.as_str() {
-            "anthropic" => spendyard::extract::DEFAULT_ANTHROPIC_MODEL.to_string(),
+            "anthropic" => spendyard_core::extract::DEFAULT_ANTHROPIC_MODEL.to_string(),
             _ => "(none set)".to_string(),
         });
 
-    let key = spendyard::extract::key_variable(&extractor.provider).unwrap_or("-");
+    let key = spendyard_core::extract::key_variable(&extractor.provider).unwrap_or("-");
 
     let key_set = extractor.api_key.is_some() || extractor.auth_token.is_some();
 
@@ -76,7 +76,7 @@ pub fn show(env_files: &[std::path::PathBuf]) -> Result<()> {
 
     match config::decider_settings(&config, None) {
         Some(decider) => {
-            let key = spendyard::decide::key_variable(&decider.provider).unwrap_or("-");
+            let key = spendyard_core::decide::key_variable(&decider.provider).unwrap_or("-");
 
             println!();
             println!(

@@ -1,8 +1,8 @@
 //! Human-readable summaries for `--pretty`.
 
 use serde::Serialize;
-use spendyard::ReadResult;
-use spendyard::statement::{ChargeKind, Statement};
+use spendyard_core::ReadResult;
+use spendyard_core::statement::{ChargeKind, Statement};
 
 /// A serde enum as the word it serializes to: `BillingModel::OneTime` →
 /// `one_time`.

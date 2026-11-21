@@ -6,10 +6,22 @@ milestones are in §12 there.
 
 ## Layout
 
-One crate for now: `src/lib.rs` is the library (everything about a single
-document), `src/main.rs` the CLI. Keep filesystem, keychain and terminal
-code out of the library. It moves into its own WebAssembly-ready crate when
-the cloud work starts.
+A Cargo workspace:
+
+- `crates/core` (`spendyard-core`): everything about a single document:
+  reading it, the vendor catalog (`vendors/`, compiled in by its `build.rs`),
+  money, statements, prompts and parsing models' answers, the result and
+  checking it, the rows a store keeps. No file, network, clock or OS: it
+  builds for `wasm32-unknown-unknown`, because Spendyard Cloud runs it in a
+  Worker. The test fixtures are its, in `crates/core/tests/fixtures`.
+- `crates/models` (`spendyard-models`): the model providers over HTTP.
+- `crates/wasm` (`spendyard-wasm`): the core for JavaScript, built by
+  `scripts/build-wasm.sh` into the npm package `@spendyard/core`.
+- `src/` (`spendyard`): the CLI: commands, the local store, mailboxes, the
+  keychain, MCP.
+
+Keep filesystem, keychain, terminal and network code out of the core. If
+something in it won't build for `wasm32-unknown-unknown`, CI says so.
 
 ## Code style
 
@@ -26,9 +38,11 @@ Readable over clever. Give the code room:
 ## Checks
 
 ```bash
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo build -p spendyard-core --target wasm32-unknown-unknown
+scripts/build-wasm.sh && node crates/wasm/tests/compare.mjs   # the core as WebAssembly reads as native does
 ```
 
 Commit straight to `main`.

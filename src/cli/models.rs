@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use spendyard::{Decider, Extractor, Pipeline};
+use spendyard_core::{Decider, Extractor, Pipeline};
 
 use super::config::{self, Config};
 use super::exec::Exec;
@@ -20,7 +20,7 @@ pub fn extractor(config: &Config, flag: Option<&str>) -> Result<Arc<dyn Extracto
         return Ok(Arc::new(exec));
     }
 
-    Ok(Arc::from(spendyard::extract::build(settings)?))
+    Ok(Arc::from(spendyard_models::extract::build(settings)?))
 }
 
 /// The first model `flag` (or the config) names, if any.
@@ -35,7 +35,7 @@ pub fn decider(config: &Config, flag: Option<&str>) -> Result<Option<Arc<dyn Dec
         return Ok(Some(Arc::new(exec)));
     }
 
-    Ok(Some(Arc::from(spendyard::decide::build(settings)?)))
+    Ok(Some(Arc::from(spendyard_models::decide::build(settings)?)))
 }
 
 /// Both models and the threshold, shared between tasks.

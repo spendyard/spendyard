@@ -34,8 +34,43 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --all-targets --locked
+        run: cargo clippy --workspace --all-targets --locked
 
       - name: Test
-        run: cargo test --locked
+        run: cargo test --workspace --locked
+
+  wasm:
+    name: WebAssembly
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The core must keep building without files, network, a clock or the OS: Spendyard Cloud runs it in a Worker.
+      - name: Build the core for wasm32
+        run: cargo build -p spendyard-core -p spendyard-wasm --target wasm32-unknown-unknown --locked
+
+      # At the version crates/wasm pins.
+      - name: Install wasm-bindgen
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen@0.2.130
+
+      - name: Install wasm-opt
+        run: sudo apt-get install -y binaryen
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Build @spendyard/core
+        run: scripts/build-wasm.sh
+
+      - name: Read every fixture both ways
+        run: node crates/wasm/tests/compare.mjs
 

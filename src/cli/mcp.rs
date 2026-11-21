@@ -19,7 +19,7 @@ use rmcp::{
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
-use spendyard::Document;
+use spendyard_core::Document;
 
 use super::models::Models;
 
@@ -86,7 +86,7 @@ impl Server {
             Err(message) => return Ok(failure(message)),
         };
 
-        match spendyard::understand(&document, &self.models.pipeline()).await {
+        match spendyard_core::understand(&document, &self.models.pipeline()).await {
             Ok(result) => success(&serde_json::to_value(&result).unwrap_or_default()),
             Err(error) => Ok(failure(error.to_string())),
         }
@@ -110,7 +110,8 @@ impl Server {
             Err(message) => return Ok(failure(message)),
         };
 
-        let Some(decision) = spendyard::decide::decide(&document, decider.as_ref()).await else {
+        let Some(decision) = spendyard_core::decide::decide(&document, decider.as_ref()).await
+        else {
             return Ok(failure(
                 "nothing this model can read: no text, and no images it accepts".to_string(),
             ));
@@ -240,7 +241,7 @@ fn load(input: &DocumentInput) -> Result<Document, String> {
         _ => return Err("give either path or base64, not both and not neither".to_string()),
     };
 
-    spendyard::read(&bytes, name.as_deref()).map_err(|error| error.to_string())
+    spendyard_core::read(&bytes, name.as_deref()).map_err(|error| error.to_string())
 }
 
 fn success(value: &Value) -> Result<CallToolResult, McpError> {

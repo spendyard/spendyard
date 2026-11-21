@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use serde_json::json;
-use spendyard::Decider;
-use spendyard::decide::{Answer, Decision};
+use spendyard_core::Decider;
+use spendyard_core::decide::{Answer, Decision};
 
 use super::config;
 use super::input::{for_each, read_input};
@@ -68,9 +68,9 @@ pub async fn run(options: Options) -> Result<usize> {
 async fn decide_one(input: &std::path::Path, decider: &dyn Decider) -> Result<Decision> {
     let (bytes, name) = read_input(input)?;
 
-    let document = spendyard::read(&bytes, name.as_deref())?;
+    let document = spendyard_core::read(&bytes, name.as_deref())?;
 
-    match spendyard::decide::decide(&document, decider).await {
+    match spendyard_core::decide::decide(&document, decider).await {
         Some(decision) => Ok(decision?),
         None => bail!("nothing this model can read: no text, and no images it accepts"),
     }

@@ -6,15 +6,16 @@
 //! - `clef`, `clef-flash`: Cloudflare Workers AI over REST. Takes images.
 //! - `systemone`: a self-hosted server (SGLang, llama.cpp) at `base_url`.
 
-use std::collections::BTreeMap;
-
 use async_trait::async_trait;
 use base64::Engine;
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::{Map, Value, json};
 
-use super::{Answer, Decider, Decision, Image, Question, Settings};
-use crate::extract::{ExtractError, Usage, http};
+use spendyard_core::decide::parse_answers as parse_response;
+use spendyard_core::extract::ExtractError;
+
+use super::{Decider, Decision, Image, Question, Settings};
+use crate::extract::http;
 
 const TYPESAFE_URL: &str = "https://api.typesafe.ai";
 const DEFAULT_JEV_MODEL: &str = "jev-latest";
@@ -189,73 +190,6 @@ impl Decider for SystemOne {
 
         parse_response(&response, &self.model)
     }
-}
-
-/// Reads answers in the JEV response format. Also used by deciders
-/// outside this module, such as the CLI's `exec` provider.
-pub fn parse_response(response: &Value, asked_for: &str) -> Result<Decision, ExtractError> {
-    // Cloudflare's REST API wraps results in { "result": …, "success": … }.
-    let body = match response.get("result") {
-        Some(result) if result.get("answers").is_some() => result,
-        _ => response,
-    };
-
-    let Some(raw_answers) = body["answers"].as_object() else {
-        return Err(ExtractError::InvalidOutput(
-            "no answers in the response".to_string(),
-        ));
-    };
-
-    let mut answers = BTreeMap::new();
-
-    for (name, raw) in raw_answers {
-        let answer = match raw["type"].as_str() {
-            Some("choice") => {
-                let probabilities: BTreeMap<String, f64> = raw["probabilities"]
-                    .as_object()
-                    .map(|map| {
-                        map.iter()
-                            .filter_map(|(option, p)| p.as_f64().map(|p| (option.clone(), p)))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                let choice = raw["choice"].as_str().unwrap_or_default().to_string();
-
-                Answer::Choice {
-                    choice,
-                    probabilities,
-                }
-            }
-
-            Some("noul") => Answer::YesNo {
-                yes: raw["noul"].as_f64().unwrap_or(0.5).clamp(0.0, 1.0),
-            },
-
-            _ => continue,
-        };
-
-        answers.insert(name.clone(), answer);
-    }
-
-    let usage = Usage {
-        input: body
-            .pointer("/usage/input_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-        output: body
-            .pointer("/usage/output_tokens")
-            .and_then(Value::as_u64)
-            .unwrap_or(0),
-    };
-
-    let decision = Decision {
-        answers,
-        model: body["model"].as_str().unwrap_or(asked_for).to_string(),
-        usage,
-    };
-
-    Ok(decision)
 }
 
 #[cfg(test)]

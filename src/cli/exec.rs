@@ -29,8 +29,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use base64::Engine;
 use serde_json::{Map, Value, json};
-use spendyard::decide::{Decider, Decision, Image, Question};
-use spendyard::extract::{
+use spendyard_core::decide::{Decider, Decision, Image, Question};
+use spendyard_core::extract::{
     Accepts, Block, ExtractError, Extractor, OutputFormat, Prompt, Reply, Usage,
 };
 use tokio::io::AsyncWriteExt;
@@ -244,7 +244,7 @@ impl Decider for Exec {
 
         let answer = self.call(&request).await?;
 
-        spendyard::decide::parse_answers(&answer, &self.label())
+        spendyard_core::decide::parse_answers(&answer, &self.label())
     }
 }
 
@@ -268,7 +268,8 @@ mod tests {
 
     #[tokio::test]
     async fn extracts_through_a_command() {
-        let output = serde_json::to_string(&spendyard::extract::ModelOutput::default()).unwrap();
+        let output =
+            serde_json::to_string(&spendyard_core::extract::ModelOutput::default()).unwrap();
 
         // Reads the request, checks it, and prints a wrapped answer.
         let script = format!(

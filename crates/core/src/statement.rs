@@ -6,7 +6,7 @@
 //! states, and the original amount times the bank's rate for each foreign
 //! charge. A group whose charges don't add up is read again once.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use futures_util::future::join_all;
 use rust_decimal::Decimal;

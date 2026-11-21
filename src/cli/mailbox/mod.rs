@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::{Value, json};
-use spendyard::ReadResult;
+use spendyard_core::ReadResult;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
@@ -148,7 +148,7 @@ pub struct Scanned {
 /// A message read: its bytes and document, kept to save in the store.
 struct Read {
     mime: Vec<u8>,
-    document: spendyard::Document,
+    document: spendyard_core::Document,
     result: ReadResult,
 }
 
@@ -502,9 +502,9 @@ async fn read_message(
         std::fs::write(dir.join(name), &mime)?;
     }
 
-    let document = spendyard::read(&mime, None)?;
+    let document = spendyard_core::read(&mime, None)?;
 
-    let result = spendyard::understand(&document, &models.pipeline()).await?;
+    let result = spendyard_core::understand(&document, &models.pipeline()).await?;
 
     Ok(Read {
         mime,

@@ -7,11 +7,14 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    let dir = Path::new("vendors");
+    // The repository's vendors/, two levels up from this crate.
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets CARGO_MANIFEST_DIR");
 
-    println!("cargo:rerun-if-changed=vendors");
+    let dir = Path::new(&manifest).join("../../vendors");
 
-    let mut files: Vec<_> = fs::read_dir(dir)
+    println!("cargo:rerun-if-changed={}", dir.display());
+
+    let mut files: Vec<_> = fs::read_dir(&dir)
         .expect("a vendors/ folder")
         .map(|entry| entry.expect("a readable entry").path())
         .filter(|path| {

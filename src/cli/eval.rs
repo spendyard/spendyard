@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value, json};
-use spendyard::eval::{self, FIELDS, Outcome, Tally};
-use spendyard::{Decider, Extractor, Pipeline, ReadResult};
+use spendyard_core::eval::{self, FIELDS, Outcome, Tally};
+use spendyard_core::{Decider, Extractor, Pipeline, ReadResult};
 
 use super::config;
 use super::input::for_each;
@@ -83,7 +83,7 @@ async fn run_pipeline(
         .file_name()
         .map(|name| name.to_string_lossy().into_owned());
 
-    let document = spendyard::read(&bytes, name.as_deref())?;
+    let document = spendyard_core::read(&bytes, name.as_deref())?;
 
     let pipeline = Pipeline {
         decider,
@@ -91,7 +91,7 @@ async fn run_pipeline(
         threshold,
     };
 
-    let result = spendyard::understand(&document, &pipeline).await?;
+    let result = spendyard_core::understand(&document, &pipeline).await?;
 
     Ok(result)
 }

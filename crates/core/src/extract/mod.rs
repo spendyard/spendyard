@@ -1,13 +1,10 @@
 //! The capable second model: reads a document and fills in [`ModelOutput`].
 //!
-//! Providers are compiled in. Each one turns a provider-neutral [`Prompt`]
-//! into its own request and its response back into [`ModelOutput`].
+//! The providers are spendyard-models': each turns a provider-neutral
+//! [`Prompt`] into its own request and its response back into
+//! [`ModelOutput`]. A host can call a model itself (the cloud does) with the
+//! same prompt, and read its answer with [`parse_output`].
 
-mod anthropic;
-mod gemini;
-pub(crate) mod http;
-mod openai;
-mod openai_compatible;
 pub mod prompt;
 pub mod schema;
 
@@ -158,23 +155,10 @@ pub struct Settings {
 pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-haiku-5-5";
 
 /// Generous enough for an invoice with many lines.
-const DEFAULT_MAX_TOKENS: u32 = 16_000;
+pub const DEFAULT_MAX_TOKENS: u32 = 16_000;
 
 /// Every provider's name, for help text and errors.
 pub const PROVIDERS: &[&str] = &["anthropic", "openai", "gemini", "openai-compatible"];
-
-/// Builds the extractor `settings` describe.
-pub fn build(settings: Settings) -> Result<Box<dyn Extractor>, ExtractError> {
-    let extractor: Box<dyn Extractor> = match settings.provider.as_str() {
-        "anthropic" => Box::new(anthropic::Anthropic::new(settings)?),
-        "openai" => Box::new(openai::OpenAi::new(settings)?),
-        "gemini" => Box::new(gemini::Gemini::new(settings)?),
-        "openai-compatible" => Box::new(openai_compatible::OpenAiCompatible::new(settings)?),
-        other => return Err(ExtractError::UnknownProvider(other.to_string())),
-    };
-
-    Ok(extractor)
-}
 
 /// The environment variable each provider's key is read from.
 pub fn key_variable(provider: &str) -> Option<&'static str> {
@@ -204,15 +188,18 @@ pub fn parse_json<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, Extra
     serde_json::from_str(trimmed).map_err(|error| ExtractError::InvalidOutput(error.to_string()))
 }
 
-fn base64(bytes: &[u8]) -> String {
+/// Bytes as standard base64, for images and PDFs in a request.
+pub fn base64(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-fn data_url(mime: &str, bytes: &[u8]) -> String {
+/// Bytes as a `data:` URL, for providers that take files that way.
+pub fn data_url(mime: &str, bytes: &[u8]) -> String {
     format!("data:{mime};base64,{}", base64(bytes))
 }
 
-fn required_model(settings: &Settings) -> Result<String, ExtractError> {
+/// The model `settings` name, or an error saying how to name one.
+pub fn required_model(settings: &Settings) -> Result<String, ExtractError> {
     let model = settings.model.clone().filter(|model| !model.is_empty());
 
     model.ok_or_else(|| {
@@ -223,7 +210,8 @@ fn required_model(settings: &Settings) -> Result<String, ExtractError> {
     })
 }
 
-fn required_key(settings: &Settings) -> Result<String, ExtractError> {
+/// The API key in `settings`, or an error naming the variable it comes from.
+pub fn required_key(settings: &Settings) -> Result<String, ExtractError> {
     let variable = key_variable(&settings.provider).unwrap_or("the API key");
 
     let key = settings.api_key.clone().filter(|key| !key.is_empty());
@@ -242,30 +230,5 @@ mod tests {
         assert!(parse_output(&json).is_ok());
         assert!(parse_output(&format!("```json\n{json}\n```")).is_ok());
         assert!(parse_output("not json").is_err());
-    }
-
-    #[test]
-    fn providers_need_keys_and_models() {
-        let missing_key = build(Settings {
-            provider: "anthropic".to_string(),
-            ..Settings::default()
-        });
-
-        assert!(matches!(missing_key, Err(ExtractError::MissingKey(_))));
-
-        let missing_model = build(Settings {
-            provider: "openai".to_string(),
-            api_key: Some("sk-test".to_string()),
-            ..Settings::default()
-        });
-
-        assert!(matches!(missing_model, Err(ExtractError::Config(_))));
-
-        let unknown = build(Settings {
-            provider: "nope".to_string(),
-            ..Settings::default()
-        });
-
-        assert!(matches!(unknown, Err(ExtractError::UnknownProvider(_))));
     }
 }
