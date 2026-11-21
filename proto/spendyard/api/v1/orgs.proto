@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "buf/validate/validate.proto";
+import "spendyard/api/v1/model.proto";
+
+// OrgService creates organisations and moves between them. Every other
+// service acts in the session's active organisation.
+service OrgService {
+  // CreateOrg creates an organisation with the caller as its owner, and
+  // makes it the session's active one.
+  rpc CreateOrg(CreateOrgRequest) returns (CreateOrgResponse);
+  // SwitchOrg makes another of the caller's organisations the active one for
+  // this session. NOT_FOUND when they're not in it.
+  rpc SwitchOrg(SwitchOrgRequest) returns (SwitchOrgResponse);
+}
+
+message CreateOrgRequest {
+  // The company's name: "Fjordtech AS". Its slug comes from it.
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 80
+  }];
+}
+
+message CreateOrgResponse {
+  Org org = 1;
+}
+
+message SwitchOrgRequest {
+  string org_id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message SwitchOrgResponse {
+  Org org = 1;
+}

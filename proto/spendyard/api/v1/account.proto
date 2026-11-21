@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "buf/validate/validate.proto";
+import "spendyard/api/v1/model.proto";
+
+// AccountService is the signed-in person's own account. It follows them
+// across organisations.
+service AccountService {
+  // GetMe returns who's calling, their organisations, and the one this
+  // session acts in.
+  rpc GetMe(GetMeRequest) returns (GetMeResponse);
+  // UpdateProfile changes what the caller is called.
+  rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse);
+}
+
+message GetMeRequest {}
+
+message GetMeResponse {
+  User user = 1;
+  repeated Org orgs = 2;
+  // The organisation this session acts in; empty when they're in none yet.
+  string active_org_id = 3;
+}
+
+message UpdateProfileRequest {
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 80
+  }];
+}
+
+message UpdateProfileResponse {
+  User user = 1;
+}

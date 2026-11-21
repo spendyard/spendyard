@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+// User is someone who signs in to Spendyard Cloud.
+message User {
+  string id = 1;
+  string email = 2;
+  // What they're called; their email until they say.
+  string name = 3;
+  // A picture from the provider they signed in with, if any.
+  string image_url = 4;
+}
+
+// Role is what someone may do in an organisation.
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  // Everything, billing and handing the organisation on among it.
+  ROLE_OWNER = 1;
+  // Everything but Spendyard's own billing.
+  ROLE_ADMIN = 2;
+  // Their own receipts and the tools they own.
+  ROLE_MEMBER = 3;
+  // Every receipt and export, read-only. Usually from outside the company.
+  ROLE_ACCOUNTANT = 4;
+}
+
+// Org is a company on Spendyard Cloud, with one shared store of receipts.
+message Org {
+  string id = 1;
+  // In addresses: "fjordtech".
+  string slug = 2;
+  string name = 3;
+  // The caller's role in it.
+  Role role = 4;
+}

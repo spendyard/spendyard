@@ -1,0 +1,13 @@
+version: v2
+modules:
+  # The spendyard.api.v1 contract between the CLI and Spendyard Cloud: this
+  # folder, so imports are spendyard/api/v1/.... The platform
+  # (../platform/proto/buf.gen.yaml) generates its TypeScript from here.
+  - path: .
+    name: buf.build/spendyard/spendyard
+deps:
+  - buf.build/bufbuild/protovalidate
+lint:
+  use: [STANDARD]
+breaking:
+  use: [FILE]
