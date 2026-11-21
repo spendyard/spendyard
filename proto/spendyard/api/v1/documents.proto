@@ -14,6 +14,9 @@ import "spendyard/api/v1/options.proto";
 // through the API: CreateDocumentUpload gives a URL to PUT a file to,
 // AddDocument takes it in, GetDocumentOriginal gives a URL to download one
 // from.
+//
+// What was read is ReceiptService's: the receipts and invoices, checking
+// them, correcting them.
 service DocumentService {
   // ListDocuments lists the documents, newest first, a page at a time. A
   // member sees the ones they added; the owner, admins and an accountant see
@@ -87,6 +90,16 @@ message Document {
   string total = 12;
   string currency = 13;
   string date = 14;
+  // What it is, as its reading says; unset until it's read.
+  DocumentType type = 15;
+}
+
+// Which documents ListDocuments lists.
+enum DocumentFilter {
+  // All of them.
+  DOCUMENT_FILTER_UNSPECIFIED = 0;
+  // Those that couldn't be read.
+  DOCUMENT_FILTER_FAILED = 1;
 }
 
 message ListDocumentsRequest {
@@ -97,6 +110,9 @@ message ListDocumentsRequest {
   }];
   // The page after another: the last id it ended with.
   int64 before_id = 2;
+  DocumentFilter filter = 3;
+  // Only those whose name or sender holds this, whatever its case.
+  string query = 4 [(buf.validate.field).string.max_len = 200];
 }
 
 message ListDocumentsResponse {
@@ -151,3 +167,19 @@ message GetDocumentOriginalResponse {
   string url = 1;
 }
 
+// What a document is, as its reading says: the CLI's document types.
+enum DocumentType {
+  DOCUMENT_TYPE_UNSPECIFIED = 0;
+  // Proof that a payment was made.
+  DOCUMENT_TYPE_RECEIPT = 1;
+  // A request for payment, paid or not.
+  DOCUMENT_TYPE_INVOICE = 2;
+  // Says a charge is coming; nothing has been paid.
+  DOCUMENT_TYPE_RENEWAL_NOTICE = 3;
+  // A payment that didn't go through.
+  DOCUMENT_TYPE_PAYMENT_FAILED = 4;
+  // A card issuer's statement of many charges.
+  DOCUMENT_TYPE_CARD_STATEMENT = 5;
+  // Anything else: a newsletter, a login code, a quote.
+  DOCUMENT_TYPE_OTHER = 6;
+}

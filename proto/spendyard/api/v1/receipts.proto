@@ -1,0 +1,378 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "spendyard/api/v1/documents.proto";
+import "spendyard/api/v1/options.proto";
+
+// ReceiptService is the active organisation's receipts: what was read from
+// its documents (DocumentService) about money, and checking it. As the CLI's
+// `spendyard receipts` has them: receipts, invoices (paid or due), renewal
+// notices and failed payments. Only what was paid is spend: a receipt, or a
+// paid invoice (`paid`). Quotes, trial endings and card statements aren't
+// receipts. A receipt is one document's newest reading, with
+// corrections by hand over it, and is named by its document's id.
+//
+// Checking: GetReceipt gives one whole, with the quote behind each value and
+// what the checks flagged; ConfirmReceipt says it's right; UpdateReceipt
+// corrects it. ListReceipts with RECEIPT_FILTER_NEEDS_REVIEW is the review
+// queue.
+//
+// A member sees the receipts from documents they added; the owner, admins and
+// an accountant see them all. An accountant checks nothing.
+service ReceiptService {
+  // ListReceipts lists the receipts, newest issued first, a page at a time.
+  rpc ListReceipts(ListReceiptsRequest) returns (ListReceiptsResponse) {
+    option (spendyard.api.v1.permission) = "receipts:read";
+  }
+  // GetReceipt gives one receipt whole: what was read, the quote behind each
+  // value, what the checks flagged, its document's parts' text to find the
+  // quotes in, how it was corrected and who confirmed it. NOT_FOUND when it
+  // isn't the caller's to see, or its document hasn't been read.
+  rpc GetReceipt(GetReceiptRequest) returns (GetReceiptResponse) {
+    option (spendyard.api.v1.permission) = "receipts:read";
+  }
+  // ConfirmReceipt says a receipt is right, as read or as corrected: it
+  // leaves the review queue. Its document read again puts it back, when the
+  // new reading is flagged. NOT_FOUND when it isn't the caller's.
+  rpc ConfirmReceipt(ConfirmReceiptRequest) returns (ConfirmReceiptResponse) {
+    option (spendyard.api.v1.permission) = "receipts:write";
+  }
+  // UpdateReceipt corrects a receipt by hand: the fields given, the rest as
+  // they were. A correction stays when its document is read again.
+  // NOT_FOUND when it isn't the caller's.
+  rpc UpdateReceipt(UpdateReceiptRequest) returns (UpdateReceiptResponse) {
+    option (spendyard.api.v1.permission) = "receipts:write";
+  }
+}
+
+// Receipt is one receipt as lists show it: who it's from, when, how much,
+// and where it stands in being checked.
+message Receipt {
+  // Its document's id: a receipt is one document's reading.
+  int64 document_id = 1;
+  // What its document is: a receipt, an invoice, a renewal notice, a failed
+  // payment; in the review queue, anything else read with flags.
+  DocumentType document_type = 2;
+  // The vendor's ID, as corrected if it was: its catalog ID when the catalog
+  // knows it, else the domain the receipt shows. For its icon.
+  string vendor_id = 3;
+  // The vendor's name, as corrected if it was.
+  string vendor_name = 4;
+  // The day it was issued, or arrived when it doesn't say: YYYY-MM-DD.
+  string date = 5;
+  // The total, a plain decimal (`1234.50`), and its currency.
+  string total = 6;
+  string currency = 7;
+  // Where its document came from: `upload:<user id>`, `forward:<address>`,
+  // `cli:<machine>`, later `outlook:`, `gmail:`, `imap:`.
+  string source = 8;
+  // Its document's name: the file's, or the mail's subject.
+  string name = 9;
+  // The card it was paid with, its last four digits.
+  string card_last4 = 10;
+  // How many things the checks flagged.
+  int32 flags = 11;
+  // Confirmed: it isn't waiting for review.
+  bool confirmed = 12;
+  // Marked by hand as personal, or as not spend at all.
+  bool personal = 13;
+  bool ignored = 14;
+  PaymentStatus status = 15;
+  // Money was paid: a receipt, or a paid invoice. Only these are spend.
+  bool paid = 16;
+}
+
+// Which kind of receipts ListReceipts lists.
+enum ReceiptKind {
+  // All of them.
+  RECEIPT_KIND_UNSPECIFIED = 0;
+  // What was paid: receipts, and paid invoices. The spend.
+  RECEIPT_KIND_PAID = 1;
+  // Invoices not paid yet.
+  RECEIPT_KIND_DUE = 2;
+  // Renewal notices and failed payments: a charge coming, or one that
+  // didn't go through.
+  RECEIPT_KIND_NOTICE = 3;
+}
+
+// Which receipts ListReceipts lists.
+enum ReceiptFilter {
+  // The receipts.
+  RECEIPT_FILTER_UNSPECIFIED = 0;
+  // The review queue: every reading with something flagged, not confirmed
+  // and not set aside, money or not (a receipt misread as something else
+  // is checked too).
+  RECEIPT_FILTER_NEEDS_REVIEW = 1;
+}
+
+message ListReceiptsRequest {
+  // At most this many; 50 when unset.
+  int32 page_size = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 500
+  }];
+  // The page after another: the last one's next_page_token.
+  string page_token = 2 [(buf.validate.field).string.max_len = 100];
+  ReceiptFilter filter = 3;
+  // Only those whose vendor, name or sender holds this, whatever its case.
+  string query = 4 [(buf.validate.field).string.max_len = 200];
+  // Only this vendor's: Receipt.vendor_id.
+  string vendor_id = 5 [(buf.validate.field).string.max_len = 200];
+  // Only those dated from and to these days, YYYY-MM-DD, both included.
+  string from = 6 [(buf.validate.field).string.pattern = "^(\\d{4}-\\d{2}-\\d{2})?$"];
+  string to = 7 [(buf.validate.field).string.pattern = "^(\\d{4}-\\d{2}-\\d{2})?$"];
+  ReceiptKind kind = 8;
+}
+
+message ListReceiptsResponse {
+  repeated Receipt receipts = 1;
+  // For the page after this one; empty when this is the last.
+  string next_page_token = 2;
+}
+
+message GetReceiptRequest {
+  int64 document_id = 1 [(buf.validate.field).int64.gt = 0];
+}
+
+message GetReceiptResponse {
+  Receipt receipt = 1;
+  // The document it was read from.
+  Document document = 2;
+  // What was read.
+  Reading reading = 3;
+  // The document's parts, as the reading numbers them, with their text:
+  // where the evidence's quotes are found. Empty when its original isn't
+  // kept.
+  repeated DocumentPart parts = 4;
+  // A URL to show the original in the page, good for a few minutes: for a
+  // PDF or a picture only, empty otherwise.
+  string preview_url = 5;
+  // Its corrections by hand; unset when there are none.
+  ReceiptEdit edit = 6;
+  // Who confirmed it, and when; unset until someone has.
+  ReceiptConfirmation confirmation = 7;
+}
+
+// DocumentPart is one part of a document: the mail's body, an attachment,
+// the PDF itself.
+message DocumentPart {
+  // Its position, as evidence names it.
+  int32 index = 1;
+  // `body`, `attachment:Invoice.pdf`, `forwarded:1/attachment:Invoice.pdf`.
+  string label = 2;
+  // `text`, `html`, `pdf`, `image`, `other`.
+  string kind = 3;
+  string mime = 4;
+  // Its plain text: the text itself, HTML as text, a PDF's text layer. Empty
+  // for pictures and for PDFs without one.
+  string text = 5;
+  // Its pages, for a PDF.
+  int32 pages = 6;
+}
+
+// Reading is what was read from a document, as the CLI's `spendyard read`
+// gives it: amounts are plain decimals (`1234.50`), days YYYY-MM-DD.
+message Reading {
+  // What the document is.
+  DocumentType document_type = 1;
+  // Money was paid: a receipt, or a paid invoice.
+  bool is_receipt = 2;
+  bool is_invoice = 3;
+  PaymentStatus status = 4;
+  // The model's own confidence, 0 to 1. Not calibrated.
+  double confidence = 5;
+  ReadVendor vendor = 6;
+  ReadAmount amount = 7;
+  ReadBilling billing = 8;
+  repeated ReadLine lines = 9;
+  repeated ReadPayment payments = 10;
+  string invoice_number = 11;
+  string receipt_number = 12;
+  string issued = 13;
+  // The quote behind each value, keyed by field path: `vendor.name`,
+  // `amount.total`, `lines[0].amount`.
+  map<string, Evidence> evidence = 14;
+  // What the checks found wrong or doubtful. Empty is good.
+  repeated Flag flags = 15;
+  // Problems reading the input, such as parts that couldn't be sent.
+  repeated string warnings = 16;
+  // Which models read it, `provider/model`, and when.
+  string extractor = 17;
+  string model = 18;
+  string decider = 19;
+  google.protobuf.Timestamp read_at = 20;
+}
+
+message ReadVendor {
+  string id = 1;
+  string name = 2;
+  // The name as printed, when it differs from `name`.
+  string legal_name = 3;
+  string category = 4;
+  // Found in the vendor catalog.
+  bool known = 5;
+  // Who took the payment for it: `stripe`, `paddle`.
+  string processor = 6;
+  string account_email = 7;
+  string account_workspace = 8;
+  string account_customer_id = 9;
+}
+
+message ReadAmount {
+  string total = 1;
+  string subtotal = 2;
+  string tax = 3;
+  string currency = 4;
+}
+
+message ReadBilling {
+  BillingModel model = 1;
+  Interval interval = 2;
+  string period_start = 3;
+  string period_end = 4;
+  string next_renewal = 5;
+}
+
+message ReadLine {
+  LineKind kind = 1;
+  string product = 2;
+  string plan = 3;
+  string description = 4;
+  double quantity = 5;
+  string unit = 6;
+  string unit_price = 7;
+  string amount = 8;
+  Interval interval = 9;
+}
+
+message ReadPayment {
+  PaymentMethod method = 1;
+  string brand = 2;
+  string last4 = 3;
+  string amount = 4;
+}
+
+// Evidence is the quote behind one value.
+message Evidence {
+  string quote = 1;
+  // The part it's from: DocumentPart.index.
+  int32 part = 2;
+  // The quote was found in the part's text. False when it wasn't, or the
+  // part has no text to check against (a picture).
+  bool checked = 3;
+}
+
+// Flag is one thing the checks found wrong or doubtful.
+message Flag {
+  // A stable code, such as `totals_dont_add_up`.
+  string code = 1;
+  // The field it's about, as evidence names fields; empty for the whole.
+  string field = 2;
+  string message = 3;
+}
+
+// ReceiptEdit is how a receipt was corrected by hand.
+message ReceiptEdit {
+  // The vendor as it should be; empty when the reading's stands.
+  string vendor_name = 1;
+  bool personal = 2;
+  bool ignored = 3;
+  string note = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+message ReceiptConfirmation {
+  // Who confirmed it: their name, or their email without one.
+  string confirmed_by = 1;
+  google.protobuf.Timestamp confirmed_at = 2;
+}
+
+message ConfirmReceiptRequest {
+  int64 document_id = 1 [(buf.validate.field).int64.gt = 0];
+}
+
+message ConfirmReceiptResponse {
+  Receipt receipt = 1;
+}
+
+message UpdateReceiptRequest {
+  int64 document_id = 1 [(buf.validate.field).int64.gt = 0];
+  // The vendor's name as it should be; empty puts the reading's back.
+  optional string vendor_name = 2 [(buf.validate.field).string.max_len = 200];
+  // Personal, not the organisation's spend.
+  optional bool personal = 3;
+  // Not spend at all: a newsletter, a duplicate.
+  optional bool ignored = 4;
+  optional string note = 5 [(buf.validate.field).string.max_len = 2000];
+}
+
+message UpdateReceiptResponse {
+  Receipt receipt = 1;
+}
+
+// Where the payment a document is about stands.
+enum PaymentStatus {
+  PAYMENT_STATUS_UNSPECIFIED = 0;
+  PAYMENT_STATUS_PAID = 1;
+  PAYMENT_STATUS_DUE = 2;
+  PAYMENT_STATUS_FAILED = 3;
+  PAYMENT_STATUS_UPCOMING = 4;
+  // It doesn't say, or isn't about a payment.
+  PAYMENT_STATUS_NONE = 5;
+}
+
+// How a vendor charges, as far as a document shows.
+enum BillingModel {
+  BILLING_MODEL_UNSPECIFIED = 0;
+  // A recurring fee: plans and seats.
+  BILLING_MODEL_SUBSCRIPTION = 1;
+  // Charged for what was used.
+  BILLING_MODEL_USAGE = 2;
+  // Both subscription and usage charges.
+  BILLING_MODEL_MIXED = 3;
+  BILLING_MODEL_ONE_TIME = 4;
+  BILLING_MODEL_UNKNOWN = 5;
+}
+
+// How often something is charged.
+enum Interval {
+  INTERVAL_UNSPECIFIED = 0;
+  INTERVAL_MONTH = 1;
+  INTERVAL_YEAR = 2;
+  INTERVAL_WEEK = 3;
+  INTERVAL_QUARTER = 4;
+  INTERVAL_OTHER = 5;
+}
+
+// What a line on a document charges for.
+enum LineKind {
+  LINE_KIND_UNSPECIFIED = 0;
+  // Priced per seat or user.
+  LINE_KIND_SEAT = 1;
+  // A flat recurring fee for a plan.
+  LINE_KIND_PLAN = 2;
+  // Charged by use: requests, tokens, minutes, overage.
+  LINE_KIND_USAGE = 3;
+  LINE_KIND_ADDON = 4;
+  LINE_KIND_DISCOUNT = 5;
+  LINE_KIND_CREDIT = 6;
+  LINE_KIND_ONE_TIME = 7;
+  LINE_KIND_OTHER = 8;
+}
+
+// How something was paid.
+enum PaymentMethod {
+  PAYMENT_METHOD_UNSPECIFIED = 0;
+  PAYMENT_METHOD_CARD = 1;
+  PAYMENT_METHOD_PAYPAL = 2;
+  PAYMENT_METHOD_BANK_TRANSFER = 3;
+  PAYMENT_METHOD_DIRECT_DEBIT = 4;
+  PAYMENT_METHOD_APPLE_PAY = 5;
+  PAYMENT_METHOD_GOOGLE_PAY = 6;
+  PAYMENT_METHOD_CREDITS = 7;
+  PAYMENT_METHOD_INVOICE = 8;
+  PAYMENT_METHOD_OTHER = 9;
+}
