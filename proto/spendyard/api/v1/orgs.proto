@@ -51,6 +51,21 @@ service OrgService {
     option (spendyard.api.v1.permission) = "orgs:transfer";
     option (spendyard.api.v1.interactive_only) = true;
   }
+  // UpdateOrg changes the active organisation's name; the owner and admins.
+  // Its slug stays: it's in links and the CLI's commands.
+  rpc UpdateOrg(UpdateOrgRequest) returns (UpdateOrgResponse) {
+    option (spendyard.api.v1.permission) = "orgs:manage";
+  }
+  // DeleteOrg deletes the active organisation and everything Spendyard keeps
+  // for it. The owner only, with its slug typed as confirmation. It's gone
+  // for its members at once, and they're told by email; its invites and
+  // invite link stop working. 30 days later its receipts, originals and
+  // everything else are deleted for good; until then Spendyard's support can
+  // restore it. Backups keep it until they age out (90 days).
+  rpc DeleteOrg(DeleteOrgRequest) returns (DeleteOrgResponse) {
+    option (spendyard.api.v1.permission) = "orgs:delete";
+    option (spendyard.api.v1.interactive_only) = true;
+  }
 }
 
 message CreateOrgRequest {
@@ -134,3 +149,38 @@ message TransferOwnershipRequest {
 }
 
 message TransferOwnershipResponse {}
+
+message UpdateOrgRequest {
+  // The organisation's new name, e.g. "Fjordtech AS"; trimmed.
+  string name = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 80
+  }];
+}
+
+message UpdateOrgResponse {
+  // The caller's membership in it, with its new name.
+  Membership membership = 1;
+}
+
+// Why an organisation is deleted, to learn from; optional.
+enum LeaveReason {
+  LEAVE_REASON_UNSPECIFIED = 0;
+  LEAVE_REASON_TOO_EXPENSIVE = 1;
+  LEAVE_REASON_MISSING_FEATURE = 2;
+  LEAVE_REASON_HARD_TO_SET_UP = 3;
+  LEAVE_REASON_OTHER_TOOL = 4;
+  LEAVE_REASON_JUST_TRYING = 5;
+  LEAVE_REASON_OTHER = 6;
+}
+
+message DeleteOrgRequest {
+  // The active organisation's slug, typed again: it must match.
+  string slug = 1 [(buf.validate.field).string.min_len = 1];
+  LeaveReason reason = 2;
+  // In the person's own words; kept by Spendyard without any of the
+  // organisation's data.
+  string reason_text = 3 [(buf.validate.field).string.max_len = 2000];
+}
+
+message DeleteOrgResponse {}
