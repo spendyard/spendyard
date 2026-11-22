@@ -385,9 +385,20 @@ fn check_evidence(result: &mut ReadResult, document: &Document, flags: &mut Vec<
             .and_then(Option::as_ref)
             .is_some_and(|text| text.contains(&quote));
 
-        let anywhere = in_part
-            || headers.contains(&quote)
-            || texts.iter().flatten().any(|text| text.contains(&quote));
+        // Cited from one part but there in another: it points where it is, so it can be shown there.
+        let elsewhere = if in_part {
+            None
+        } else {
+            texts
+                .iter()
+                .position(|text| text.as_ref().is_some_and(|text| text.contains(&quote)))
+        };
+
+        if let Some(part) = elsewhere {
+            evidence.part = part as _;
+        }
+
+        let anywhere = in_part || elsewhere.is_some() || headers.contains(&quote);
 
         evidence.checked = anywhere;
 

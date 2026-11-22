@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { initSync, understand } from "../pkg/spendyard_core.js";
+import { initSync, part_bytes, read, understand } from "../pkg/spendyard_core.js";
 
 initSync({ module: readFileSync("crates/wasm/pkg/spendyard_core_bg.wasm") });
 
@@ -84,4 +84,18 @@ function answering(status, body, asked) {
   assert.equal(answer.stage, "options");
 
   console.log(`unknown options: "${answer.error}"`);
+}
+
+// One part's bytes, as it came: the receipt's attached PDF, by the index read gives it; nothing for a part not there.
+{
+  const parts = JSON.parse(read(receipt)).document.parts;
+  const pdf = parts.find((part) => part.kind === "pdf");
+
+  const bytes = part_bytes(receipt, pdf.index);
+
+  assert.equal(new TextDecoder().decode(bytes.slice(0, 5)), "%PDF-");
+  assert.equal(bytes.length, pdf.size);
+  assert.equal(part_bytes(receipt, 99).length, 0);
+
+  console.log(`one part's bytes: ${pdf.label}, ${bytes.length} bytes`);
 }

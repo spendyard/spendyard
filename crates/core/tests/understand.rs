@@ -235,6 +235,29 @@ async fn invented_values_are_flagged() {
 }
 
 #[tokio::test]
+async fn a_quote_cited_from_the_wrong_part_points_where_it_is() {
+    let document = read(&fixture("receipt.eml"), None).unwrap();
+
+    let mut answer = good_answer();
+
+    // The invoice number is in the attached PDF (part 2), cited from the body.
+    answer["evidence"][2]["part"] = json!(0);
+
+    let fake = Fake {
+        answer,
+        seen: Default::default(),
+    };
+
+    let result = understand(&document, &pipeline(&fake, None)).await.unwrap();
+
+    let evidence = &result.evidence["invoice_number"];
+
+    assert_eq!(evidence.part, 2);
+    assert!(evidence.checked);
+    assert_eq!(result.flags, [], "unexpected flags");
+}
+
+#[tokio::test]
 async fn a_scanned_pdf_has_nothing_for_a_text_only_model() {
     let document = read(&fixture("scanned.pdf"), Some("scanned.pdf")).unwrap();
 

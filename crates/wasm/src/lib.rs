@@ -49,6 +49,18 @@ pub fn read(bytes: &[u8]) -> String {
     read_json(bytes)
 }
 
+/// One part of a document as it came in, by its index (as `read` and
+/// evidence number them): an email's attached PDF, say. Empty when there's no
+/// such part or the document can't be read.
+#[wasm_bindgen]
+pub fn part_bytes(bytes: &[u8], index: usize) -> Vec<u8> {
+    spendyard_core::read(bytes, None)
+        .ok()
+        .and_then(|document| document.parts.into_iter().find(|part| part.index == index))
+        .map(|part| part.bytes)
+        .unwrap_or_default()
+}
+
 /// The core's version: `meta.spendyard_version` in its results.
 #[wasm_bindgen]
 pub fn version() -> String {

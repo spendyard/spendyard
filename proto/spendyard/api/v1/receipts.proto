@@ -175,6 +175,9 @@ message DocumentPart {
   string text = 5;
   // Its pages, for a PDF.
   int32 pages = 6;
+  // A link to see it as it came, for a while: for a PDF or a picture (not
+  // SVG), an email's attachments among them. Empty for the rest.
+  string preview_url = 7;
 }
 
 // Reading is what was read from a document, as the CLI's `spendyard read`
