@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+import "spendyard/api/v1/options.proto";
+
+// ActivityService is the organisation's activity log, as Stagd's: who
+// changed what in it, and when. For the owner and admins to answer "who
+// removed Bo?", and for audits. Who's in it and invited, its name and
+// currency, its forwarding addresses, and edits to its vendors; never a
+// secret value.
+service ActivityService {
+  rpc ListActivity(ListActivityRequest) returns (ListActivityResponse) {
+    option (spendyard.api.v1.permission) = "activity:read";
+  }
+}
+
+message Activity {
+  string id = 1;
+  google.protobuf.Timestamp create_time = 2;
+  // Who, by email; empty for Spendyard itself.
+  string actor = 3;
+  // Their name as it was then; empty when it's their email.
+  string actor_name = 4;
+  // How: "web" (the dashboard), "cli", "admin" (Spendyard's own people), or
+  // "spendyard" (Spendyard itself).
+  string via = 5;
+  // What happened, "<kind>.<what happened>": e.g. "member.role_changed",
+  // "invite.created", "vendor.edited". Every one is in the platform's
+  // docs/activity.md.
+  string action = 6;
+  // What it happened to, in words: an email, an address, a vendor's name.
+  string target = 7;
+  // The rest: e.g. {"from": "member", "to": "admin"}.
+  map<string, string> detail = 8;
+}
+
+message ListActivityRequest {
+  // At most this many, newest first; 50 when unset.
+  int32 page_size = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 200
+  }];
+  // The next_page_token of the page before, asked with the same filters.
+  string page_token = 2;
+  // Only this area, empty for all.
+  string area = 3 [(buf.validate.field).string = {
+    in: [
+      "",
+      "members",
+      "invites",
+      "organisation",
+      "addresses",
+      "vendors"
+    ]
+  }];
+  // Only what this person did, by email; empty for everyone.
+  string actor = 4 [(buf.validate.field).string.max_len = 320];
+}
+
+message ListActivityResponse {
+  repeated Activity activity = 1;
+  // Empty on the last page.
+  string next_page_token = 2;
+}
