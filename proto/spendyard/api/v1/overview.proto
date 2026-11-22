@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "spendyard/api/v1/model.proto";
+import "spendyard/api/v1/options.proto";
+
+// OverviewService is the active organisation at a glance: "are we OK, and
+// what needs me?" What it spends (this month against last, the last twelve
+// months, on AI split into subscriptions and usage), its subscriptions, and
+// what needs someone: failed payments by card, renewals coming, new vendors,
+// and the Inbox's counts.
+//
+// Worked out from the same receipts and card payments as Subscriptions,
+// Vendors and Transactions, once, in the organisation's currency. A member
+// sees their own receipts' and statements'.
+service OverviewService {
+  rpc GetOverview(GetOverviewRequest) returns (GetOverviewResponse) {
+    option (spendyard.api.v1.permission) = "overview:read";
+  }
+}
+
+message GetOverviewRequest {}
+
+// One month's spend: on subscriptions, on usage, and one-offs; plain
+// decimals in the response's currency.
+message SpendMonth {
+  // YYYY-MM.
+  string month = 1;
+  string subscription = 2;
+  string usage = 3;
+  string other = 4;
+}
+
+// A subscription that renews soon.
+message Renewal {
+  // Subscription.id.
+  string subscription_id = 1;
+  VendorRef vendor = 2;
+  // What it's for, when its vendor has several: a product or an account.
+  string detail = 3;
+  // YYYY-MM-DD.
+  string date = 4;
+  // Its last payment, as paid: what's likely charged again.
+  string amount = 5;
+  string currency = 6;
+  // The card it's charged to.
+  string card = 7;
+}
+
+// The subscriptions whose last payment failed on one card: likely one
+// expired or blocked card behind them all.
+message FailedCard {
+  // "visa 3776"; empty when no receipt says.
+  string card = 1;
+  repeated FailedSubscription subscriptions = 2;
+}
+
+message FailedSubscription {
+  // Subscription.id.
+  string subscription_id = 1;
+  VendorRef vendor = 2;
+  // Its newest document: the notice of the failed payment.
+  int64 document_id = 3;
+}
+
+// A vendor first paid recently.
+message NewVendor {
+  VendorRef vendor = 1;
+  // YYYY-MM-DD.
+  string first_paid = 2;
+  // What it's cost so far: a plain decimal in the response's currency.
+  string spent = 3;
+  string category = 4;
+}
+
+// A vendor among those spent most on.
+message TopVendor {
+  VendorRef vendor = 1;
+  string category = 2;
+  // This past year: a plain decimal in the response's currency.
+  string spent_year = 3;
+}
+
+// What waits in the Inbox.
+message InboxCounts {
+  int64 to_review = 1;
+  int64 couldnt_read = 2;
+  int64 missing_receipts = 3;
+  int64 being_read = 4;
+}
+
+message GetOverviewResponse {
+  // The currency every amount is in.
+  string currency = 1;
+  // Spend so far this month, and all of last month: plain decimals.
+  string spent_month = 2;
+  string spent_last_month = 3;
+  // The past twelve months, oldest first, this month last.
+  repeated SpendMonth months = 4;
+  // What the active subscriptions cost a month together, and how many.
+  string monthly = 5;
+  int32 active_subscriptions = 6;
+  // The past twelve months on vendors in the `ai` category, split into
+  // subscriptions and usage; and this past year's of each.
+  repeated SpendMonth ai_months = 7;
+  string ai_subscription_year = 8;
+  string ai_usage_year = 9;
+  // Subscriptions renewing in the next 30 days, soonest first.
+  repeated Renewal renewals = 10;
+  // Failed payments, grouped by card.
+  repeated FailedCard failed = 11;
+  // Vendors first paid in the past 30 days, newest first.
+  repeated NewVendor new_vendors = 12;
+  // The vendors spent most on this past year, most first.
+  repeated TopVendor top_vendors = 13;
+  InboxCounts inbox = 14;
+  // How many documents have come in at all: none means nothing to show yet.
+  int64 documents = 15;
+}
