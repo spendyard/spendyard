@@ -13,10 +13,9 @@ import "spendyard/api/v1/receipts.proto";
 // `spendyard subscriptions` does, with what each costs a month, how often,
 // on which card, and whether the last payment went through.
 //
-// One subscription is one vendor's account's product: a vendor's receipts
-// are told apart by account when they show more than one, and by product
-// when several are paid side by side. Its ID is made of those parts, and
-// stays while its receipts do. What people decide about one (who owns it, a
+// One subscription is one vendor: its ID is the vendor's, and stays while
+// its receipts do. Not split by account, which receipts name several ways,
+// nor (for now) by product. What people decide about one (who owns it, a
 // note, that it's cancelled or isn't a subscription) is kept by that ID.
 //
 // Amounts are in the organisation's currency (Org.currency, else the one it
@@ -63,19 +62,18 @@ enum SubscriptionStatus {
   SUBSCRIPTION_STATUS_NOT_A_SUBSCRIPTION = 7;
 }
 
-// Subscription is one vendor's account's product, paid again and again.
+// Subscription is one vendor, paid again and again.
 message Subscription {
-  // Its ID: the vendor's ID, then its account and product when they tell it
-  // apart from the vendor's others, joined by `:`: `slack.com`,
-  // `slack.com:fjordtech`, `atlassian.com::jira`.
+  reserved 5;
+  reserved "account";
+
+  // Its ID: the vendor's, as an ID's part: `slack.com`.
   string id = 1;
   // Its vendor.
   VendorRef vendor = 2;
   // The catalog's category: `ai`, `dev-tools`, `infrastructure`, …; empty
   // when the catalog doesn't know the vendor.
   string category = 4;
-  // The account it's for, when its receipts say: a workspace, an email.
-  string account = 5;
   // What it's for: the product its receipts name most.
   string product = 6;
   // How often it's paid; unset when no receipt says.
@@ -115,6 +113,9 @@ message Subscription {
   int32 payments = 24;
   // Where it's known from.
   SubscriptionSource source = 25;
+  // Who it's billed to, as its receipts say: workspaces and emails, each
+  // once, the most said first. One account can be named several ways.
+  repeated string billed_to = 26;
 }
 
 // Where a subscription is known from.

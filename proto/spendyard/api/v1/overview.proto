@@ -34,11 +34,12 @@ message SpendMonth {
 
 // A subscription that renews soon.
 message Renewal {
+  reserved 3;
+  reserved "detail";
+
   // Subscription.id.
   string subscription_id = 1;
   VendorRef vendor = 2;
-  // What it's for, when its vendor has several: a product or an account.
-  string detail = 3;
   // YYYY-MM-DD.
   string date = 4;
   // Its last payment, as paid: what's likely charged again.

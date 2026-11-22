@@ -70,6 +70,7 @@ pub const MATCH_RECEIPTS_SQL: &str = "SELECT r.document_id AS document_id,
        r.total AS total,
        upper(r.currency) AS currency,
        r.card_last4 AS card_last4,
+       r.card_brand AS card_brand,
        r.invoice_number AS invoice_number,
        r.receipt_number AS receipt_number,
        coalesce(r.type, '') AS kind
@@ -155,6 +156,9 @@ pub struct MatchReceipt {
     pub currency: String,
     #[serde(default)]
     pub card_last4: Option<String>,
+    /// The card's brand as the receipt names it: "visa", "Mastercard".
+    #[serde(default)]
+    pub card_brand: Option<String>,
     #[serde(default)]
     pub invoice_number: Option<String>,
     #[serde(default)]

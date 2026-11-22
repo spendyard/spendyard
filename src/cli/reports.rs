@@ -397,11 +397,7 @@ fn label(subscription: &spendyard_core::subscriptions::Subscription) -> String {
         .skip(1)
         .any(|part| !part.is_empty());
 
-    let detail = subscription
-        .product
-        .as_deref()
-        .or(subscription.account.as_deref())
-        .filter(|_| apart);
+    let detail = subscription.product.as_deref().filter(|_| apart);
 
     match detail {
         Some(detail) => format!("{} · {detail}", subscription.vendor),

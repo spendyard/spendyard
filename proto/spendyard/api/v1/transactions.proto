@@ -76,6 +76,9 @@ message Transaction {
   // says.
   string card_last4 = 6;
   string name_on_card = 7;
+  // The card's brand, as receipts paid with it name it ("visa",
+  // "Mastercard"); empty when none does. Statements don't say.
+  string card_brand = 19;
   // What the account was charged, a plain decimal (`224.50`), and its
   // currency; and what it was in the merchant's currency, when another.
   string amount = 8;

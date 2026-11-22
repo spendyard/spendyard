@@ -2,12 +2,11 @@
 //! its rows ([`crate::spend`]) for `spendyard subscriptions` and the cloud
 //! alike.
 //!
-//! One subscription is one vendor's account's product. A vendor's documents
-//! are told apart by account (its workspace, else its email) when they show
-//! more than one; then by product, but only for products paid side by side
-//! (Jira beside Confluence), not one renamed over time (Pro, then Team).
-//! Each has an ID made of those parts, stable while its documents are:
-//! `slack.com`, `slack.com:fjordtech`, `atlassian.com::jira`.
+//! One subscription is one vendor: its ID is the vendor's key (`slack.com`),
+//! stable while its documents are. Not told apart by account, which
+//! documents name in different ways (an email on one, a workspace on the
+//! next), nor for now by product; the account is what they say it's billed
+//! to, the product the one they name most.
 //!
 //! What people decide about one (not a subscription, cancelled) comes in
 //! with the options, by that ID: the store keeps it, the core applies it.
@@ -18,13 +17,9 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::name_key;
-use crate::dates::{day_number, days_apart, shift_date};
+use crate::dates::{day_number, shift_date};
 use crate::rates::Rates;
 use crate::spend::{Row, converted, report_currency, spend};
-
-/// How close payments of two products must be to count as paid side by
-/// side: within a few weeks of each other.
-const SIDE_BY_SIDE_DAYS: i64 = 20;
 
 /// A card a subscription was paid with, and when last.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -38,8 +33,7 @@ pub struct CardSeen {
 /// the last payment went through.
 #[derive(Debug, Clone, Serialize)]
 pub struct Subscription {
-    /// Its ID: the vendor's key, then its account and product when they
-    /// tell it apart from the vendor's others, joined by `:`.
+    /// Its ID: the vendor's key, as an ID's part (`slack.com`).
     pub id: String,
     pub vendor: String,
     /// What the vendor's rows group by: its catalog ID (its domain), else
@@ -50,9 +44,11 @@ pub struct Subscription {
     pub vendor_domain: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
-    /// The account it's for, when its documents say.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub account: Option<String>,
+    /// Who it's billed to, as its documents say: workspaces and emails,
+    /// each once whatever its case, the most said first. Only what they say:
+    /// one account can be named several ways.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub billed_to: Vec<String>,
     /// What it's for: the product its documents name most.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub product: Option<String>,
@@ -222,15 +218,11 @@ pub(crate) fn with_intervals(rows: &[Row]) -> Vec<Row> {
     rows
 }
 
-// --- telling subscriptions apart ------------------------------------------------
+// --- one subscription per vendor ------------------------------------------------
 
-/// One subscription's rows, newest first, and what told it apart.
+/// One subscription's rows, newest first: a vendor's.
 struct Group<'a> {
     vendor_key: &'a str,
-    /// Its account, when the vendor's rows show more than one.
-    account: Option<String>,
-    /// Its product, when the vendor's account pays for several side by side.
-    product: Option<String>,
     rows: Vec<&'a Row>,
 }
 
@@ -255,132 +247,44 @@ fn slug(text: &str) -> String {
         .join("-")
 }
 
-/// A subscription's ID from what told it apart: `vendor`, `vendor:account`,
-/// `vendor::product`, `vendor:account:product`.
-fn id_of(vendor_key: &str, account: Option<&str>, product: Option<&str>) -> String {
-    let vendor = slug(vendor_key);
-    let account = account.map(slug).unwrap_or_default();
-
-    match product {
-        Some(product) => format!("{vendor}:{account}:{}", slug(&name_key(product))),
-        None if account.is_empty() => vendor,
-        None => format!("{vendor}:{account}"),
-    }
+/// A subscription's ID: its vendor's key, as an ID's part.
+fn id_of(vendor_key: &str) -> String {
+    slug(vendor_key)
 }
 
-/// A vendor's rows by account, when they show more than one. Rows that
-/// don't say join the only account when there's one; with several, they're
-/// a subscription of their own.
-fn by_account<'a>(rows: Vec<&'a Row>) -> Vec<(Option<String>, Vec<&'a Row>)> {
-    let mut accounts: BTreeMap<String, (String, Vec<&'a Row>)> = BTreeMap::new();
-    let mut unknown = Vec::new();
+/// Who rows say they're billed to: each once whatever its case, in the
+/// spelling said most, the most said first.
+fn billed_to(rows: &[&Row]) -> Vec<String> {
+    let mut said: BTreeMap<String, BTreeMap<&str, usize>> = BTreeMap::new();
 
-    for row in &rows {
-        match &row.account {
-            Some(account) => {
-                let entry = accounts
-                    .entry(account.to_lowercase())
-                    .or_insert_with(|| (account.clone(), Vec::new()));
-
-                entry.1.push(row);
-            }
-            None => unknown.push(*row),
-        }
+    for account in rows.iter().filter_map(|row| row.account.as_deref()) {
+        *said
+            .entry(account.to_lowercase())
+            .or_default()
+            .entry(account)
+            .or_default() += 1;
     }
 
-    if accounts.len() <= 1 {
-        return vec![(None, rows)];
-    }
+    let mut accounts: Vec<(usize, &str)> = said
+        .values()
+        .map(|spellings| {
+            let total = spellings.values().sum();
+            let (spelling, _) = spellings.iter().max_by_key(|(_, n)| **n).unwrap();
 
-    let mut groups: Vec<(Option<String>, Vec<&'a Row>)> = accounts
-        .into_values()
-        .map(|(account, rows)| (Some(account), rows))
+            (total, *spelling)
+        })
         .collect();
 
-    if !unknown.is_empty() {
-        groups.push((None, unknown));
-    }
+    accounts.sort_by_key(|account| std::cmp::Reverse(account.0));
 
-    groups
+    accounts
+        .into_iter()
+        .map(|(_, account)| account.to_string())
+        .collect()
 }
 
-/// Whether two products' rows were paid side by side: some of each within
-/// a few weeks of each other.
-fn side_by_side(a: &[&Row], b: &[&Row]) -> bool {
-    a.iter().any(|x| {
-        b.iter()
-            .any(|y| days_apart(&x.date, &y.date).is_some_and(|apart| apart <= SIDE_BY_SIDE_DAYS))
-    })
-}
-
-/// An account's rows by product, when it pays for several side by side,
-/// each at least twice. The rest join the product with the same total as
-/// theirs, else the one with the most rows. Otherwise they stay together.
-fn by_product<'a>(rows: Vec<&'a Row>) -> Vec<(Option<String>, Vec<&'a Row>)> {
-    let mut products: BTreeMap<String, (String, Vec<&'a Row>)> = BTreeMap::new();
-
-    for row in &rows {
-        if let Some(product) = &row.product {
-            let entry = products
-                .entry(name_key(product))
-                .or_insert_with(|| (product.clone(), Vec::new()));
-
-            entry.1.push(row);
-        }
-    }
-
-    // Products paid more than once: one-offs are no subscription of their own.
-    let recurring: Vec<(&String, &(String, Vec<&Row>))> = products
-        .iter()
-        .filter(|(_, (_, rows))| rows.len() >= 2)
-        .collect();
-
-    let parallel = recurring.iter().enumerate().any(|(i, (_, (_, a)))| {
-        recurring[i + 1..]
-            .iter()
-            .any(|(_, (_, b))| side_by_side(a, b))
-    });
-
-    if !parallel {
-        return vec![(None, rows)];
-    }
-
-    let mut groups: Vec<(Option<String>, Vec<&'a Row>)> = recurring
-        .iter()
-        .map(|(_, (product, _))| (Some(product.clone()), Vec::new()))
-        .collect();
-
-    let keys: Vec<&String> = recurring.iter().map(|(key, _)| *key).collect();
-
-    for row in rows {
-        let own = row
-            .product
-            .as_deref()
-            .map(name_key)
-            .and_then(|key| keys.iter().position(|k| **k == key));
-
-        let same_total = || {
-            groups
-                .iter()
-                .position(|(_, rows)| rows.first().is_some_and(|first| first.total == row.total))
-        };
-
-        let biggest = || {
-            (0..groups.len())
-                .max_by_key(|&i| recurring[i].1.1.len())
-                .unwrap_or(0)
-        };
-
-        let at = own.or_else(same_total).unwrap_or_else(biggest);
-
-        groups[at].1.push(row);
-    }
-
-    groups
-}
-
-/// The recurring rows, as subscriptions: by vendor, then account, then
-/// product. Rows stay newest first.
+/// The recurring rows, as subscriptions: one per vendor. Rows stay newest
+/// first.
 fn groups(rows: &[Row]) -> Vec<Group<'_>> {
     let mut by_vendor: BTreeMap<&str, Vec<&Row>> = BTreeMap::new();
 
@@ -394,16 +298,7 @@ fn groups(rows: &[Row]) -> Vec<Group<'_>> {
     let mut groups = Vec::new();
 
     for (vendor_key, rows) in by_vendor {
-        for (account, rows) in by_account(rows) {
-            for (product, rows) in by_product(rows) {
-                groups.push(Group {
-                    vendor_key,
-                    account: account.clone(),
-                    product,
-                    rows,
-                });
-            }
-        }
+        groups.push(Group { vendor_key, rows });
     }
 
     groups
@@ -575,20 +470,13 @@ fn subscription_of(group: &Group, currency: &str, today: &str, rates: &impl Rate
         .map(|seen| seen.card.clone());
 
     Subscription {
-        id: id_of(
-            group.vendor_key,
-            group.account.as_deref(),
-            group.product.as_deref(),
-        ),
+        id: id_of(group.vendor_key),
         vendor: latest.vendor_name.clone(),
         vendor_key: latest.vendor_key.clone(),
         vendor_domain: rows.iter().find_map(|row| row.vendor_domain.clone()),
         category: rows.iter().find_map(|row| row.category.clone()),
-        account: group
-            .account
-            .clone()
-            .or_else(|| rows.iter().find_map(|row| row.account.clone())),
-        product: group.product.clone().or_else(|| product_of(rows)),
+        billed_to: billed_to(rows),
+        product: product_of(rows),
         interval: interval.clone(),
         last_paid: last_paid.map(|row| row.date.clone()),
         last_amount,
@@ -817,7 +705,7 @@ mod tests {
     }
 
     #[test]
-    fn tells_a_vendors_accounts_apart() {
+    fn a_vendors_accounts_however_named_are_one_subscription() {
         let slack = |id: i64, date: &str, workspace: Option<&str>| {
             let mut row = row(id, date, "Slack", "87.75", "USD");
 
@@ -829,51 +717,28 @@ mod tests {
         let found = found(
             vec![
                 slack(4, "2026-11-10", Some("Fjordtech")),
-                slack(3, "2026-11-09", Some("fjordtech-labs")),
-                slack(2, "2026-10-10", Some("fjordtech")),
-                slack(1, "2026-10-09", None),
+                slack(3, "2026-10-10", Some("fjordtech")),
+                slack(2, "2026-09-10", Some("fjordtech-labs")),
+                slack(1, "2026-08-10", None),
             ],
             &options("2026-11-21"),
         );
 
-        let ids = by_id(&found);
+        assert_eq!(found.subscriptions.len(), 1);
 
-        assert_eq!(
-            ids.keys().copied().collect::<Vec<_>>(),
-            [
-                "slack.com",
-                "slack.com:fjordtech",
-                "slack.com:fjordtech-labs"
-            ]
-        );
-        assert_eq!(ids["slack.com:fjordtech"].document_ids, [4, 2]);
-        assert_eq!(
-            ids["slack.com:fjordtech"].account.as_deref(),
-            Some("Fjordtech")
-        );
+        let slack = &found.subscriptions[0];
 
-        // One account only: the rows that don't say join it, and the ID is the vendor's.
-        let one = found_one_account();
+        assert_eq!(slack.id, "slack.com");
+        assert_eq!(slack.documents, 4);
 
-        assert_eq!(one.subscriptions.len(), 1);
-        assert_eq!(one.subscriptions[0].id, "slack.com");
-        assert_eq!(one.subscriptions[0].account.as_deref(), Some("fjordtech"));
-        assert_eq!(one.subscriptions[0].documents, 2);
-    }
-
-    fn found_one_account() -> Subscriptions {
-        let mut said = row(2, "2026-11-10", "Slack", "87.75", "USD");
-
-        said.account_workspace = Some("fjordtech".into());
-
-        found(
-            vec![said, row(1, "2026-10-10", "Slack", "87.75", "USD")],
-            &options("2026-11-21"),
-        )
+        // Each once whatever its case, the most said first.
+        assert_eq!(slack.billed_to.len(), 2);
+        assert!(slack.billed_to[0].eq_ignore_ascii_case("fjordtech"));
+        assert_eq!(slack.billed_to[1], "fjordtech-labs");
     }
 
     #[test]
-    fn tells_products_paid_side_by_side_apart_but_not_one_renamed() {
+    fn a_vendors_products_are_one_subscription() {
         let atlassian = |id: i64, date: &str, product: &str, total: &str| {
             let mut row = row(id, date, "Atlassian", total, "USD");
 
@@ -882,38 +747,22 @@ mod tests {
             row
         };
 
-        let side_by_side = found(
+        // Jira and Confluence side by side: one Atlassian, its product the one named most.
+        let found = found(
             vec![
-                atlassian(4, "2026-11-03", "Confluence", "55.00"),
-                atlassian(3, "2026-11-01", "Jira", "80.00"),
-                atlassian(2, "2026-10-03", "Confluence", "55.00"),
-                atlassian(1, "2026-10-01", "Jira", "80.00"),
+                atlassian(5, "2026-11-03", "Confluence", "55.00"),
+                atlassian(4, "2026-11-01", "Jira", "80.00"),
+                atlassian(3, "2026-10-03", "Confluence", "55.00"),
+                atlassian(2, "2026-10-01", "Jira", "80.00"),
+                atlassian(1, "2026-09-01", "Jira", "80.00"),
             ],
             &options("2026-11-21"),
         );
 
-        let ids = by_id(&side_by_side);
-
-        assert_eq!(
-            ids.keys().copied().collect::<Vec<_>>(),
-            ["atlassian.com::confluence", "atlassian.com::jira"]
-        );
-        assert_eq!(ids["atlassian.com::jira"].document_ids, [3, 1]);
-        assert_eq!(ids["atlassian.com::jira"].product.as_deref(), Some("Jira"));
-
-        // Pro, then Team: one subscription, renamed.
-        let renamed = found(
-            vec![
-                atlassian(4, "2026-11-01", "Team", "80.00"),
-                atlassian(3, "2026-10-01", "Team", "80.00"),
-                atlassian(2, "2026-06-01", "Pro", "50.00"),
-                atlassian(1, "2026-05-01", "Pro", "50.00"),
-            ],
-            &options("2026-11-21"),
-        );
-
-        assert_eq!(renamed.subscriptions.len(), 1);
-        assert_eq!(renamed.subscriptions[0].id, "atlassian.com");
+        assert_eq!(found.subscriptions.len(), 1);
+        assert_eq!(found.subscriptions[0].id, "atlassian.com");
+        assert_eq!(found.subscriptions[0].documents, 5);
+        assert_eq!(found.subscriptions[0].product.as_deref(), Some("Jira"));
     }
 
     #[test]
@@ -1125,23 +974,8 @@ mod tests {
     }
 
     #[test]
-    fn makes_ids_of_the_parts() {
-        assert_eq!(id_of("vercel.com", None, None), "vercel.com");
-        assert_eq!(
-            id_of("slack.com", Some("Fjordtech Labs"), None),
-            "slack.com:fjordtech-labs"
-        );
-        assert_eq!(
-            id_of(
-                "google.com",
-                Some("ada@fjordtech.no"),
-                Some("Google Workspace")
-            ),
-            "google.com:ada@fjordtech.no:google-workspace"
-        );
-        assert_eq!(
-            id_of("acme corp", None, Some("Pro Plan")),
-            "acme-corp::pro-plan"
-        );
+    fn makes_ids_of_vendors() {
+        assert_eq!(id_of("vercel.com"), "vercel.com");
+        assert_eq!(id_of("acme corp"), "acme-corp");
     }
 }
