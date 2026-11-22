@@ -3,11 +3,13 @@ syntax = "proto3";
 package spendyard.api.v1;
 
 import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
 import "spendyard/api/v1/model.proto";
 import "spendyard/api/v1/options.proto";
 
-// AccountService is the signed-in person's own account. It follows them
-// across organisations, and anyone signed in may use it.
+// AccountService is the signed-in person's own account: what they're called,
+// and where they're signed in. It follows them across organisations, and
+// anyone signed in may use it.
 service AccountService {
   // GetAccount returns the caller's profile.
   rpc GetAccount(GetAccountRequest) returns (GetAccountResponse) {
@@ -16,6 +18,20 @@ service AccountService {
   // UpdateProfile changes what the caller is called.
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse) {
     option (spendyard.api.v1.permission) = "account:write";
+  }
+  // ListSessions lists where the caller is signed in: browsers, and the CLI.
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse) {
+    option (spendyard.api.v1.permission) = "sessions:read";
+  }
+  // RevokeSession signs one of the caller's sessions out at once; never
+  // someone else's.
+  rpc RevokeSession(RevokeSessionRequest) returns (RevokeSessionResponse) {
+    option (spendyard.api.v1.permission) = "sessions:write";
+  }
+  // RevokeOtherSessions signs out every session of the caller's but the one
+  // asking: for a lost laptop, or a shared computer.
+  rpc RevokeOtherSessions(RevokeOtherSessionsRequest) returns (RevokeOtherSessionsResponse) {
+    option (spendyard.api.v1.permission) = "sessions:write";
   }
 }
 
@@ -38,4 +54,51 @@ message UpdateProfileRequest {
 
 message UpdateProfileResponse {
   Account account = 1;
+}
+
+// Session is one signed-in browser or CLI.
+message Session {
+  string id = 1;
+  SessionKind kind = 2;
+  // The browser's user agent, for a web session.
+  string user_agent = 3;
+  // For a CLI session: what the CLI said about itself when it signed in.
+  string client_version = 4;
+  string client_platform = 5;
+  string device_name = 6;
+  // How it signed in: "google", "microsoft", "email", or "device" for a CLI
+  // sign-in approved in the browser.
+  string sign_in_method = 7;
+  google.protobuf.Timestamp create_time = 8;
+  // Kept to the minute or so.
+  google.protobuf.Timestamp last_seen_time = 9;
+  google.protobuf.Timestamp expire_time = 10;
+  // The session this call came from.
+  bool current = 11;
+}
+
+enum SessionKind {
+  SESSION_KIND_UNSPECIFIED = 0;
+  SESSION_KIND_WEB = 1;
+  SESSION_KIND_CLI = 2;
+}
+
+message ListSessionsRequest {}
+
+message ListSessionsResponse {
+  // Most recently used first.
+  repeated Session sessions = 1;
+}
+
+message RevokeSessionRequest {
+  string id = 1 [(buf.validate.field).string.min_len = 1];
+}
+
+message RevokeSessionResponse {}
+
+message RevokeOtherSessionsRequest {}
+
+message RevokeOtherSessionsResponse {
+  // How many were signed out.
+  int32 revoked = 1;
 }
