@@ -164,7 +164,7 @@ fn cadence(apart: i64) -> Option<&'static str> {
 /// vendor's receipts when those say, else from how far apart they are (two
 /// or more, the gap between them most of them share). A vendor paid once,
 /// or at no steady rhythm, isn't a subscription by its payments.
-fn with_intervals(rows: &[Row]) -> Vec<Row> {
+pub(crate) fn with_intervals(rows: &[Row]) -> Vec<Row> {
     let mut rows = rows.to_vec();
 
     let vendors: BTreeSet<String> = rows
@@ -477,7 +477,7 @@ fn last4(card: &str) -> &str {
 
 /// Every card its rows were paid with, the most recently used first: one
 /// card once, by its last four digits, named by its brand where a row says.
-fn cards_of(rows: &[&Row]) -> Vec<CardSeen> {
+pub(crate) fn cards_of(rows: &[&Row]) -> Vec<CardSeen> {
     let mut seen: Vec<CardSeen> = Vec::new();
 
     // Rows come newest first: a card's first row is its last use.

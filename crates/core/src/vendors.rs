@@ -18,7 +18,7 @@ use crate::catalog::catalog;
 use crate::dates::shift_date;
 use crate::rates::Rates;
 use crate::spend::{Row, StoredRow, converted, report_currency, spend};
-use crate::subscriptions::{CardSeen, SubscriptionOptions, subscriptions};
+use crate::subscriptions::{CardSeen, SubscriptionOptions, subscriptions, with_intervals};
 
 /// What someone decided about a vendor, by its key.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -206,6 +206,8 @@ pub struct VendorSummary {
     pub monthly: Decimal,
     /// Its paid receipts, each once.
     pub receipts: usize,
+    /// Its payments on card statements with no receipt.
+    pub payments: usize,
     pub first_paid: Option<String>,
     pub last_paid: Option<String>,
     /// How many subscriptions it has, live or not.
@@ -219,8 +221,10 @@ pub struct VendorSummary {
     /// Every one of its receipts is personal, or not spend.
     pub personal: bool,
     pub ignored: bool,
-    /// Its documents, newest first.
+    /// Its receipts and notices, newest first.
     pub document_ids: Vec<i64>,
+    /// Its payments with no receipt, newest first: their transactions' IDs.
+    pub payment_ids: Vec<String>,
 }
 
 /// The organisation's vendors, the most spent on first, and in which currency.
@@ -317,28 +321,19 @@ fn months_of(
     months.into_values().collect()
 }
 
-/// Every card its rows were paid with, the most recently used first.
+/// Every card its rows were paid with, the most recently used first: one
+/// card once by its last four digits, as subscriptions have it.
 fn cards_of(rows: &[&Row]) -> Vec<CardSeen> {
-    let mut seen: Vec<CardSeen> = Vec::new();
-
-    for row in rows {
-        if let Some(card) = &row.card
-            && !seen.iter().any(|known| &known.card == card)
-        {
-            seen.push(CardSeen {
-                card: card.clone(),
-                last_used: row.date.clone(),
-            });
-        }
-    }
-
-    seen
+    crate::subscriptions::cards_of(rows)
 }
 
 /// The vendors in `rows` (newest first, with their vendors' edits applied):
 /// the most spent on these last twelve months first. Personal and not-spend
 /// vendors only with `all`.
 pub fn vendors(rows: &[Row], options: &VendorOptions, rates: &impl Rates) -> Vendors {
+    // Payments without receipts recur as subscriptions have them: their months fall under subscriptions.
+    let rows = &with_intervals(rows);
+
     let paid_all = spend(rows);
     let currency = report_currency(options.currency.clone(), &paid_all);
     let today = options.today.as_str();
@@ -409,7 +404,8 @@ pub fn vendors(rows: &[Row], options: &VendorOptions, rates: &impl Rates) -> Ven
             known: rows.iter().any(|row| row.category.is_some()),
             spent_year,
             monthly,
-            receipts: paid.len(),
+            receipts: paid.iter().filter(|row| row.payment.is_none()).count(),
+            payments: paid.iter().filter(|row| row.payment.is_some()).count(),
             first_paid: paid.iter().map(|row| row.date.clone()).min(),
             last_paid: paid.iter().map(|row| row.date.clone()).max(),
             subscriptions: theirs.len(),
@@ -418,7 +414,12 @@ pub fn vendors(rows: &[Row], options: &VendorOptions, rates: &impl Rates) -> Ven
             accounts: accounts.into_iter().collect(),
             personal: rows.iter().all(|row| row.personal),
             ignored: rows.iter().all(|row| row.ignored),
-            document_ids: rows.iter().map(|row| row.id).collect(),
+            document_ids: rows
+                .iter()
+                .filter(|row| row.payment.is_none())
+                .map(|row| row.id)
+                .collect(),
+            payment_ids: rows.iter().filter_map(|row| row.payment.clone()).collect(),
         });
     }
 
@@ -633,6 +634,43 @@ mod tests {
                 .as_deref(),
             Some("tiny.example")
         );
+    }
+
+    #[test]
+    fn counts_payments_without_receipts_as_spend() {
+        let payment = |id: i64, date: &str| {
+            let mut row = Row::from_stored(
+                StoredRow {
+                    id: 50,
+                    date: date.into(),
+                    kind: "receipt".into(),
+                    status: "paid".into(),
+                    is_receipt: 1,
+                    vendor_name: "Figma".into(),
+                    total: Some("45.00".into()),
+                    currency: Some("USD".into()),
+                    card: Some("card 3776".into()),
+                    ..StoredRow::default()
+                },
+                catalog(),
+            );
+
+            row.payment = Some(format!("50:{id}"));
+
+            row
+        };
+
+        let rows = vec![payment(2, "2026-11-05"), payment(1, "2026-10-05")];
+        let found = found(&rows);
+        let figma = &found.vendors[0];
+
+        assert_eq!((figma.receipts, figma.payments), (0, 2));
+        assert_eq!(figma.spent_year, Decimal::new(9000, 2));
+        assert_eq!(figma.months[11].subscription, Decimal::new(4500, 2));
+        assert_eq!(figma.payment_ids, ["50:2", "50:1"]);
+
+        // The statement isn't one of its receipts.
+        assert!(figma.document_ids.is_empty());
     }
 
     #[test]

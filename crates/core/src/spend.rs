@@ -274,7 +274,11 @@ fn once_by_number(rows: &[Row]) -> Vec<Row> {
                     row.vendor_key,
                     row.total.as_deref().unwrap_or("")
                 ),
-                None => format!("document {}", row.id),
+                // A payment from a statement is its own: many share the statement's document.
+                None => match &row.payment {
+                    Some(payment) => format!("payment {payment}"),
+                    None => format!("document {}", row.id),
+                },
             };
 
             seen.insert(key)

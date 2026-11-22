@@ -92,6 +92,38 @@ struct VendorsOptions {
 
     #[serde(default)]
     vendor_edits: Vec<spendyard_core::vendors::VendorEdit>,
+
+    /// The statements' payments, the receipts they're matched to, and links
+    /// by hand: payments with no receipt count as spend too.
+    #[serde(default)]
+    charges: Vec<spendyard_core::transactions::Charge>,
+    #[serde(default)]
+    match_receipts: Vec<spendyard_core::transactions::MatchReceipt>,
+    #[serde(default)]
+    links: Vec<spendyard_core::transactions::ChargeLink>,
+}
+
+/// The rows with the statements' payments that have no receipt standing in
+/// for theirs (matched as [`transactions`] matches them, links by hand
+/// first), newest first.
+fn with_payments(
+    mut rows: Vec<spendyard_core::spend::Row>,
+    charges: Vec<spendyard_core::transactions::Charge>,
+    match_receipts: Vec<spendyard_core::transactions::MatchReceipt>,
+    links: &[spendyard_core::transactions::ChargeLink],
+    rates: &spendyard_core::rates::RateTable,
+) -> Vec<spendyard_core::spend::Row> {
+    if charges.is_empty() {
+        return rows;
+    }
+
+    let matched =
+        spendyard_core::transactions::match_transactions(charges, match_receipts, links, rates);
+
+    rows.extend(spendyard_core::transactions::payment_rows(&matched));
+    rows.sort_by(|a, b| b.date.cmp(&a.date).then(b.id.cmp(&a.id)));
+
+    rows
 }
 
 /// The rows of `ROWS_SQL` (JSON, its columns as named), grouped by vendor.
@@ -120,18 +152,13 @@ pub fn subscriptions_json(rows: &str, options: &str) -> String {
 
         let rates = spendyard_core::rates::RateTable::new(asked.rates);
 
-        // Payments with no receipt stand in for theirs, newest first among the rows.
-        let matched = spendyard_core::transactions::match_transactions(
+        let rows = with_payments(
+            rows,
             asked.charges,
             asked.match_receipts,
             &asked.links,
             &rates,
         );
-
-        let mut rows = rows;
-
-        rows.extend(spendyard_core::transactions::payment_rows(&matched));
-        rows.sort_by(|a, b| b.date.cmp(&a.date).then(b.id.cmp(&a.id)));
 
         let rows = spendyard_core::vendors::apply_vendor_edits(rows, &asked.vendor_edits);
         let found = spendyard_core::subscriptions::subscriptions(&rows, &asked.options, &rates);
@@ -146,15 +173,26 @@ pub fn subscriptions_json(rows: &str, options: &str) -> String {
 
 /// The vendors in a store's rows: `{"currency", "vendors"}`, the most spent
 /// on first, or `{"error": "…"}`. `options` is `{"currency"?, "today",
-/// "all"?, "rates"?, "vendor_edits"?}`.
+/// "all"?, "rates"?, "vendor_edits"?, "charges"?, "match_receipts"?,
+/// "links"?}`: with the statements' payments, those with no receipt count
+/// as spend too.
 pub fn vendors_json(rows: &str, options: &str) -> String {
     let answer = (|| -> Result<Value, String> {
         let rows = report_rows(rows)?;
         let asked: VendorsOptions =
             serde_json::from_str(options).map_err(|error| error.to_string())?;
 
-        let rows = spendyard_core::vendors::apply_vendor_edits(rows, &asked.vendor_edits);
         let rates = spendyard_core::rates::RateTable::new(asked.rates);
+
+        let rows = with_payments(
+            rows,
+            asked.charges,
+            asked.match_receipts,
+            &asked.links,
+            &rates,
+        );
+
+        let rows = spendyard_core::vendors::apply_vendor_edits(rows, &asked.vendor_edits);
         let found = spendyard_core::vendors::vendors(&rows, &asked.options, &rates);
 
         serde_json::to_value(found).map_err(|error| error.to_string())
