@@ -24,6 +24,7 @@ pub mod spend;
 pub mod statement;
 pub mod subscriptions;
 pub mod text;
+pub mod transactions;
 pub mod validate;
 pub mod vendors;
 

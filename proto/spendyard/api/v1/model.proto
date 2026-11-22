@@ -44,3 +44,23 @@ message Membership {
   Org org = 1;
   Role role = 2;
 }
+
+// VendorRef is a vendor as something points at it: a receipt's, a
+// subscription's, a payment's. As the organisation's vendors have it
+// (VendorService), merges and names decided included.
+message VendorRef {
+  // The vendor's ID: Vendor.id.
+  string id = 1;
+  string name = 2;
+  // Its domain, for its icon (/icons/<domain>); empty when unknown.
+  string domain = 3;
+}
+
+// UserRef is a person as something points at them: who looks after a
+// vendor, who confirmed a receipt.
+message UserRef {
+  // The user's ID: User.id.
+  string id = 1;
+  // Their name, or their email without one.
+  string name = 2;
+}

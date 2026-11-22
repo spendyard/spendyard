@@ -14,9 +14,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
+use crate::catalog::catalog;
 use crate::dates::shift_date;
 use crate::rates::Rates;
-use crate::spend::{Row, converted, report_currency, spend};
+use crate::spend::{Row, StoredRow, converted, report_currency, spend};
 use crate::subscriptions::{CardSeen, SubscriptionOptions, subscriptions};
 
 /// What someone decided about a vendor, by its key.
@@ -94,10 +95,21 @@ pub fn apply_vendor_edits(rows: Vec<Row>, edits: &[VendorEdit]) -> Vec<Row> {
             let key = merged(&row.vendor_key, &by_vendor);
 
             if key != row.vendor_key {
-                if let Some((name, domain, category)) = targets.get(&key) {
-                    row.vendor_name = name.clone();
-                    row.vendor_domain = domain.clone();
-                    row.category = category.clone();
+                // The target as its own rows give it; else as the catalog knows it.
+                let known = || {
+                    catalog().find(Some(&key), None).map(|vendor| {
+                        (
+                            vendor.name.clone(),
+                            Some(vendor.id.clone()),
+                            Some(vendor.category.clone()),
+                        )
+                    })
+                };
+
+                if let Some((name, domain, category)) = targets.get(&key).cloned().or_else(known) {
+                    row.vendor_name = name;
+                    row.vendor_domain = domain;
+                    row.category = category;
                 }
 
                 row.vendor_key = key.clone();
@@ -123,6 +135,42 @@ pub fn apply_vendor_edits(rows: Vec<Row>, edits: &[VendorEdit]) -> Vec<Row> {
             row
         })
         .collect()
+}
+
+/// A vendor as other things point at it (a receipt's, a payment's): its
+/// key, as [`vendors`] has it, its name and its domain.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct VendorRef {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+}
+
+/// The vendor a reading or a payment names (its ID and name as read, and
+/// the name it was corrected to, if it was), as [`vendors`] would have it:
+/// through the catalog, then what people decided (merged, renamed).
+pub fn vendor_ref(
+    vendor_id: Option<&str>,
+    vendor_name: &str,
+    edited_name: Option<&str>,
+    edits: &[VendorEdit],
+) -> VendorRef {
+    let stored = StoredRow {
+        vendor_id: vendor_id.map(String::from),
+        vendor_name: vendor_name.to_string(),
+        edited_vendor_name: edited_name.map(String::from),
+        ..StoredRow::default()
+    };
+
+    let row = Row::from_stored(stored, catalog());
+    let row = apply_vendor_edits(vec![row], edits).remove(0);
+
+    VendorRef {
+        id: row.vendor_key,
+        name: row.vendor_name,
+        domain: row.vendor_domain,
+    }
 }
 
 /// One month of a vendor's spend, in the report's currency: on
@@ -543,6 +591,48 @@ mod tests {
         );
 
         assert!(all.vendors.iter().any(|v| v.id == "netflix" && v.personal));
+    }
+
+    #[test]
+    fn points_at_a_vendor_as_vendors_have_it() {
+        let edits = [VendorEdit {
+            vendor: crate::catalog::name_key("Whiteboard Studio Ltd"),
+            merge_into: Some("miro.com".into()),
+            ..VendorEdit::default()
+        }];
+
+        assert_eq!(
+            vendor_ref(Some("vercel.com"), "Vercel Inc.", None, &[]),
+            VendorRef {
+                id: "vercel.com".into(),
+                name: "Vercel".into(),
+                domain: Some("vercel.com".into())
+            }
+        );
+
+        // Merged into a vendor the catalog knows: that one, as the catalog has it.
+        assert_eq!(
+            vendor_ref(None, "Whiteboard Studio Ltd", None, &edits),
+            VendorRef {
+                id: "miro.com".into(),
+                name: "Miro".into(),
+                domain: Some("miro.com".into())
+            }
+        );
+
+        // A receipt's own correction stays its name, the vendor its catalog's.
+        assert_eq!(
+            vendor_ref(Some("vercel.com"), "Vercel", Some("Vercel (team)"), &[]).name,
+            "Vercel (team)"
+        );
+
+        // Unknown, with a domain read: the name's key, and that domain.
+        assert_eq!(
+            vendor_ref(Some("tiny.example"), "Tiny Tool", None, &[])
+                .domain
+                .as_deref(),
+            Some("tiny.example")
+        );
     }
 
     #[test]

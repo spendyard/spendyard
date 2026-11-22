@@ -3,6 +3,7 @@ syntax = "proto3";
 package spendyard.api.v1;
 
 import "buf/validate/validate.proto";
+import "spendyard/api/v1/model.proto";
 import "spendyard/api/v1/options.proto";
 import "spendyard/api/v1/receipts.proto";
 
@@ -67,10 +68,8 @@ message Subscription {
   // apart from the vendor's others, joined by `:`: `slack.com`,
   // `slack.com:fjordtech`, `atlassian.com::jira`.
   string id = 1;
-  // The vendor's ID: its catalog ID (its domain) when the catalog knows it,
-  // else its name's key. For its icon.
-  string vendor_id = 2;
-  string vendor_name = 3;
+  // Its vendor.
+  VendorRef vendor = 2;
   // The catalog's category: `ai`, `dev-tools`, `infrastructure`, …; empty
   // when the catalog doesn't know the vendor.
   string category = 4;
@@ -104,10 +103,8 @@ message Subscription {
   repeated UsedCard cards = 18;
   // How many receipts and notices it's worked out from.
   int32 documents = 19;
-  // Who in the organisation looks after it: their user ID and name; empty
-  // when nobody's been set.
-  string owner_id = 20;
-  string owner_name = 21;
+  // Who in the organisation looks after it; unset when nobody's been set.
+  UserRef owner = 20;
   // A note about it.
   string note = 22;
   // The day it was marked cancelled, YYYY-MM-DD; empty when it wasn't.

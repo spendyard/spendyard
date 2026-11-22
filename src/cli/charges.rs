@@ -7,27 +7,15 @@
 //! both say. What is left is the point: purchases with no receipt, and
 //! receipts on the same cards with no charge.
 
-use std::collections::{BTreeSet, HashSet};
-
 use anyhow::Result;
 use rusqlite::params;
-use rust_decimal::Decimal;
 use serde::Serialize;
+use spendyard_core::transactions::{
+    CHARGES_SQL, Charge, MATCH_RECEIPTS_SQL, MatchReceipt, Matching, match_transactions,
+    rates_needed,
+};
 
-use super::store::rates::amount;
-use super::store::{SAME_PAYMENT_DAYS, Store, civil_from_days, day_number};
-
-/// How many days after a receipt's date its charge may be: some vendors
-/// send the receipt when the invoice is made and charge the card later.
-const DAYS_AFTER: i64 = 10;
-
-/// How many days before a receipt's date its charge may be: the receipt
-/// sent a day or two after the card was charged, or another time zone.
-const DAYS_BEFORE: i64 = 3;
-
-/// How far a converted amount may be off: the card's currency fee and the
-/// difference between the bank's rate and the ECB's.
-const CONVERTED_MARGIN: f64 = 0.04;
+use super::store::Store;
 
 /// What `charges list` shows.
 pub struct ListOptions {
@@ -69,23 +57,6 @@ impl StoredCharge {
     pub fn needs_receipt(&self) -> bool {
         self.kind == "purchase" || self.kind == "refund"
     }
-}
-
-/// A receipt as matching sees it.
-#[derive(Debug, Clone)]
-struct Receipt {
-    document_id: i64,
-    vendor_id: Option<String>,
-    vendor_name: Option<String>,
-    date: String,
-    total: Decimal,
-    currency: String,
-    card_last4: Option<String>,
-    invoice_number: Option<String>,
-    receipt_number: Option<String>,
-
-    /// `receipt` or `invoice`.
-    kind: String,
 }
 
 /// What a round of matching found.
@@ -176,424 +147,110 @@ pub async fn match_command(json: bool) -> Result<()> {
     Ok(())
 }
 
-/// Matches every charge in the store again, from scratch.
+/// Matches every charge in the store again, from scratch, with the core's
+/// matching (as the cloud's): writes each charge's vendor and receipt.
 pub async fn match_all(store: &Store) -> Result<MatchSummary> {
-    let mut charges = load_charges(store)?;
-
-    refresh_vendors(store, &mut charges)?;
-
-    let receipts = load_receipts(store)?;
+    let charges: Vec<Charge> = query(store, CHARGES_SQL)?;
+    let receipts: Vec<MatchReceipt> = query(store, MATCH_RECEIPTS_SQL)?;
 
     ensure_rates(store, &charges, &receipts).await;
 
-    let mut candidates = Vec::new();
+    let matched = match_transactions(charges, receipts.clone(), &[], store);
 
-    for charge in charges.iter().filter(|charge| charge.needs_receipt()) {
-        for receipt in &receipts {
-            if let Some(score) = score(store, charge, receipt)? {
-                candidates.push((score, charge.id, receipt.document_id));
-            }
-        }
-    }
+    let transaction = store.connection.unchecked_transaction()?;
 
-    candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
+    transaction.execute("UPDATE charges SET receipt_id = NULL", [])?;
 
-    let partners = same_payment(&receipts);
-
-    let mut used_charges = HashSet::new();
-    let mut used_receipts = HashSet::new();
-    let mut pairs = Vec::new();
-
-    for (_, charge_id, receipt_id) in candidates {
-        if used_charges.contains(&charge_id) || used_receipts.contains(&receipt_id) {
-            continue;
-        }
-
-        used_charges.insert(charge_id);
-        used_receipts.insert(receipt_id);
-
-        // The invoice and the receipt for the same payment: one charge.
-        for partner in partners.get(&receipt_id).into_iter().flatten() {
-            used_receipts.insert(*partner);
-        }
-
-        pairs.push((charge_id, receipt_id));
-    }
-
-    store
-        .connection
-        .execute("UPDATE charges SET receipt_id = NULL", [])?;
-
-    for (charge_id, receipt_id) in &pairs {
-        store.connection.execute(
-            "UPDATE charges SET receipt_id = ?1 WHERE id = ?2",
-            params![receipt_id, charge_id],
+    for found in &matched.transactions {
+        transaction.execute(
+            "UPDATE charges SET receipt_id = ?1, vendor_id = ?2, vendor_name = ?3 WHERE id = ?4",
+            params![
+                found.receipt_id,
+                found.charge.vendor_id,
+                found.charge.vendor_name,
+                found.charge.id
+            ],
         )?;
     }
 
-    let summary = summarize(&charges, &receipts, &used_charges, &used_receipts);
+    transaction.commit()?;
 
-    Ok(summary)
+    Ok(summary_of(&matched, &receipts))
 }
 
-/// Receipts that are the same payment as another: the invoice and the
-/// receipt a vendor sends for it (Stripe sends both), or the same receipt
-/// read twice. Same vendor, same amount and currency, and the same invoice
-/// or receipt number.
-fn same_payment(receipts: &[Receipt]) -> std::collections::HashMap<i64, Vec<i64>> {
-    let mut groups: std::collections::HashMap<(String, String, String), Vec<i64>> =
-        std::collections::HashMap::new();
+/// The rows of a core query, by their columns' names.
+fn query<T: serde::de::DeserializeOwned>(store: &Store, sql: &str) -> Result<Vec<T>> {
+    let mut statement = store.connection.prepare(sql)?;
+    let names: Vec<String> = statement.column_names().map(String::from).collect();
 
-    for receipt in receipts {
-        let vendor = receipt
-            .vendor_id
-            .clone()
-            .or_else(|| {
-                receipt
-                    .vendor_name
-                    .as_deref()
-                    .map(spendyard_core::catalog::name_key)
-            })
-            .unwrap_or_default();
+    let rows = statement.query_map([], |row| {
+        let mut object = serde_json::Map::new();
 
-        let amount = format!("{} {}", receipt.total.abs().normalize(), receipt.currency);
+        for (i, name) in names.iter().enumerate() {
+            let value = match row.get_ref(i)? {
+                rusqlite::types::ValueRef::Null => serde_json::Value::Null,
+                rusqlite::types::ValueRef::Integer(n) => n.into(),
+                rusqlite::types::ValueRef::Real(f) => f.into(),
+                rusqlite::types::ValueRef::Text(t) => {
+                    String::from_utf8_lossy(t).into_owned().into()
+                }
+                rusqlite::types::ValueRef::Blob(_) => serde_json::Value::Null,
+            };
 
-        let numbers = [&receipt.invoice_number, &receipt.receipt_number];
-
-        for number in numbers.into_iter().flatten() {
-            // Letters and digits only: `B085EFDD-0038` on the email is
-            // `B085EFDD 0038` on its PDF.
-            let plain: String = number
-                .chars()
-                .filter(char::is_ascii_alphanumeric)
-                .collect::<String>()
-                .to_uppercase();
-
-            if plain.is_empty() {
-                continue;
-            }
-
-            let key = (vendor.clone(), amount.clone(), plain);
-
-            groups.entry(key).or_default().push(receipt.document_id);
-        }
-    }
-
-    let mut partners: std::collections::HashMap<i64, Vec<i64>> = std::collections::HashMap::new();
-
-    for ids in groups.values().filter(|ids| ids.len() > 1) {
-        for id in ids {
-            let others = ids.iter().filter(|other| *other != id).copied();
-
-            partners.entry(*id).or_default().extend(others);
-        }
-    }
-
-    // A paid invoice and a receipt with no number in common (Plain's PDFs
-    // have only the invoice number, its emails only the receipt number):
-    // same vendor and amount, a few days apart. Each receipt pairs once.
-    let mut paired = HashSet::new();
-
-    for invoice in receipts.iter().filter(|r| r.kind == "invoice") {
-        let partner = receipts.iter().find(|receipt| {
-            receipt.kind == "receipt"
-                && !paired.contains(&receipt.document_id)
-                && receipt.total.abs() == invoice.total.abs()
-                && receipt.currency == invoice.currency
-                && same_vendor_id(receipt, invoice)
-                && days_apart(&receipt.date, &invoice.date)
-                    .is_some_and(|apart| apart <= SAME_PAYMENT_DAYS)
-        });
-
-        let Some(partner) = partner else {
-            continue;
-        };
-
-        paired.insert(partner.document_id);
-
-        partners
-            .entry(invoice.document_id)
-            .or_default()
-            .push(partner.document_id);
-
-        partners
-            .entry(partner.document_id)
-            .or_default()
-            .push(invoice.document_id);
-    }
-
-    partners
-}
-
-fn same_vendor_id(a: &Receipt, b: &Receipt) -> bool {
-    match (&a.vendor_id, &b.vendor_id) {
-        (Some(a), Some(b)) => spendyard_core::catalog::catalog().same_or_related(a, b),
-        _ => false,
-    }
-}
-
-fn days_apart(a: &str, b: &str) -> Option<i64> {
-    Some((days(a)? - days(b)?).abs())
-}
-
-/// Looks each charge's vendor up again from its merchant, so additions to
-/// the catalog reach charges read before them.
-fn refresh_vendors(store: &Store, charges: &mut [StoredCharge]) -> Result<()> {
-    let catalog = spendyard_core::catalog::catalog();
-
-    for charge in charges.iter_mut() {
-        let vendor = catalog.by_merchant(&charge.merchant);
-
-        let id = vendor.map(|vendor| vendor.id.clone());
-
-        if id == charge.vendor_id {
-            continue;
+            object.insert(name.clone(), value);
         }
 
-        charge.vendor_id = id;
-        charge.vendor_name = vendor.map(|vendor| vendor.name.clone());
+        Ok(serde_json::Value::Object(object))
+    })?;
 
-        store.connection.execute(
-            "UPDATE charges SET vendor_id = ?1, vendor_name = ?2 WHERE id = ?3",
-            params![charge.vendor_id, charge.vendor_name, charge.id],
-        )?;
+    let mut out = Vec::new();
+
+    for row in rows {
+        out.push(serde_json::from_value(row?)?);
     }
 
-    Ok(())
+    Ok(out)
 }
 
-fn summarize(
-    charges: &[StoredCharge],
-    receipts: &[Receipt],
-    used_charges: &HashSet<i64>,
-    used_receipts: &HashSet<i64>,
-) -> MatchSummary {
-    let mut summary = MatchSummary {
-        charges: charges.len(),
-        ..MatchSummary::default()
-    };
-
-    let mut missing_by_currency: std::collections::BTreeMap<String, Decimal> =
-        std::collections::BTreeMap::new();
-
-    for charge in charges {
-        if !charge.needs_receipt() {
-            summary.no_receipt_needed += 1;
-        } else if used_charges.contains(&charge.id) {
-            summary.matched += 1;
-        } else {
-            summary.missing += 1;
-
-            let currency = charge.currency.clone().unwrap_or_default();
-
-            let value = amount(&charge.amount).unwrap_or_default();
-
-            *missing_by_currency.entry(currency).or_default() += value;
-        }
-    }
-
-    summary.missing_amount = missing_by_currency
-        .into_iter()
-        .map(|(currency, value)| (currency, value.to_string()))
-        .collect();
-
-    let covered = coverage(charges);
-
-    summary.receipts_without_charge = receipts
+/// The summary `charges match` prints, from the core's matching.
+fn summary_of(matched: &Matching, receipts: &[MatchReceipt]) -> MatchSummary {
+    let receipts_without_charge = matched
+        .receipts_without_charge
         .iter()
-        .filter(|receipt| !used_receipts.contains(&receipt.document_id))
-        .filter(|receipt| {
-            receipt
-                .card_last4
-                .as_deref()
-                .is_some_and(|card| is_covered(&covered, card, &receipt.date))
-        })
+        .filter_map(|id| receipts.iter().find(|receipt| receipt.document_id == *id))
         .map(|receipt| {
+            let vendor = receipt
+                .vendor_name
+                .clone()
+                .or_else(|| receipt.vendor_id.clone())
+                .unwrap_or_default();
+
             (
                 receipt.document_id,
-                receipt
-                    .vendor_name
-                    .clone()
-                    .or_else(|| receipt.vendor_id.clone())
-                    .unwrap_or_default(),
+                vendor,
                 receipt.date.clone(),
-                receipt.total.to_string(),
+                receipt.total.clone(),
                 receipt.currency.clone(),
             )
         })
         .collect();
 
-    summary
-}
-
-/// The days each statement covers, per card: from its first charge to its
-/// last, as day numbers.
-fn coverage(charges: &[StoredCharge]) -> Vec<(String, i64, i64)> {
-    let mut ranges: std::collections::BTreeMap<(i64, String), (i64, i64)> =
-        std::collections::BTreeMap::new();
-
-    for charge in charges {
-        let (Some(card), Some(day)) = (&charge.card_last4, days(&charge.date)) else {
-            continue;
-        };
-
-        let range = ranges
-            .entry((charge.document_id, card.clone()))
-            .or_insert((day, day));
-
-        range.0 = range.0.min(day);
-        range.1 = range.1.max(day);
+    MatchSummary {
+        charges: matched.transactions.len(),
+        matched: matched.matched,
+        missing: matched.missing,
+        missing_amount: matched.missing_amount.clone(),
+        no_receipt_needed: matched.no_receipt_needed,
+        receipts_without_charge,
     }
-
-    ranges
-        .into_iter()
-        .map(|((_, card), (first, last))| (card, first, last))
-        .collect()
-}
-
-/// Whether a receipt on `card` dated `date` falls in a statement's days,
-/// and so do the days after it in which its charge could come: a receipt
-/// near the end of the last statement may be charged on the next one.
-fn is_covered(ranges: &[(String, i64, i64)], card: &str, date: &str) -> bool {
-    let Some(day) = days(date) else {
-        return false;
-    };
-
-    let within = |day: i64| {
-        ranges
-            .iter()
-            .any(|(range_card, first, last)| range_card == card && *first <= day && day <= *last)
-    };
-
-    within(day) && within(day + DAYS_AFTER)
-}
-
-/// How well `receipt` fits `charge`: lower is better, `None` when it
-/// doesn't fit at all. An exact amount beats a converted one; then the
-/// closer date wins.
-fn score(store: &Store, charge: &StoredCharge, receipt: &Receipt) -> Result<Option<f64>> {
-    if !same_vendor(charge, receipt) {
-        return Ok(None);
-    }
-
-    if let (Some(card), Some(receipt_card)) = (&charge.card_last4, &receipt.card_last4)
-        && card != receipt_card
-    {
-        return Ok(None);
-    }
-
-    let (Some(charge_day), Some(receipt_day)) = (days(&charge.date), days(&receipt.date)) else {
-        return Ok(None);
-    };
-
-    let after = charge_day - receipt_day;
-
-    if !(-DAYS_BEFORE..=DAYS_AFTER).contains(&after) {
-        return Ok(None);
-    }
-
-    let apart = after.abs();
-
-    let Some(closeness) = amount_closeness(store, charge, receipt)? else {
-        return Ok(None);
-    };
-
-    Ok(Some(closeness * 100.0 + apart as f64))
-}
-
-fn same_vendor(charge: &StoredCharge, receipt: &Receipt) -> bool {
-    if let (Some(a), Some(b)) = (&charge.vendor_id, &receipt.vendor_id) {
-        return spendyard_core::catalog::catalog().same_or_related(a, b);
-    }
-
-    let key = |name: &Option<String>| name.as_deref().map(spendyard_core::catalog::name_key);
-
-    let charge_name = key(&charge.vendor_name);
-
-    charge_name.is_some() && charge_name == key(&receipt.vendor_name)
-}
-
-/// 0 for the same amount in the same currency; the relative difference
-/// for a converted one within [`CONVERTED_MARGIN`]; `None` otherwise.
-fn amount_closeness(
-    store: &Store,
-    charge: &StoredCharge,
-    receipt: &Receipt,
-) -> Result<Option<f64>> {
-    let cent = Decimal::new(1, 2);
-
-    let exact_pairs = [
-        (&charge.original_amount, &charge.original_currency),
-        (&Some(charge.amount.clone()), &charge.currency),
-    ];
-
-    for (value, currency) in exact_pairs {
-        let (Some(value), Some(currency)) = (value, currency) else {
-            continue;
-        };
-
-        if currency != &receipt.currency {
-            continue;
-        }
-
-        let Some(value) = amount(value) else {
-            continue;
-        };
-
-        let close = (value.abs() - receipt.total.abs()).abs() <= cent;
-
-        return Ok(close.then_some(0.0));
-    }
-
-    let (Some(currency), Some(charged)) = (&charge.currency, amount(&charge.amount)) else {
-        return Ok(None);
-    };
-
-    let converted = store.convert(receipt.total, &receipt.currency, currency, &charge.date)?;
-
-    let Some(converted) = converted else {
-        return Ok(None);
-    };
-
-    use rust_decimal::prelude::ToPrimitive;
-
-    let charged = charged.abs().to_f64().unwrap_or(0.0);
-    let expected = converted.abs().to_f64().unwrap_or(0.0);
-
-    if expected == 0.0 {
-        return Ok(None);
-    }
-
-    let difference = (charged - expected).abs() / expected;
-
-    Ok((difference <= CONVERTED_MARGIN).then_some(difference))
 }
 
 /// Fetches ECB rates for receipts in another currency than the charges,
 /// when the store lacks them. Matching goes on without them on failure.
-async fn ensure_rates(store: &Store, charges: &[StoredCharge], receipts: &[Receipt]) {
-    let mut currencies: BTreeSet<String> = charges
-        .iter()
-        .filter_map(|charge| charge.currency.clone())
-        .collect();
-
-    currencies.extend(receipts.iter().map(|receipt| receipt.currency.clone()));
-
-    if currencies.len() <= 1 {
-        return;
-    }
-
-    let Some(earliest) = charges.iter().map(|charge| charge.date.as_str()).min() else {
+async fn ensure_rates(store: &Store, charges: &[Charge], receipts: &[MatchReceipt]) {
+    let Some((currencies, since)) = rates_needed(charges, receipts) else {
         return;
     };
-
-    let Some(day) = days(earliest) else {
-        return;
-    };
-
-    let (year, month, date) = civil_from_days(day - 7 - DAYS_AFTER);
-
-    let since = format!("{year:04}-{month:02}-{date:02}");
 
     match store.update_rates(&currencies, &since).await {
         Ok(added) if added > 0 => {
@@ -632,83 +289,6 @@ fn load_charges(store: &Store) -> Result<Vec<StoredCharge>> {
     let charges = rows.collect::<Result<Vec<_>, _>>()?;
 
     Ok(charges)
-}
-
-/// Receipts and invoices with a date, total and currency, not ignored.
-/// Vendor names follow edits.
-fn load_receipts(store: &Store) -> Result<Vec<Receipt>> {
-    let mut statement = store.connection.prepare(
-        "SELECT r.document_id, COALESCE(e.vendor_id, r.vendor_id),
-                COALESCE(e.vendor_name, r.vendor_name), r.date, r.total, r.currency, r.card_last4,
-                r.invoice_number, r.receipt_number, coalesce(r.type, '')
-         FROM receipts r LEFT JOIN edits e ON e.document_id = r.document_id
-         WHERE (r.is_receipt = 1 OR r.is_invoice = 1)
-           AND COALESCE(e.ignored, 0) = 0
-           AND r.date IS NOT NULL AND r.total IS NOT NULL AND r.currency IS NOT NULL",
-    )?;
-
-    let rows = statement.query_map([], |row| {
-        let date: String = row.get(3)?;
-        let total: String = row.get(4)?;
-
-        Ok((
-            row.get::<_, i64>(0)?,
-            row.get::<_, Option<String>>(1)?,
-            row.get::<_, Option<String>>(2)?,
-            date.chars().take(10).collect::<String>(),
-            total,
-            row.get::<_, String>(5)?,
-            row.get::<_, Option<String>>(6)?,
-            row.get::<_, Option<String>>(7)?,
-            row.get::<_, Option<String>>(8)?,
-            row.get::<_, String>(9)?,
-        ))
-    })?;
-
-    let mut receipts = Vec::new();
-
-    for row in rows {
-        let (
-            document_id,
-            vendor_id,
-            vendor_name,
-            date,
-            total,
-            currency,
-            card_last4,
-            invoice_number,
-            receipt_number,
-            kind,
-        ) = row?;
-
-        let Some(total) = amount(&total) else {
-            continue;
-        };
-
-        // Receipts read before the catalog knew their vendor's name.
-        let vendor_id = vendor_id.or_else(|| {
-            let name = vendor_name.as_deref()?;
-
-            let vendor = spendyard_core::catalog::catalog().by_name(name)?;
-
-            Some(vendor.id.clone())
-        });
-
-        receipts.push(Receipt {
-            document_id,
-            vendor_id,
-            vendor_name,
-            date,
-            total,
-            currency: currency.to_uppercase(),
-            card_last4,
-            invoice_number,
-            receipt_number,
-            kind,
-        });
-    }
-
-    Ok(receipts)
 }
 
 fn print_charge(charge: &StoredCharge) {
@@ -814,157 +394,4 @@ fn truncate(text: &str, width: usize) -> String {
     let cut: String = text.chars().take(width - 1).collect();
 
     format!("{cut}…")
-}
-
-fn days(date: &str) -> Option<i64> {
-    day_number(date)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn days_round_trip_with_civil_from_days() {
-        for date in [
-            "1970-01-01",
-            "2026-02-28",
-            "2026-03-01",
-            "2024-02-29",
-            "2026-12-31",
-        ] {
-            let (year, month, day) = civil_from_days(days(date).unwrap());
-
-            assert_eq!(format!("{year:04}-{month:02}-{day:02}"), date);
-        }
-
-        assert_eq!(days("2026-04-20").unwrap() - days("2026-04-14").unwrap(), 6);
-    }
-
-    fn charge() -> StoredCharge {
-        StoredCharge {
-            id: 1,
-            document_id: 3,
-            date: "2026-04-20".to_string(),
-            merchant: "ANTHROPIC: CLAUDE TEAM, SAN FRANCISCO, US".to_string(),
-            card_last4: Some("3776".to_string()),
-            amount: "8237.67".to_string(),
-            currency: Some("NOK".to_string()),
-            original_amount: Some("843.75".to_string()),
-            original_currency: Some("USD".to_string()),
-            kind: "purchase".to_string(),
-            vendor_id: Some("anthropic.com".to_string()),
-            vendor_name: Some("Anthropic".to_string()),
-            receipt_id: None,
-        }
-    }
-
-    fn receipt(total: &str, date: &str, card: Option<&str>) -> Receipt {
-        Receipt {
-            document_id: 7,
-            vendor_id: Some("anthropic.com".to_string()),
-            vendor_name: Some("Anthropic".to_string()),
-            date: date.to_string(),
-            total: amount(total).unwrap(),
-            currency: "USD".to_string(),
-            card_last4: card.map(str::to_string),
-            invoice_number: None,
-            receipt_number: None,
-            kind: "receipt".to_string(),
-        }
-    }
-
-    #[test]
-    fn an_invoice_and_its_receipt_are_one_payment() {
-        let invoice = Receipt {
-            document_id: 150,
-            invoice_number: Some("CA7B0DDD-0001".to_string()),
-            ..receipt("34.99", "2023-04-19", None)
-        };
-
-        let paid = Receipt {
-            document_id: 151,
-            invoice_number: Some("ca7b0ddd 0001".to_string()),
-            receipt_number: Some("2244-2550".to_string()),
-            ..receipt("34.99", "2023-04-19", None)
-        };
-
-        let next_month = Receipt {
-            document_id: 167,
-            invoice_number: Some("CA7B0DDD-0002".to_string()),
-            ..receipt("34.99", "2023-05-19", None)
-        };
-
-        let partners = same_payment(&[invoice, paid, next_month]);
-
-        assert_eq!(partners.get(&150), Some(&vec![151]));
-        assert_eq!(partners.get(&151), Some(&vec![150]));
-        assert!(!partners.contains_key(&167));
-    }
-
-    #[test]
-    fn a_paid_invoice_and_a_receipt_without_a_shared_number_are_one_payment() {
-        let invoice_pdf = Receipt {
-            document_id: 1,
-            invoice_number: Some("829".to_string()),
-            kind: "invoice".to_string(),
-            ..receipt("714.00", "2026-04-21", None)
-        };
-
-        let receipt_email = Receipt {
-            document_id: 2,
-            receipt_number: Some("1750-3785".to_string()),
-            ..receipt("714.00", "2026-04-22", None)
-        };
-
-        let other_month = Receipt {
-            document_id: 3,
-            receipt_number: Some("1169-0929".to_string()),
-            ..receipt("714.00", "2026-05-22", None)
-        };
-
-        let partners = same_payment(&[invoice_pdf, receipt_email, other_month]);
-
-        assert_eq!(partners.get(&1), Some(&vec![2]));
-        assert!(!partners.contains_key(&3));
-    }
-
-    fn store() -> (Store, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!(
-            "spendyard-charges-{}-{:?}",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-
-        let store = Store::open_at(&dir.join("test.db")).unwrap();
-
-        (store, dir)
-    }
-
-    #[test]
-    fn the_same_amount_in_the_receipts_currency_matches() {
-        let (store, dir) = store();
-
-        let exact = score(
-            &store,
-            &charge(),
-            &receipt("843.75", "2026-04-19", Some("3776")),
-        );
-        let other_card = score(
-            &store,
-            &charge(),
-            &receipt("843.75", "2026-04-19", Some("4242")),
-        );
-        let charged_later = score(&store, &charge(), &receipt("843.75", "2026-04-12", None));
-        let too_late = score(&store, &charge(), &receipt("843.75", "2026-04-30", None));
-        let other_amount = score(&store, &charge(), &receipt("843.00", "2026-04-20", None));
-
-        assert_eq!(exact.unwrap(), Some(1.0));
-        assert_eq!(other_card.unwrap(), None);
-        assert_eq!(charged_later.unwrap(), Some(8.0));
-        assert_eq!(too_late.unwrap(), None);
-        assert_eq!(other_amount.unwrap(), None);
-
-        std::fs::remove_dir_all(dir).ok();
-    }
 }

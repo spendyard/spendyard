@@ -3,6 +3,7 @@ syntax = "proto3";
 package spendyard.api.v1;
 
 import "buf/validate/validate.proto";
+import "spendyard/api/v1/model.proto";
 import "spendyard/api/v1/options.proto";
 import "spendyard/api/v1/receipts.proto";
 
@@ -81,9 +82,8 @@ message Vendor {
   repeated UsedCard cards = 13;
   // The accounts its receipts name: workspaces, emails.
   repeated string accounts = 14;
-  // Who in the organisation looks after it: their user ID and name.
-  string owner_id = 15;
-  string owner_name = 16;
+  // Who in the organisation looks after it; unset when nobody's been set.
+  UserRef owner = 15;
   string note = 17;
   // Marked personal, or as not spend at all: its receipts aren't the
   // organisation's spend.

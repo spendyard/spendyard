@@ -13,6 +13,9 @@
 //! - [`vendors`]: who the organisation pays, from the same rows: what each
 //!   cost, month by month, and its subscriptions, cards and accounts.
 //! - [`catalog_domain`]: whether the vendor catalog knows a domain.
+//! - [`transactions`], [`transaction_suggestions`], [`transaction_sql`]
+//!   and [`transaction_rates_needed`]: payments from card statements, each
+//!   matched to its receipt, as `spendyard charges match` does.
 //! - [`rows_sql`]: the query for those rows, which the host's store runs.
 //! - [`rates_needed`], [`rates_url`] and [`parse_rates`]: which exchange
 //!   rates converting needs, where to ask the ECB for them, and its answer
@@ -140,6 +143,188 @@ pub fn vendors_json(rows: &str, options: &str) -> String {
 #[wasm_bindgen]
 pub fn vendors(rows: &str, options: &str) -> String {
     vendors_json(rows, options)
+}
+
+/// The queries for the payments matched (the core's `CHARGES_SQL`) and the
+/// receipts they're matched to (`MATCH_RECEIPTS_SQL`), which the host's
+/// store runs: `{"charges", "receipts"}`.
+#[wasm_bindgen]
+pub fn transaction_sql() -> String {
+    json!({
+        "charges": spendyard_core::transactions::CHARGES_SQL,
+        "receipts": spendyard_core::transactions::MATCH_RECEIPTS_SQL,
+    })
+    .to_string()
+}
+
+/// What [`transactions`] and [`transaction_suggestions`] work with.
+#[derive(Debug, Default, Deserialize)]
+struct TransactionOptions {
+    #[serde(default)]
+    links: Vec<spendyard_core::transactions::ChargeLink>,
+
+    #[serde(default)]
+    rates: Vec<spendyard_core::rates::Rate>,
+
+    /// For suggestions: the payment, by its ID, and how many at most.
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// The rows of the two queries, as the core takes them.
+fn transaction_rows(
+    charges: &str,
+    receipts: &str,
+) -> Result<
+    (
+        Vec<spendyard_core::transactions::Charge>,
+        Vec<spendyard_core::transactions::MatchReceipt>,
+    ),
+    String,
+> {
+    let charges = serde_json::from_str(charges).map_err(|error| format!("charges: {error}"))?;
+    let receipts = serde_json::from_str(receipts).map_err(|error| format!("receipts: {error}"))?;
+
+    Ok((charges, receipts))
+}
+
+/// Every payment matched to its receipt, as the CLI's `spendyard charges
+/// match` does: `{"transactions", "matched", "missing", …}`, or
+/// `{"error": "…"}`. `options` is `{"links"?, "rates"?}`.
+pub fn transactions_json(charges: &str, receipts: &str, options: &str) -> String {
+    let answer = (|| -> Result<Value, String> {
+        let (charges, receipts) = transaction_rows(charges, receipts)?;
+        let asked: TransactionOptions =
+            serde_json::from_str(options).map_err(|error| error.to_string())?;
+
+        let rates = spendyard_core::rates::RateTable::new(asked.rates);
+        let matched = spendyard_core::transactions::match_transactions(
+            charges,
+            receipts,
+            &asked.links,
+            &rates,
+        );
+
+        serde_json::to_value(matched).map_err(|error| error.to_string())
+    })();
+
+    answer
+        .unwrap_or_else(|error| json!({ "error": error }))
+        .to_string()
+}
+
+/// [`transactions_json`], for JavaScript.
+#[wasm_bindgen]
+pub fn transactions(charges: &str, receipts: &str, options: &str) -> String {
+    transactions_json(charges, receipts, options)
+}
+
+/// Receipts that could be one payment's, the likeliest first: their
+/// document IDs, or `{"error": "…"}`. `options` is `{"id", "limit"?,
+/// "rates"?}`.
+pub fn transaction_suggestions_json(charges: &str, receipts: &str, options: &str) -> String {
+    let answer = (|| -> Result<Value, String> {
+        let (charges, receipts) = transaction_rows(charges, receipts)?;
+        let asked: TransactionOptions =
+            serde_json::from_str(options).map_err(|error| error.to_string())?;
+
+        let id = asked.id.ok_or("which payment: options.id")?;
+        let charge = charges
+            .iter()
+            .find(|charge| charge.key() == id)
+            .ok_or("no such payment")?;
+
+        let rates = spendyard_core::rates::RateTable::new(asked.rates);
+        let found = spendyard_core::transactions::suggestions(
+            charge,
+            &receipts,
+            &rates,
+            asked.limit.unwrap_or(5),
+        );
+
+        Ok(json!(found))
+    })();
+
+    answer
+        .unwrap_or_else(|error| json!({ "error": error }))
+        .to_string()
+}
+
+/// [`transaction_suggestions_json`], for JavaScript.
+#[wasm_bindgen]
+pub fn transaction_suggestions(charges: &str, receipts: &str, options: &str) -> String {
+    transaction_suggestions_json(charges, receipts, options)
+}
+
+/// What matching needs to convert: `{"currencies", "since"}`, none when
+/// one currency is all; or `{"error": "…"}`.
+#[wasm_bindgen]
+pub fn transaction_rates_needed(charges: &str, receipts: &str) -> String {
+    let answer = (|| -> Result<Value, String> {
+        let (charges, receipts) = transaction_rows(charges, receipts)?;
+
+        let (currencies, since) =
+            spendyard_core::transactions::rates_needed(&charges, &receipts).unwrap_or_default();
+
+        Ok(json!({ "currencies": currencies, "since": since }))
+    })();
+
+    answer
+        .unwrap_or_else(|error| json!({ "error": error }))
+        .to_string()
+}
+
+/// One thing that names a vendor: its ID as read, and its name.
+#[derive(Debug, Default, Deserialize)]
+struct Naming {
+    #[serde(default)]
+    vendor_id: Option<String>,
+    #[serde(default)]
+    vendor_name: Option<String>,
+    /// The name it was corrected to, on that one thing.
+    #[serde(default)]
+    edited_vendor_name: Option<String>,
+}
+
+/// The vendors things name (`[{"vendor_id"?, "vendor_name"?,
+/// "edited_vendor_name"?}]`), as the
+/// organisation's vendors have them, with what people decided (`edits`,
+/// as [`vendors`] takes them): `[{"id", "name", "domain"?}]`, in the same
+/// order; or `{"error": "…"}`.
+pub fn vendor_refs_json(items: &str, edits: &str) -> String {
+    let answer = (|| -> Result<Value, String> {
+        let items: Vec<Naming> = serde_json::from_str(items).map_err(|error| error.to_string())?;
+        let edits: Vec<spendyard_core::vendors::VendorEdit> =
+            serde_json::from_str(edits).map_err(|error| error.to_string())?;
+
+        let refs: Vec<_> = items
+            .iter()
+            .map(|item| {
+                let name = item.vendor_name.as_deref().unwrap_or("");
+
+                spendyard_core::vendors::vendor_ref(
+                    item.vendor_id.as_deref(),
+                    name,
+                    item.edited_vendor_name.as_deref(),
+                    &edits,
+                )
+            })
+            .collect();
+
+        serde_json::to_value(refs).map_err(|error| error.to_string())
+    })();
+
+    answer
+        .unwrap_or_else(|error| json!({ "error": error }))
+        .to_string()
+}
+
+/// [`vendor_refs_json`], for JavaScript.
+#[wasm_bindgen]
+pub fn vendor_refs(items: &str, edits: &str) -> String {
+    vendor_refs_json(items, edits)
 }
 
 /// The catalog's vendor for a domain (or a subdomain of one): its ID, or
@@ -428,6 +613,48 @@ mod tests {
         assert_eq!(answer["vendors"][0]["spent_year"], "20.00");
         assert_eq!(catalog_domain("billing.vercel.com"), "vercel.com");
         assert_eq!(catalog_domain("nowhere.example"), "");
+    }
+
+    #[test]
+    fn matches_payments_from_rows_as_json() {
+        let charges = json!([{
+            "id": 1, "document_id": 100, "position": 1, "date": "2026-11-19", "merchant": "VERCEL INC.",
+            "card_last4": "3776", "amount": "20.00", "currency": "USD", "kind": "purchase"
+        }]);
+
+        let receipts = json!([{
+            "document_id": 7, "vendor_name": "Vercel", "date": "2026-11-18", "total": "20.00", "currency": "USD", "kind": "receipt"
+        }]);
+
+        let matched: Value = serde_json::from_str(&transactions_json(
+            &charges.to_string(),
+            &receipts.to_string(),
+            "{}",
+        ))
+        .unwrap();
+
+        assert_eq!(matched["transactions"][0]["id"], "100:1");
+        assert_eq!(matched["transactions"][0]["receipt_id"], 7);
+        assert_eq!(matched["matched"], 1);
+
+        let unlinked = json!({ "links": [{ "id": "100:1", "no_receipt": true }] });
+        let unlinked: Value = serde_json::from_str(&transactions_json(
+            &charges.to_string(),
+            &receipts.to_string(),
+            &unlinked.to_string(),
+        ))
+        .unwrap();
+
+        assert_eq!(unlinked["transactions"][0]["state"], "no receipt needed");
+
+        let suggested: Value = serde_json::from_str(&transaction_suggestions_json(
+            &charges.to_string(),
+            &receipts.to_string(),
+            "{\"id\": \"100:1\"}",
+        ))
+        .unwrap();
+
+        assert_eq!(suggested, json!([7]));
     }
 
     #[test]

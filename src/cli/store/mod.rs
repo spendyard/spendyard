@@ -580,7 +580,7 @@ pub fn now() -> String {
 }
 
 // Calendar days, as the core counts them.
-pub use spendyard_core::dates::{SAME_PAYMENT_DAYS, civil_from_days, day_number};
+pub use spendyard_core::dates::civil_from_days;
 
 #[cfg(test)]
 mod tests {

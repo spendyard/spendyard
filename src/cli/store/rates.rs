@@ -6,7 +6,6 @@ use std::collections::BTreeSet;
 
 use anyhow::{Context, Result};
 use rusqlite::{OptionalExtension, params};
-use rust_decimal::Decimal;
 
 use super::Store;
 
@@ -90,18 +89,6 @@ impl Store {
 
         Ok(rate)
     }
-
-    /// `amount` in `from` converted to `to`, at the rates of `date`. `None`
-    /// when a rate is missing.
-    pub fn convert(
-        &self,
-        amount: Decimal,
-        from: &str,
-        to: &str,
-        date: &str,
-    ) -> Result<Option<Decimal>> {
-        Ok(spendyard_core::rates::convert(self, amount, from, to, date))
-    }
 }
 
 /// The store's rates, for the core's conversions. A rate it can't read is missing.
@@ -111,15 +98,15 @@ impl spendyard_core::rates::Rates for Store {
     }
 }
 
-/// Parses a stored amount.
-pub use spendyard_core::spend::amount;
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn converts_through_the_euro_with_the_rate_on_or_before_the_date() {
+    fn gives_the_core_the_rate_on_or_before_the_date() {
+        use rust_decimal::Decimal;
+        use spendyard_core::rates::convert;
+
         let dir = std::env::temp_dir().join(format!("spendyard-rates-{}", std::process::id()));
 
         let store = Store::open_at(&dir.join("test.db")).unwrap();
@@ -138,22 +125,17 @@ mod tests {
                 .unwrap();
         }
 
-        let converted = store
-            .convert(Decimal::from(110), "USD", "NOK", "2026-11-11")
-            .unwrap();
-
-        assert_eq!(converted, Some(Decimal::from(1100)));
-
-        let euros = store
-            .convert(Decimal::from(120), "USD", "EUR", "2026-11-13")
-            .unwrap();
-
-        assert_eq!(euros, Some(Decimal::from(100)));
-
+        // The 11th has no rate: the 10th's.
         assert_eq!(
-            store
-                .convert(Decimal::from(1), "USD", "JPY", "2026-11-13")
-                .unwrap(),
+            convert(&store, Decimal::from(110), "USD", "NOK", "2026-11-11"),
+            Some(Decimal::from(1100))
+        );
+        assert_eq!(
+            convert(&store, Decimal::from(120), "USD", "EUR", "2026-11-13"),
+            Some(Decimal::from(100))
+        );
+        assert_eq!(
+            convert(&store, Decimal::from(1), "USD", "JPY", "2026-11-13"),
             None
         );
 

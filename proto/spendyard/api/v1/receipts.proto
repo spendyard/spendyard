@@ -5,6 +5,7 @@ package spendyard.api.v1;
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 import "spendyard/api/v1/documents.proto";
+import "spendyard/api/v1/model.proto";
 import "spendyard/api/v1/options.proto";
 
 // ReceiptService is the active organisation's receipts: what was read from
@@ -56,11 +57,8 @@ message Receipt {
   // What its document is: a receipt, an invoice, a renewal notice, a failed
   // payment; in the review queue, anything else read with flags.
   DocumentType document_type = 2;
-  // The vendor's ID, as corrected if it was: its catalog ID when the catalog
-  // knows it, else the domain the receipt shows. For its icon.
-  string vendor_id = 3;
-  // The vendor's name, as corrected if it was.
-  string vendor_name = 4;
+  // Its vendor, as corrected if it was.
+  VendorRef vendor = 3;
   // The day it was issued, or arrived when it doesn't say: YYYY-MM-DD.
   string date = 5;
   // The total, a plain decimal (`1234.50`), and its currency.
@@ -291,8 +289,8 @@ message ReceiptEdit {
 }
 
 message ReceiptConfirmation {
-  // Who confirmed it: their name, or their email without one.
-  string confirmed_by = 1;
+  // Who confirmed it.
+  UserRef confirmed_by = 1;
   google.protobuf.Timestamp confirmed_at = 2;
 }
 

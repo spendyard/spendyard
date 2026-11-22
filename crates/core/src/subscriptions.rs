@@ -45,6 +45,9 @@ pub struct Subscription {
     /// What the vendor's rows group by: its catalog ID (its domain), else
     /// its name's key.
     pub vendor_key: String,
+    /// The vendor's domain, for its icon.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vendor_domain: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
     /// The account it's for, when its documents say.
@@ -466,6 +469,7 @@ fn subscription_of(group: &Group, currency: &str, today: &str, rates: &impl Rate
         ),
         vendor: latest.vendor_name.clone(),
         vendor_key: latest.vendor_key.clone(),
+        vendor_domain: rows.iter().find_map(|row| row.vendor_domain.clone()),
         category: rows.iter().find_map(|row| row.category.clone()),
         account: group
             .account

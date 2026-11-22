@@ -1,0 +1,171 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "buf/validate/validate.proto";
+import "spendyard/api/v1/documents.proto";
+import "spendyard/api/v1/model.proto";
+import "spendyard/api/v1/options.proto";
+import "spendyard/api/v1/receipts.proto";
+
+// TransactionService is the active organisation's transactions: every
+// payment read from its card statements, each matched to the receipt or
+// paid invoice for it by the CLI's own matching (`spendyard charges
+// match`), or missing one. Later, payments from card platforms and banks
+// too.
+//
+// A transaction is known by its statement and its line on it, so what
+// someone decides about one (this receipt is its, it needs none) holds when
+// the statement is read again. Links by hand come before matching.
+//
+// A member sees the transactions on the statements they added; the owner,
+// admins and an accountant see them all. An accountant reads.
+service TransactionService {
+  // ListTransactions lists the transactions, newest first, a page at a
+  // time, with how many there are in all and how many miss a receipt.
+  rpc ListTransactions(ListTransactionsRequest) returns (ListTransactionsResponse) {
+    option (spendyard.api.v1.permission) = "transactions:read";
+  }
+  // GetTransaction gives one transaction with its statement, its receipt,
+  // and receipts that could be its when it has none. NOT_FOUND when it
+  // isn't the caller's to see.
+  rpc GetTransaction(GetTransactionRequest) returns (GetTransactionResponse) {
+    option (spendyard.api.v1.permission) = "transactions:read";
+  }
+  // UpdateTransaction keeps what someone decided about a transaction: the
+  // fields given, the rest as they were. NOT_FOUND when it isn't the
+  // caller's to see, or the receipt isn't theirs.
+  rpc UpdateTransaction(UpdateTransactionRequest) returns (UpdateTransactionResponse) {
+    option (spendyard.api.v1.permission) = "transactions:write";
+  }
+}
+
+// Where a transaction stands.
+enum TransactionState {
+  TRANSACTION_STATE_UNSPECIFIED = 0;
+  // Its receipt is known.
+  TRANSACTION_STATE_MATCHED = 1;
+  // It needs a receipt, and none was found.
+  TRANSACTION_STATE_MISSING = 2;
+  // It needs none: a card fee, interest, a payment to the card's account,
+  // or marked so.
+  TRANSACTION_STATE_NO_RECEIPT_NEEDED = 3;
+}
+
+// Which transactions ListTransactions lists.
+enum TransactionFilter {
+  // All of them.
+  TRANSACTION_FILTER_UNSPECIFIED = 0;
+  TRANSACTION_FILTER_MISSING = 1;
+  TRANSACTION_FILTER_MATCHED = 2;
+  TRANSACTION_FILTER_NO_RECEIPT_NEEDED = 3;
+}
+
+// Transaction is one payment, as its statement gave it, and its receipt.
+message Transaction {
+  // Its statement and its line on it: `<document>:<line>`.
+  string id = 1;
+  // The statement it was read from: a document.
+  int64 statement_id = 2;
+  // When it was paid, and when the bank booked it: YYYY-MM-DD.
+  string date = 3;
+  string posted = 4;
+  // As the statement writes it: "ANTHROPIC* CLAUDE.AI SAN FRANCISCO".
+  string merchant = 5;
+  // The card's last four digits, and the name on it, when the statement
+  // says.
+  string card_last4 = 6;
+  string name_on_card = 7;
+  // What the account was charged, a plain decimal (`224.50`), and its
+  // currency; and what it was in the merchant's currency, when another.
+  string amount = 8;
+  string currency = 9;
+  string original_amount = 10;
+  string original_currency = 11;
+  // `purchase`, `refund`, `fee`, `interest`, `payment`, …
+  string kind = 12;
+  // Its vendor, as the catalog knows the merchant; unset when it doesn't.
+  VendorRef vendor = 13;
+  TransactionState state = 15;
+  // Its receipt: a document ID; 0 when it has none.
+  int64 receipt_id = 16;
+  // Its receipt was linked by hand, not found by matching.
+  bool by_hand = 17;
+  string note = 18;
+}
+
+// An amount and its currency.
+message Money {
+  // A plain decimal: `1234.50`.
+  string amount = 1;
+  string currency = 2;
+}
+
+message ListTransactionsRequest {
+  // At most this many; 50 when unset.
+  int32 page_size = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 500
+  }];
+  // The page after another: the last one's next_page_token.
+  string page_token = 2 [(buf.validate.field).string.max_len = 20];
+  TransactionFilter filter = 3;
+  // Only this card's: its last four digits.
+  string card_last4 = 4 [(buf.validate.field).string.pattern = "^([0-9]{4})?$"];
+  // Only those whose merchant or vendor holds this, whatever its case.
+  string query = 5 [(buf.validate.field).string.max_len = 200];
+  // Only those paid from and to these days, YYYY-MM-DD, both included.
+  string from = 6 [(buf.validate.field).string.pattern = "^(\\d{4}-\\d{2}-\\d{2})?$"];
+  string to = 7 [(buf.validate.field).string.pattern = "^(\\d{4}-\\d{2}-\\d{2})?$"];
+}
+
+message ListTransactionsResponse {
+  repeated Transaction transactions = 1;
+  // For the page after this one; empty when this is the last.
+  string next_page_token = 2;
+  // How many the request picks in all, every page together.
+  int64 total = 3;
+  // Of all the caller's transactions, whatever was asked: how many are
+  // matched, missing a receipt, and need none; and what the missing ones
+  // come to, per currency.
+  int64 matched = 4;
+  int64 missing = 5;
+  int64 no_receipt_needed = 6;
+  repeated Money missing_amounts = 7;
+  // The cards the statements are for: their last four digits.
+  repeated string cards = 8;
+}
+
+message GetTransactionRequest {
+  string id = 1 [(buf.validate.field).string = {
+    min_len: 3
+    max_len: 40
+  }];
+}
+
+message GetTransactionResponse {
+  Transaction transaction = 1;
+  // The statement it was read from.
+  Document statement = 2;
+  // Its receipt, when it has one.
+  Receipt receipt = 3;
+  // Receipts that could be its, the likeliest first, when it has none.
+  repeated Receipt suggestions = 4;
+}
+
+message UpdateTransactionRequest {
+  string id = 1 [(buf.validate.field).string = {
+    min_len: 3
+    max_len: 40
+  }];
+  // Its receipt, linked by hand: a receipt's document ID; 0 lets matching
+  // find it again.
+  optional int64 receipt_id = 2 [(buf.validate.field).int64.gte = 0];
+  // It needs no receipt; false undoes it.
+  optional bool no_receipt_needed = 3;
+  optional string note = 4 [(buf.validate.field).string.max_len = 2000];
+}
+
+message UpdateTransactionResponse {
+  Transaction transaction = 1;
+}
