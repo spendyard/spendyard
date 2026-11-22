@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 use crate::catalog::{catalog, name_key};
 use crate::dates::{SAME_PAYMENT_DAYS, date_of, day_number, days_apart};
 use crate::rates::{Rates, convert};
-use crate::spend::amount;
+use crate::spend::{Row, StoredRow, amount};
 
 /// How many days after a receipt's date its charge may be: some vendors
 /// send the receipt when the invoice is made and charge the card later.
@@ -632,6 +632,52 @@ pub fn suggestions(
     scored.into_iter().take(limit).map(|(_, id)| id).collect()
 }
 
+/// The payments with no receipt, as rows standing in for their receipts:
+/// what subscriptions are worked out from beside the receipts. Purchases
+/// only; a payment with its receipt is counted through the receipt.
+pub fn payment_rows(matching: &Matching) -> Vec<Row> {
+    matching
+        .transactions
+        .iter()
+        .filter(|found| found.state == "missing" && found.charge.kind == "purchase")
+        .filter_map(payment_row)
+        .collect()
+}
+
+/// One payment as a row: paid, on its day, its vendor as the catalog knows
+/// the merchant, else the merchant's own words.
+fn payment_row(found: &Transaction) -> Option<Row> {
+    let charge = &found.charge;
+    let total = amount(&charge.amount)?.abs();
+
+    let stored = StoredRow {
+        id: charge.document_id,
+        date: charge.date.clone(),
+        kind: "receipt".into(),
+        status: "paid".into(),
+        is_receipt: 1,
+        vendor_id: charge.vendor_id.clone(),
+        vendor_name: charge
+            .vendor_name
+            .clone()
+            .unwrap_or_else(|| charge.merchant.clone()),
+        total: Some(total.to_string()),
+        currency: charge.currency.clone(),
+        card: charge
+            .card_last4
+            .as_ref()
+            .map(|last4| format!("card {last4}")),
+        source: charge.source.clone(),
+        ..StoredRow::default()
+    };
+
+    let mut row = Row::from_stored(stored, catalog());
+
+    row.payment = Some(found.id.clone());
+
+    Some(row)
+}
+
 /// What matching needs to convert: the currencies of the charges and
 /// receipts, and rates from which day on. `None` when one currency is all.
 pub fn rates_needed(
@@ -828,6 +874,28 @@ mod tests {
         ];
 
         assert_eq!(suggestions(&lone, &receipts, &RateTable::default(), 5), [7]);
+    }
+
+    #[test]
+    fn makes_rows_of_payments_without_a_receipt() {
+        let charges = vec![
+            charge(2, "2026-11-19", "VERCEL INC.", "20.00"),
+            charge(1, "2026-11-05", "FIGMA MONTHLY", "45.00"),
+        ];
+
+        let matched = match_transactions(
+            charges,
+            vec![receipt(7, "2026-11-18", "Vercel", "20.00")],
+            &[],
+            &RateTable::default(),
+        );
+        let rows = payment_rows(&matched);
+
+        // Vercel's has its receipt: only Figma's stands in for one.
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].vendor_key, "figma.com");
+        assert_eq!(rows[0].payment.as_deref(), Some("100:1"));
+        assert_eq!(rows[0].card.as_deref(), Some("card 3776"));
     }
 
     #[test]

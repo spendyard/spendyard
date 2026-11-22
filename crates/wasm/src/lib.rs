@@ -68,6 +68,16 @@ struct SpendOptions {
     /// What people decided about vendors: applied to the rows first.
     #[serde(default)]
     vendor_edits: Vec<spendyard_core::vendors::VendorEdit>,
+
+    /// The statements' payments and the receipts they're matched to (as
+    /// [`transactions`] takes them), and links by hand: payments with no
+    /// receipt stand in for theirs.
+    #[serde(default)]
+    charges: Vec<spendyard_core::transactions::Charge>,
+    #[serde(default)]
+    match_receipts: Vec<spendyard_core::transactions::MatchReceipt>,
+    #[serde(default)]
+    links: Vec<spendyard_core::transactions::ChargeLink>,
 }
 
 /// What [`vendors`] works with: how, the rates it converts with, and what
@@ -99,15 +109,31 @@ fn report_rows(rows: &str) -> Result<Vec<spendyard_core::spend::Row>, String> {
 
 /// The recurring vendors in a store's rows, as `spendyard subscriptions
 /// --json` has them: `{"currency", "subscriptions", "monthly"}`, or
-/// `{"error": "…"}`. `options` is `{"currency"?, "today", "all"?, "rates"?}`.
+/// `{"error": "…"}`. `options` is `{"currency"?, "today", "all"?, "rates"?,
+/// "vendor_edits"?, "charges"?, "match_receipts"?, "links"?}`: with the
+/// statements' payments, those with no receipt count too.
 pub fn subscriptions_json(rows: &str, options: &str) -> String {
     let answer = (|| -> Result<Value, String> {
         let rows = report_rows(rows)?;
         let asked: SpendOptions =
             serde_json::from_str(options).map_err(|error| error.to_string())?;
 
-        let rows = spendyard_core::vendors::apply_vendor_edits(rows, &asked.vendor_edits);
         let rates = spendyard_core::rates::RateTable::new(asked.rates);
+
+        // Payments with no receipt stand in for theirs, newest first among the rows.
+        let matched = spendyard_core::transactions::match_transactions(
+            asked.charges,
+            asked.match_receipts,
+            &asked.links,
+            &rates,
+        );
+
+        let mut rows = rows;
+
+        rows.extend(spendyard_core::transactions::payment_rows(&matched));
+        rows.sort_by(|a, b| b.date.cmp(&a.date).then(b.id.cmp(&a.id)));
+
+        let rows = spendyard_core::vendors::apply_vendor_edits(rows, &asked.vendor_edits);
         let found = spendyard_core::subscriptions::subscriptions(&rows, &asked.options, &rates);
 
         serde_json::to_value(found).map_err(|error| error.to_string())

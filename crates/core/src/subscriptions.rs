@@ -12,13 +12,13 @@
 //! What people decide about one (not a subscription, cancelled) comes in
 //! with the options, by that ID: the store keeps it, the core applies it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::name_key;
-use crate::dates::{days_apart, shift_date};
+use crate::dates::{day_number, days_apart, shift_date};
 use crate::rates::Rates;
 use crate::spend::{Row, converted, report_currency, spend};
 
@@ -78,10 +78,18 @@ pub struct Subscription {
     /// `active`, `payment failed`, `due`, `lapsed?`, `unpaid`, `cancelled`,
     /// or `not a subscription`.
     pub status: String,
-    /// How many of its documents there are.
+    /// How many receipts and notices it's worked out from.
     pub documents: usize,
-    /// Its documents, newest first.
+    /// How many payments from statements it's worked out from, with no
+    /// receipt.
+    pub payments: usize,
+    /// Where it's known from: `receipts`, `payments` (only: its receipts are
+    /// missing), or `both`.
+    pub source: String,
+    /// Its receipts and notices, newest first.
     pub document_ids: Vec<i64>,
+    /// Its payments without a receipt, newest first: their transactions' IDs.
+    pub payment_ids: Vec<String>,
 }
 
 /// The subscriptions, and what the active ones cost a month.
@@ -132,7 +140,86 @@ fn recurring(row: &Row) -> bool {
         Some("month" | "year" | "quarter" | "week")
     );
 
-    !row.personal && !row.ignored && (billed || repeats)
+    // A card statement's own reading isn't one vendor's: its payments are, as payments.
+    let statement = row.kind == "card_statement";
+
+    !row.personal && !row.ignored && !statement && (billed || repeats)
+}
+
+// --- payments without receipts -------------------------------------------------
+
+/// How often payments days apart recur: about a week, a month, a quarter, a
+/// year; `None` for anything else.
+fn cadence(apart: i64) -> Option<&'static str> {
+    match apart {
+        6..=8 => Some("week"),
+        25..=35 => Some("month"),
+        85..=95 => Some("quarter"),
+        350..=380 => Some("year"),
+        _ => None,
+    }
+}
+
+/// Payments from statements say nothing of how often they recur: from their
+/// vendor's receipts when those say, else from how far apart they are (two
+/// or more, the gap between them most of them share). A vendor paid once,
+/// or at no steady rhythm, isn't a subscription by its payments.
+fn with_intervals(rows: &[Row]) -> Vec<Row> {
+    let mut rows = rows.to_vec();
+
+    let vendors: BTreeSet<String> = rows
+        .iter()
+        .filter(|row| row.payment.is_some())
+        .map(|row| row.vendor_key.clone())
+        .collect();
+
+    for vendor in vendors {
+        let from_receipts = rows
+            .iter()
+            .filter(|row| row.vendor_key == vendor && row.payment.is_none() && recurring(row))
+            .find_map(|row| row.interval.clone());
+
+        let mut days: Vec<i64> = rows
+            .iter()
+            .filter(|row| row.vendor_key == vendor && row.payment.is_some())
+            .filter_map(|row| day_number(&row.date))
+            .collect();
+
+        days.sort_unstable();
+        days.dedup();
+
+        let gaps: Vec<&'static str> = days
+            .windows(2)
+            .filter_map(|pair| cadence(pair[1] - pair[0]))
+            .collect();
+
+        // The rhythm most gaps share, when they do.
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+
+        for gap in &gaps {
+            *counts.entry(gap).or_default() += 1;
+        }
+
+        let rhythm = counts
+            .into_iter()
+            .max_by_key(|(_, count)| *count)
+            .filter(|(_, count)| *count * 2 >= days.len().saturating_sub(1).max(1))
+            .map(|(interval, _)| interval.to_string());
+
+        let Some(interval) = from_receipts.or(rhythm) else {
+            continue;
+        };
+
+        for row in rows
+            .iter_mut()
+            .filter(|row| row.vendor_key == vendor && row.payment.is_some())
+        {
+            row.interval = Some(interval.clone());
+            row.billing_model = Some("subscription".into());
+        }
+    }
+
+    rows
 }
 
 // --- telling subscriptions apart ------------------------------------------------
@@ -383,7 +470,13 @@ fn status_of(latest: &Row, last_paid: Option<&Row>, interval: &str, today: &str)
     }
 }
 
-/// Every card its rows were paid with, the most recently used first.
+/// A card's last four digits, however it's written: `visa 3776`, `card 3776`.
+fn last4(card: &str) -> &str {
+    card.rsplit(' ').next().unwrap_or(card)
+}
+
+/// Every card its rows were paid with, the most recently used first: one
+/// card once, by its last four digits, named by its brand where a row says.
 fn cards_of(rows: &[&Row]) -> Vec<CardSeen> {
     let mut seen: Vec<CardSeen> = Vec::new();
 
@@ -393,11 +486,19 @@ fn cards_of(rows: &[&Row]) -> Vec<CardSeen> {
             continue;
         };
 
-        if !seen.iter().any(|known| &known.card == card) {
-            seen.push(CardSeen {
+        match seen
+            .iter_mut()
+            .find(|known| last4(&known.card) == last4(card))
+        {
+            // A statement says `card 3776`; a receipt, `visa 3776`.
+            Some(known) if known.card.starts_with("card ") && !card.starts_with("card ") => {
+                known.card = card.clone()
+            }
+            Some(_) => {}
+            None => seen.push(CardSeen {
                 card: card.clone(),
                 last_used: row.date.clone(),
-            });
+            }),
         }
     }
 
@@ -457,9 +558,21 @@ fn subscription_of(group: &Group, currency: &str, today: &str, rates: &impl Rate
     });
 
     let cards = cards_of(rows);
+
+    let payments = rows.iter().filter(|row| row.payment.is_some()).count();
+    let receipts = rows.len() - payments;
+
+    let source = match (receipts, payments) {
+        (0, _) => "payments",
+        (_, 0) => "receipts",
+        _ => "both",
+    };
+    // The card of the last payment, named as the cards seen name it (branded where a receipt says).
     let card = last_paid
-        .and_then(|row| row.card.clone())
-        .or_else(|| cards.first().map(|seen| seen.card.clone()));
+        .and_then(|row| row.card.as_deref())
+        .and_then(|paid| cards.iter().find(|seen| last4(&seen.card) == last4(paid)))
+        .or_else(|| cards.first())
+        .map(|seen| seen.card.clone());
 
     Subscription {
         id: id_of(
@@ -489,8 +602,15 @@ fn subscription_of(group: &Group, currency: &str, today: &str, rates: &impl Rate
         cards,
         next_renewal,
         status: status_of(latest, last_paid, &interval, today).to_string(),
-        documents: rows.len(),
-        document_ids: rows.iter().map(|row| row.id).collect(),
+        documents: receipts,
+        payments,
+        source: source.to_string(),
+        document_ids: rows
+            .iter()
+            .filter(|row| row.payment.is_none())
+            .map(|row| row.id)
+            .collect(),
+        payment_ids: rows.iter().filter_map(|row| row.payment.clone()).collect(),
     }
 }
 
@@ -550,7 +670,10 @@ pub fn subscriptions(
         .map(|edit| (edit.id.as_str(), edit))
         .collect();
 
-    let mut list: Vec<Subscription> = groups(rows)
+    // Payments without receipts recur as their vendor's receipts do, or as their own rhythm says.
+    let rows = with_intervals(rows);
+
+    let mut list: Vec<Subscription> = groups(&rows)
         .iter()
         .map(|group| subscription_of(group, &currency, today, rates))
         .collect();
@@ -921,6 +1044,84 @@ mod tests {
             found.subscriptions[0].last_amount.as_deref(),
             Some("20.00 USD")
         );
+    }
+
+    /// A payment from a statement with no receipt, as `payment_rows` makes it.
+    fn paid(id: i64, date: &str, vendor: &str, total: &str) -> Row {
+        let stored = StoredRow {
+            id,
+            date: date.into(),
+            kind: "receipt".into(),
+            status: "paid".into(),
+            is_receipt: 1,
+            vendor_name: vendor.into(),
+            total: Some(total.into()),
+            currency: Some("USD".into()),
+            card: Some("card 3776".into()),
+            ..StoredRow::default()
+        };
+
+        let mut row = Row::from_stored(stored, catalog());
+
+        row.payment = Some(format!("100:{id}"));
+
+        row
+    }
+
+    #[test]
+    fn finds_a_subscription_in_payments_alone() {
+        let rows = vec![
+            paid(3, "2026-11-05", "Figma", "45.00"),
+            paid(2, "2026-10-05", "Figma", "45.00"),
+            paid(1, "2026-09-04", "Figma", "45.00"),
+            // Once only, or at no steady rhythm: not a subscription.
+            paid(4, "2026-11-01", "Some Shop", "12.00"),
+        ];
+
+        let found = subscriptions(&rows, &options("2026-11-21"), &RateTable::default());
+
+        assert_eq!(found.subscriptions.len(), 1);
+
+        let figma = &found.subscriptions[0];
+
+        assert_eq!(
+            (
+                figma.id.as_str(),
+                figma.interval.as_str(),
+                figma.source.as_str()
+            ),
+            ("figma.com", "month", "payments")
+        );
+        assert_eq!((figma.documents, figma.payments), (0, 3));
+        assert_eq!(figma.payment_ids, ["100:3", "100:2", "100:1"]);
+        assert!(figma.document_ids.is_empty());
+        assert_eq!(figma.per_month, Some(Decimal::new(4500, 2)));
+        assert_eq!(figma.status, "active");
+    }
+
+    #[test]
+    fn counts_receipts_and_payments_without_receipts_together() {
+        let mut with_card = rows(vec![row(1, "2026-10-19", "Vercel", "20.00", "USD")]);
+
+        with_card[0].card = Some("visa 3776".into());
+
+        // November's payment came without its receipt: it takes October's interval.
+        let mut both = with_card;
+
+        both.insert(0, paid(2, "2026-11-19", "Vercel", "20.00"));
+
+        let found = subscriptions(&both, &options("2026-11-21"), &RateTable::default());
+        let vercel = &found.subscriptions[0];
+
+        assert_eq!(
+            (vercel.source.as_str(), vercel.documents, vercel.payments),
+            ("both", 1, 1)
+        );
+        assert_eq!(vercel.last_paid.as_deref(), Some("2026-11-19"));
+
+        // One card, as the receipt names it.
+        assert_eq!(vercel.card.as_deref(), Some("visa 3776"));
+        assert_eq!(vercel.cards.len(), 1);
     }
 
     #[test]

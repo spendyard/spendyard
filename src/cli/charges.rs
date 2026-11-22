@@ -179,7 +179,7 @@ pub async fn match_all(store: &Store) -> Result<MatchSummary> {
 }
 
 /// The rows of a core query, by their columns' names.
-fn query<T: serde::de::DeserializeOwned>(store: &Store, sql: &str) -> Result<Vec<T>> {
+pub(crate) fn query<T: serde::de::DeserializeOwned>(store: &Store, sql: &str) -> Result<Vec<T>> {
     let mut statement = store.connection.prepare(sql)?;
     let names: Vec<String> = statement.column_names().map(String::from).collect();
 

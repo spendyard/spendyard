@@ -364,6 +364,30 @@ pub struct SubscriptionsOptions {
     pub all: bool,
 }
 
+/// A subscription's status in the table, and when it's known only from the
+/// statements' payments, that its receipts are missing.
+fn status_of(subscription: &spendyard_core::subscriptions::Subscription) -> String {
+    match subscription.source.as_str() {
+        "payments" => format!("{} (no receipts)", subscription.status),
+        _ => subscription.status.clone(),
+    }
+}
+
+/// The statements' payments with no receipt, as rows standing in for their
+/// receipts: matched as `spendyard charges match` matches them.
+fn payments_without_receipts(store: &Store) -> Result<Vec<Row>> {
+    use spendyard_core::transactions::{
+        CHARGES_SQL, MATCH_RECEIPTS_SQL, match_transactions, payment_rows,
+    };
+
+    let charges = super::charges::query(store, CHARGES_SQL)?;
+    let receipts = super::charges::query(store, MATCH_RECEIPTS_SQL)?;
+
+    let matched = match_transactions(charges, receipts, &[], store);
+
+    Ok(payment_rows(&matched))
+}
+
 /// A subscription's name in the table: its vendor, and its product or
 /// account when the vendor has several.
 fn label(subscription: &spendyard_core::subscriptions::Subscription) -> String {
@@ -390,7 +414,12 @@ fn label(subscription: &spendyard_core::subscriptions::Subscription) -> String {
 pub async fn subscriptions(options: SubscriptionsOptions) -> Result<()> {
     let store = Store::open()?;
 
-    let all = rows(&store)?;
+    let mut all = rows(&store)?;
+
+    // Payments on the statements with no receipt stand in for theirs: a vendor
+    // charged every month is a subscription even when no receipt came in.
+    all.extend(payments_without_receipts(&store)?);
+    all.sort_by(|a, b| b.date.cmp(&a.date).then(b.id.cmp(&a.id)));
 
     let paid = spend(&all);
 
@@ -450,7 +479,7 @@ pub async fn subscriptions(options: SubscriptionsOptions) -> Result<()> {
             subscription.last_paid.as_deref().unwrap_or(""),
             subscription.next_renewal.as_deref().unwrap_or(""),
             clip(subscription.card.as_deref().unwrap_or(""), 17),
-            subscription.status
+            status_of(subscription)
         );
     }
 

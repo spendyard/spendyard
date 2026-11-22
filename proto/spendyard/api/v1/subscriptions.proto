@@ -8,7 +8,8 @@ import "spendyard/api/v1/options.proto";
 import "spendyard/api/v1/receipts.proto";
 
 // SubscriptionService is the active organisation's subscriptions: what it
-// pays again and again, worked out from its receipts as the CLI's
+// pays again and again, worked out from its receipts, and from payments on
+// its card statements with no receipt, as the CLI's
 // `spendyard subscriptions` does, with what each costs a month, how often,
 // on which card, and whether the last payment went through.
 //
@@ -109,6 +110,22 @@ message Subscription {
   string note = 22;
   // The day it was marked cancelled, YYYY-MM-DD; empty when it wasn't.
   string cancelled_on = 23;
+  // How many payments from card statements it's worked out from, with no
+  // receipt: Transactions' missing ones.
+  int32 payments = 24;
+  // Where it's known from.
+  SubscriptionSource source = 25;
+}
+
+// Where a subscription is known from.
+enum SubscriptionSource {
+  SUBSCRIPTION_SOURCE_UNSPECIFIED = 0;
+  // Receipts and notices only.
+  SUBSCRIPTION_SOURCE_RECEIPTS = 1;
+  // Payments on card statements only: its receipts are missing.
+  SUBSCRIPTION_SOURCE_PAYMENTS = 2;
+  // Receipts, and payments with none.
+  SUBSCRIPTION_SOURCE_BOTH = 3;
 }
 
 message ListSubscriptionsRequest {

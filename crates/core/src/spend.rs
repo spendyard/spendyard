@@ -124,6 +124,10 @@ pub struct Row {
     /// The product of its largest line.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub product: Option<String>,
+    /// A payment from a statement with no receipt, standing in for one: its
+    /// transaction's ID ([`crate::transactions::Charge::key`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payment: Option<String>,
 }
 
 impl Row {
@@ -181,6 +185,7 @@ impl Row {
             source: stored.source,
             account: account_of(stored.account_workspace, stored.account_email),
             product: stored.product.filter(|product| !product.trim().is_empty()),
+            payment: None,
         }
     }
 }
