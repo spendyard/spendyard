@@ -38,7 +38,8 @@ service DocumentService {
     option (spendyard.api.v1.permission) = "documents:write";
   }
   // GetDocument gives one document, read or not: where it is in being read,
-  // and why it couldn't be. What was read is ReceiptService.GetReceipt's.
+  // why it couldn't be, and what it came as. What was read is
+  // ReceiptService.GetReceipt's.
   // NOT_FOUND when it isn't the caller's to see.
   rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse) {
     option (spendyard.api.v1.permission) = "documents:read";
@@ -103,6 +104,8 @@ message Document {
   // currency already, or there's no rate to convert with.
   string converted_total = 16;
   string converted_currency = 17;
+  // When it was last read, RFC 3339; empty when it hasn't been.
+  string read_at = 18;
 }
 
 // Which documents ListDocuments lists.
@@ -184,6 +187,32 @@ message GetDocumentRequest {
 
 message GetDocumentResponse {
   Document document = 1;
+  // What it came as, each with its text, and a link to see and to download
+  // the PDFs and pictures; none when the original isn't kept.
+  repeated DocumentPart parts = 2;
+}
+
+// DocumentPart is one part of a document: the mail's body, an attachment,
+// the PDF itself.
+message DocumentPart {
+  // Its position, as evidence names it.
+  int32 index = 1;
+  // `body`, `attachment:Invoice.pdf`, `forwarded:1/attachment:Invoice.pdf`.
+  string label = 2;
+  // `text`, `html`, `pdf`, `image`, `other`.
+  string kind = 3;
+  string mime = 4;
+  // Its plain text: the text itself, HTML as text, a PDF's text layer. Empty
+  // for pictures and for PDFs without one.
+  string text = 5;
+  // Its pages, for a PDF.
+  int32 pages = 6;
+  // A link to see it as it came, for a while: for a PDF or a picture (not
+  // SVG), an email's attachments among them. Empty for the rest.
+  string preview_url = 7;
+  // A link to download it as it came, for a while, as a file named as it
+  // was: for the same parts as preview_url.
+  string download_url = 8;
 }
 
 message GetDocumentOriginalRequest {
