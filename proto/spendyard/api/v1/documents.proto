@@ -37,6 +37,12 @@ service DocumentService {
   rpc AddDocument(AddDocumentRequest) returns (AddDocumentResponse) {
     option (spendyard.api.v1.permission) = "documents:write";
   }
+  // GetDocument gives one document, read or not: where it is in being read,
+  // and why it couldn't be. What was read is ReceiptService.GetReceipt's.
+  // NOT_FOUND when it isn't the caller's to see.
+  rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse) {
+    option (spendyard.api.v1.permission) = "documents:read";
+  }
   // GetDocumentOriginal gives a URL to download a document as it came, good
   // for a few minutes. NOT_FOUND when it isn't the caller's to see, or its
   // original isn't kept.
@@ -100,6 +106,10 @@ enum DocumentFilter {
   DOCUMENT_FILTER_UNSPECIFIED = 0;
   // Those that couldn't be read.
   DOCUMENT_FILTER_FAILED = 1;
+  // Those waiting to be read, or being read.
+  DOCUMENT_FILTER_READING = 2;
+  // Those read.
+  DOCUMENT_FILTER_READ = 3;
 }
 
 message ListDocumentsRequest {
@@ -113,10 +123,15 @@ message ListDocumentsRequest {
   DocumentFilter filter = 3;
   // Only those whose name or sender holds this, whatever its case.
   string query = 4 [(buf.validate.field).string.max_len = 200];
+  // Only those from this kind of source: `upload`, `forward`, `cli`, later
+  // `gmail`, `outlook`, `imap`.
+  string source = 5 [(buf.validate.field).string.pattern = "^[a-z]*$"];
 }
 
 message ListDocumentsResponse {
   repeated Document documents = 1;
+  // How many the request picks in all, every page together.
+  int64 total = 2;
 }
 
 message ReadDocumentAgainRequest {
@@ -156,6 +171,14 @@ message AddDocumentResponse {
   Document document = 1;
   // It was there already: the same file, or the same mail.
   bool seen = 2;
+}
+
+message GetDocumentRequest {
+  int64 id = 1 [(buf.validate.field).int64.gt = 0];
+}
+
+message GetDocumentResponse {
+  Document document = 1;
 }
 
 message GetDocumentOriginalRequest {

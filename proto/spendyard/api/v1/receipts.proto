@@ -133,6 +133,8 @@ message ListReceiptsResponse {
   repeated Receipt receipts = 1;
   // For the page after this one; empty when this is the last.
   string next_page_token = 2;
+  // How many the request picks in all, every page together.
+  int64 total = 3;
 }
 
 message GetReceiptRequest {
