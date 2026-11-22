@@ -119,7 +119,8 @@ message ListReceiptsRequest {
   ReceiptFilter filter = 3;
   // Only those whose vendor, name or sender holds this, whatever its case.
   string query = 4 [(buf.validate.field).string.max_len = 200];
-  // Only this vendor's: Receipt.vendor_id.
+  // Only this vendor's, as the vendors are worked out (Vendor.id), merges
+  // and all.
   string vendor_id = 5 [(buf.validate.field).string.max_len = 200];
   // Only those dated from and to these days, YYYY-MM-DD, both included.
   string from = 6 [(buf.validate.field).string.pattern = "^(\\d{4}-\\d{2}-\\d{2})?$"];
@@ -380,4 +381,12 @@ enum PaymentMethod {
   PAYMENT_METHOD_CREDITS = 7;
   PAYMENT_METHOD_INVOICE = 8;
   PAYMENT_METHOD_OTHER = 9;
+}
+
+// UsedCard is a card something was paid with, and when last.
+message UsedCard {
+  // "visa 3776".
+  string card = 1;
+  // When it last paid, YYYY-MM-DD.
+  string last_used = 2;
 }

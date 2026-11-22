@@ -99,6 +99,10 @@ pub struct Row {
     /// The catalog's category, when the catalog knows the vendor.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub category: Option<String>,
+    /// The vendor's domain: its catalog ID when the catalog knows it, else
+    /// the domain its reading gave.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vendor_domain: Option<String>,
     pub total: Option<String>,
     pub currency: Option<String>,
     pub billing_model: Option<String>,
@@ -144,6 +148,14 @@ impl Row {
             (None, None) => (name_key(&stored.vendor_name), stored.vendor_name, None),
         };
 
+        // The catalog's ID is a domain; else the domain the document shows, when it's one.
+        let vendor_domain = found.map(|vendor| vendor.id.clone()).or_else(|| {
+            stored
+                .vendor_id
+                .clone()
+                .filter(|id| id.contains('.') && !id.contains(' '))
+        });
+
         Row {
             id: stored.id,
             date: stored.date,
@@ -153,6 +165,7 @@ impl Row {
             vendor_key,
             vendor_name,
             category,
+            vendor_domain,
             total: stored.total,
             currency: stored.currency,
             billing_model: stored.billing_model,

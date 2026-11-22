@@ -10,6 +10,9 @@
 //! - [`subscriptions`]: the recurring vendors in a store's rows
 //!   (`spendyard subscriptions`), from the rows of the core's `ROWS_SQL`,
 //!   with the rates the host keeps.
+//! - [`vendors`]: who the organisation pays, from the same rows: what each
+//!   cost, month by month, and its subscriptions, cards and accounts.
+//! - [`catalog_domain`]: whether the vendor catalog knows a domain.
 //! - [`rows_sql`]: the query for those rows, which the host's store runs.
 //! - [`rates_needed`], [`rates_url`] and [`parse_rates`]: which exchange
 //!   rates converting needs, where to ask the ECB for them, and its answer
@@ -58,6 +61,24 @@ struct SpendOptions {
 
     #[serde(default)]
     rates: Vec<spendyard_core::rates::Rate>,
+
+    /// What people decided about vendors: applied to the rows first.
+    #[serde(default)]
+    vendor_edits: Vec<spendyard_core::vendors::VendorEdit>,
+}
+
+/// What [`vendors`] works with: how, the rates it converts with, and what
+/// people decided about vendors.
+#[derive(Debug, Default, Deserialize)]
+struct VendorsOptions {
+    #[serde(flatten)]
+    options: spendyard_core::vendors::VendorOptions,
+
+    #[serde(default)]
+    rates: Vec<spendyard_core::rates::Rate>,
+
+    #[serde(default)]
+    vendor_edits: Vec<spendyard_core::vendors::VendorEdit>,
 }
 
 /// The rows of `ROWS_SQL` (JSON, its columns as named), grouped by vendor.
@@ -82,6 +103,7 @@ pub fn subscriptions_json(rows: &str, options: &str) -> String {
         let asked: SpendOptions =
             serde_json::from_str(options).map_err(|error| error.to_string())?;
 
+        let rows = spendyard_core::vendors::apply_vendor_edits(rows, &asked.vendor_edits);
         let rates = spendyard_core::rates::RateTable::new(asked.rates);
         let found = spendyard_core::subscriptions::subscriptions(&rows, &asked.options, &rates);
 
@@ -91,6 +113,43 @@ pub fn subscriptions_json(rows: &str, options: &str) -> String {
     answer
         .unwrap_or_else(|error| json!({ "error": error }))
         .to_string()
+}
+
+/// The vendors in a store's rows: `{"currency", "vendors"}`, the most spent
+/// on first, or `{"error": "…"}`. `options` is `{"currency"?, "today",
+/// "all"?, "rates"?, "vendor_edits"?}`.
+pub fn vendors_json(rows: &str, options: &str) -> String {
+    let answer = (|| -> Result<Value, String> {
+        let rows = report_rows(rows)?;
+        let asked: VendorsOptions =
+            serde_json::from_str(options).map_err(|error| error.to_string())?;
+
+        let rows = spendyard_core::vendors::apply_vendor_edits(rows, &asked.vendor_edits);
+        let rates = spendyard_core::rates::RateTable::new(asked.rates);
+        let found = spendyard_core::vendors::vendors(&rows, &asked.options, &rates);
+
+        serde_json::to_value(found).map_err(|error| error.to_string())
+    })();
+
+    answer
+        .unwrap_or_else(|error| json!({ "error": error }))
+        .to_string()
+}
+
+/// [`vendors_json`], for JavaScript.
+#[wasm_bindgen]
+pub fn vendors(rows: &str, options: &str) -> String {
+    vendors_json(rows, options)
+}
+
+/// The catalog's vendor for a domain (or a subdomain of one): its ID, or
+/// empty when the catalog doesn't know it.
+#[wasm_bindgen]
+pub fn catalog_domain(domain: &str) -> String {
+    spendyard_core::catalog::catalog()
+        .by_domain(domain)
+        .map(|vendor| vendor.id.clone())
+        .unwrap_or_default()
 }
 
 /// [`subscriptions_json`], for JavaScript.
@@ -346,6 +405,29 @@ mod tests {
             nothing,
             json!({ "currency": "USD", "currencies": [], "since": "" })
         );
+    }
+
+    #[test]
+    fn works_out_vendors_with_their_edits() {
+        let rows = json!([{
+            "id": 1, "date": "2026-11-19", "kind": "receipt", "status": "paid", "is_receipt": 1,
+            "vendor_id": "vercel.com", "vendor_name": "Vercel", "total": "20.00", "currency": "USD",
+            "billing_model": "subscription", "interval": "month", "flags": 0, "personal": 0, "ignored": 0
+        }]);
+
+        let options = json!({
+            "today": "2026-11-21",
+            "vendor_edits": [{ "vendor": "vercel.com", "name": "Vercel (hosting)" }]
+        });
+
+        let answer: Value =
+            serde_json::from_str(&vendors_json(&rows.to_string(), &options.to_string())).unwrap();
+
+        assert_eq!(answer["vendors"][0]["id"], "vercel.com");
+        assert_eq!(answer["vendors"][0]["name"], "Vercel (hosting)");
+        assert_eq!(answer["vendors"][0]["spent_year"], "20.00");
+        assert_eq!(catalog_domain("billing.vercel.com"), "vercel.com");
+        assert_eq!(catalog_domain("nowhere.example"), "");
     }
 
     #[test]

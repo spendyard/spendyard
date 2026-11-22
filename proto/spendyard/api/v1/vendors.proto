@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "buf/validate/validate.proto";
+import "spendyard/api/v1/options.proto";
+import "spendyard/api/v1/receipts.proto";
+
+// VendorService is the active organisation's vendors: who it pays, worked
+// out from its receipts by the CLI's own code, with what each has cost
+// month by month (subscriptions, usage, one-offs), its seats over time, and
+// its subscriptions, cards and accounts. Its receipts are ListReceipts'
+// with its vendor_id.
+//
+// What people decide about a vendor is kept by its ID and applied before
+// anything is worked out, so receipts that come later follow it, and
+// subscriptions see it too: its name, merging it into another, its
+// category, that it's personal or not spend, who looks after it, a note.
+//
+// Amounts are in the organisation's currency, as SubscriptionService's. A
+// member sees the vendors in the receipts they added, and changes those
+// they look after; the owner and admins change any; an accountant reads.
+service VendorService {
+  // ListVendors lists the vendors, the most spent on this past year first.
+  rpc ListVendors(ListVendorsRequest) returns (ListVendorsResponse) {
+    option (spendyard.api.v1.permission) = "vendors:read";
+  }
+  // GetVendor gives one vendor, whatever was decided about it. NOT_FOUND
+  // when it isn't the caller's to see, or was merged into another.
+  rpc GetVendor(GetVendorRequest) returns (GetVendorResponse) {
+    option (spendyard.api.v1.permission) = "vendors:read";
+  }
+  // UpdateVendor keeps what someone decided about a vendor: the fields
+  // given, the rest as they were. PERMISSION_DENIED for a member who
+  // doesn't look after it.
+  rpc UpdateVendor(UpdateVendorRequest) returns (UpdateVendorResponse) {
+    option (spendyard.api.v1.permission) = "vendors:write";
+  }
+}
+
+// One month of a vendor's spend, in the organisation's currency: plain
+// decimals (`20.00`).
+message VendorMonth {
+  // YYYY-MM.
+  string month = 1;
+  // On subscriptions, on usage, and one-offs.
+  string subscription = 2;
+  string usage = 3;
+  string other = 4;
+  // The most seats any of its receipts that month paid for; 0 when none
+  // said.
+  double seats = 5;
+}
+
+// Vendor is one vendor the organisation pays.
+message Vendor {
+  // Its ID: the catalog's (its domain) when the catalog knows it, else its
+  // name's key.
+  string id = 1;
+  string name = 2;
+  // `ai`, `dev-tools`, `infrastructure`, …; empty when nobody knows.
+  string category = 3;
+  // Its domain, for its icon (/icons/<domain>); empty when unknown.
+  string domain = 4;
+  // The vendor catalog knows it.
+  bool known = 5;
+  // What it cost this past year, and what its active subscriptions cost a
+  // month together: plain decimals in the response's currency.
+  string spent_year = 6;
+  string monthly = 7;
+  // Its paid receipts, each once.
+  int32 receipts = 8;
+  // Its first and last payment, YYYY-MM-DD.
+  string first_paid = 9;
+  string last_paid = 10;
+  // How many subscriptions it has, live or not.
+  int32 subscriptions = 11;
+  // The past twelve months, oldest first.
+  repeated VendorMonth months = 12;
+  // Every card it was paid with, the most recently used first.
+  repeated UsedCard cards = 13;
+  // The accounts its receipts name: workspaces, emails.
+  repeated string accounts = 14;
+  // Who in the organisation looks after it: their user ID and name.
+  string owner_id = 15;
+  string owner_name = 16;
+  string note = 17;
+  // Marked personal, or as not spend at all: its receipts aren't the
+  // organisation's spend.
+  bool personal = 18;
+  bool not_spend = 19;
+  // The vendors merged into this one: their IDs.
+  repeated string merged = 20;
+}
+
+message ListVendorsRequest {
+  // Only those whose name holds this, whatever its case.
+  string query = 1 [(buf.validate.field).string.max_len = 200];
+  // Only this category's.
+  string category = 2 [(buf.validate.field).string.max_len = 100];
+  // Also those marked personal or not spend.
+  bool include_all = 3;
+}
+
+message ListVendorsResponse {
+  repeated Vendor vendors = 1;
+  // The currency the amounts are in.
+  string currency = 2;
+}
+
+message GetVendorRequest {
+  string id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+  }];
+}
+
+message GetVendorResponse {
+  Vendor vendor = 1;
+  string currency = 2;
+}
+
+message UpdateVendorRequest {
+  string id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+  }];
+  // Its name as it should be shown; empty puts the catalog's or the
+  // receipts' back.
+  optional string name = 2 [(buf.validate.field).string.max_len = 200];
+  // Merge it into another vendor (Vendor.id); empty undoes a merge.
+  optional string merge_into = 3 [(buf.validate.field).string.max_len = 200];
+  // Its category; empty puts the catalog's back.
+  optional string category = 4 [(buf.validate.field).string.max_len = 100];
+  optional bool personal = 5;
+  optional bool not_spend = 6;
+  // Who looks after it: a member's user ID; empty for nobody.
+  optional string owner_id = 7 [(buf.validate.field).string.max_len = 100];
+  optional string note = 8 [(buf.validate.field).string.max_len = 2000];
+}
+
+message UpdateVendorResponse {
+  // As it is now; unset when it was merged into another.
+  Vendor vendor = 1;
+  string currency = 2;
+}

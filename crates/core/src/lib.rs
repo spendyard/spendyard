@@ -25,6 +25,7 @@ pub mod statement;
 pub mod subscriptions;
 pub mod text;
 pub mod validate;
+pub mod vendors;
 
 use web_time::Instant;
 

@@ -61,14 +61,6 @@ enum SubscriptionStatus {
   SUBSCRIPTION_STATUS_NOT_A_SUBSCRIPTION = 7;
 }
 
-// A card a subscription was paid with.
-message SubscriptionCard {
-  // "visa 3776".
-  string card = 1;
-  // When it last paid for it, YYYY-MM-DD.
-  string last_used = 2;
-}
-
 // Subscription is one vendor's account's product, paid again and again.
 message Subscription {
   // Its ID: the vendor's ID, then its account and product when they tell it
@@ -109,7 +101,7 @@ message Subscription {
   // The card of the last payment: what's charged next.
   string card = 17;
   // Every card it was paid with, the most recently used first.
-  repeated SubscriptionCard cards = 18;
+  repeated UsedCard cards = 18;
   // How many receipts and notices it's worked out from.
   int32 documents = 19;
   // Who in the organisation looks after it: their user ID and name; empty
