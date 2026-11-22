@@ -145,6 +145,10 @@ pub struct Settings {
     /// Ollama.
     pub base_url: Option<String>,
 
+    /// A token for the Cloudflare AI Gateway `base_url` is, when it asks for
+    /// one: sent as `cf-aig-authorization: Bearer` (Anthropic).
+    pub gateway_token: Option<String>,
+
     /// Anthropic `output_config.effort`: low, medium, high, xhigh or max.
     pub effort: Option<String>,
 

@@ -36,6 +36,8 @@ const IMAGES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp"];
 pub struct Anthropic {
     transport: Arc<dyn http::Transport>,
     credential: Credential,
+    /// An authenticated AI Gateway's token, when `url` is one.
+    gateway_token: Option<String>,
     url: String,
     model: String,
     effort: Option<String>,
@@ -60,9 +62,15 @@ impl Anthropic {
 
         let base = settings.base_url.as_deref().unwrap_or(DEFAULT_URL);
 
+        let gateway_token = settings
+            .gateway_token
+            .clone()
+            .filter(|token| !token.is_empty());
+
         let anthropic = Anthropic {
             transport,
             credential,
+            gateway_token,
             url: format!("{}/v1/messages", base.trim_end_matches('/')),
             model: settings
                 .model
@@ -93,6 +101,13 @@ impl Anthropic {
 
                 betas.push(OAUTH_BETA);
             }
+        }
+
+        if let Some(token) = &self.gateway_token {
+            headers.push((
+                "cf-aig-authorization".to_string(),
+                format!("Bearer {token}"),
+            ));
         }
 
         if self.uses_fallback() {
@@ -290,6 +305,44 @@ mod tests {
         assert_eq!(
             http::header(&headers, "anthropic-beta").unwrap(),
             FALLBACK_BETA
+        );
+    }
+
+    #[test]
+    fn an_authenticated_gateway_gets_its_token() {
+        let through = Anthropic::new(
+            Settings {
+                provider: "anthropic".to_string(),
+                api_key: Some("sk-ant-test".to_string()),
+                base_url: Some(
+                    "https://gateway.ai.cloudflare.com/v1/acct/gw/anthropic".to_string(),
+                ),
+                gateway_token: Some("cf-gateway".to_string()),
+                ..Settings::default()
+            },
+            http::nowhere(),
+        )
+        .unwrap();
+
+        let headers = through.headers();
+
+        assert_eq!(
+            through.url,
+            "https://gateway.ai.cloudflare.com/v1/acct/gw/anthropic/v1/messages"
+        );
+        assert_eq!(http::header(&headers, "x-api-key").unwrap(), "sk-ant-test");
+        assert_eq!(
+            http::header(&headers, "cf-aig-authorization").unwrap(),
+            "Bearer cf-gateway"
+        );
+
+        // Straight to Anthropic: no gateway, no token.
+        assert_eq!(
+            http::header(
+                &extractor("claude-haiku-5-5").headers(),
+                "cf-aig-authorization"
+            ),
+            None
         );
     }
 

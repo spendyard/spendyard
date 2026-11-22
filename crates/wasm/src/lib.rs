@@ -495,6 +495,8 @@ struct ModelOptions {
     max_tokens: Option<u32>,
     /// An AI Gateway by name, for the first model on Workers AI.
     gateway: Option<String>,
+    /// An authenticated AI Gateway's token, for the extractor at its URL.
+    gateway_token: Option<String>,
 }
 
 /// Reads a document with the whole pipeline, as `spendyard read` does, posting
@@ -588,6 +590,7 @@ fn extractor_settings(options: ModelOptions) -> extract::Settings {
         model: options.model,
         api_key: options.api_key,
         base_url: options.base_url,
+        gateway_token: options.gateway_token,
         max_tokens: options.max_tokens,
         ..extract::Settings::default()
     }

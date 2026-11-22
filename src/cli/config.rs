@@ -150,12 +150,18 @@ pub fn extractor_settings(config: &Config, flag: Option<&str>) -> Settings {
         .then(|| env("ANTHROPIC_AUTH_TOKEN"))
         .flatten();
 
+    // For an ANTHROPIC_BASE_URL that's an authenticated AI Gateway.
+    let gateway_token = (provider == "anthropic")
+        .then(|| env("CLOUDFLARE_AI_GATEWAY_TOKEN"))
+        .flatten();
+
     Settings {
         provider,
         model,
         api_key,
         auth_token,
         base_url,
+        gateway_token,
         effort: same_provider
             .then(|| config.extractor.effort.clone())
             .flatten(),

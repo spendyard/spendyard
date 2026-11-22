@@ -69,7 +69,7 @@ Settings live in `~/.spendyard/config.toml`; keys come from the environment:
 
 ```toml
 [extractor]
-provider = "anthropic"
+provider = "anthropic"            # ANTHROPIC_API_KEY; ANTHROPIC_BASE_URL and CLOUDFLARE_AI_GATEWAY_TOKEN for an AI Gateway
 model    = "claude-haiku-5-5"
 
 [decider]
