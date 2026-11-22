@@ -178,6 +178,9 @@ message DocumentPart {
   // A link to see it as it came, for a while: for a PDF or a picture (not
   // SVG), an email's attachments among them. Empty for the rest.
   string preview_url = 7;
+  // A link to download it as it came, for a while, as a file named as it
+  // was: for the same parts as preview_url.
+  string download_url = 8;
 }
 
 // Reading is what was read from a document, as the CLI's `spendyard read`
