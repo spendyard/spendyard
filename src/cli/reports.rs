@@ -13,8 +13,9 @@ use rust_decimal::Decimal;
 use serde_json::json;
 use spendyard_core::dates::shift_date;
 use spendyard_core::spend::{
-    ROWS_SQL, Row, StoredRow, SubscriptionOptions, converted, rates_needed, report_currency, spend,
+    ROWS_SQL, Row, StoredRow, converted, rates_needed, report_currency, spend,
 };
+use spendyard_core::subscriptions::SubscriptionOptions;
 
 use super::store::{Store, now};
 
@@ -48,6 +49,9 @@ fn rows(store: &Store) -> Result<Vec<Row>> {
             ignored: row.get("ignored")?,
             subject: row.get("subject")?,
             source: row.get("source")?,
+            account_workspace: row.get("account_workspace")?,
+            account_email: row.get("account_email")?,
+            product: row.get("product")?,
         })
     })?;
 
@@ -360,6 +364,27 @@ pub struct SubscriptionsOptions {
     pub all: bool,
 }
 
+/// A subscription's name in the table: its vendor, and its product or
+/// account when the vendor has several.
+fn label(subscription: &spendyard_core::subscriptions::Subscription) -> String {
+    let apart = subscription
+        .id
+        .split(':')
+        .skip(1)
+        .any(|part| !part.is_empty());
+
+    let detail = subscription
+        .product
+        .as_deref()
+        .or(subscription.account.as_deref())
+        .filter(|_| apart);
+
+    match detail {
+        Some(detail) => format!("{} · {detail}", subscription.vendor),
+        None => subscription.vendor.clone(),
+    }
+}
+
 /// Recurring vendors: what each costs, how often, on which card, and
 /// whether the last payment went through.
 pub async fn subscriptions(options: SubscriptionsOptions) -> Result<()> {
@@ -377,9 +402,11 @@ pub async fn subscriptions(options: SubscriptionsOptions) -> Result<()> {
         currency: Some(currency.clone()),
         today: today(),
         all: options.all,
+        // What people decided about subscriptions is the cloud's, for now.
+        edits: Vec::new(),
     };
 
-    let found = spendyard_core::spend::subscriptions(&all, &asked, &store);
+    let found = spendyard_core::subscriptions::subscriptions(&all, &asked, &store);
 
     let subscriptions = found.subscriptions;
 
@@ -413,7 +440,7 @@ pub async fn subscriptions(options: SubscriptionsOptions) -> Result<()> {
     for subscription in &subscriptions {
         println!(
             "{:<28} {:<7} {:>12} {:>6} {:<11} {:<11} {:<17} {}",
-            clip(&subscription.vendor, 28),
+            clip(&label(subscription), 28),
             subscription.interval,
             subscription.per_month.map(money).unwrap_or_default(),
             subscription

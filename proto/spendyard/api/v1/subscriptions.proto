@@ -2,13 +2,20 @@ syntax = "proto3";
 
 package spendyard.api.v1;
 
+import "buf/validate/validate.proto";
 import "spendyard/api/v1/options.proto";
 import "spendyard/api/v1/receipts.proto";
 
-// SubscriptionService is the active organisation's subscriptions: every
-// vendor it pays again and again, worked out from its receipts as the CLI's
+// SubscriptionService is the active organisation's subscriptions: what it
+// pays again and again, worked out from its receipts as the CLI's
 // `spendyard subscriptions` does, with what each costs a month, how often,
 // on which card, and whether the last payment went through.
+//
+// One subscription is one vendor's account's product: a vendor's receipts
+// are told apart by account when they show more than one, and by product
+// when several are paid side by side. Its ID is made of those parts, and
+// stays while its receipts do. What people decide about one (who owns it, a
+// note, that it's cancelled or isn't a subscription) is kept by that ID.
 //
 // Amounts are in the organisation's currency (Org.currency, else the one it
 // pays in most), converted with the European Central Bank's rates of the
@@ -20,6 +27,18 @@ service SubscriptionService {
   // expensive first.
   rpc ListSubscriptions(ListSubscriptionsRequest) returns (ListSubscriptionsResponse) {
     option (spendyard.api.v1.permission) = "subscriptions:read";
+  }
+  // GetSubscription gives one subscription, whatever its status. Its
+  // receipts are ListReceipts' with its subscription_id. NOT_FOUND when it
+  // isn't the caller's to see.
+  rpc GetSubscription(GetSubscriptionRequest) returns (GetSubscriptionResponse) {
+    option (spendyard.api.v1.permission) = "subscriptions:read";
+  }
+  // UpdateSubscription keeps what someone decided about a subscription: the
+  // fields given, the rest as they were. NOT_FOUND when it isn't the
+  // caller's to see.
+  rpc UpdateSubscription(UpdateSubscriptionRequest) returns (UpdateSubscriptionResponse) {
+    option (spendyard.api.v1.permission) = "subscriptions:write";
   }
 }
 
@@ -36,48 +55,77 @@ enum SubscriptionStatus {
   SUBSCRIPTION_STATUS_LAPSED = 4;
   // Notices, but no payment yet.
   SUBSCRIPTION_STATUS_UNPAID = 5;
+  // Marked cancelled, and not paid since.
+  SUBSCRIPTION_STATUS_CANCELLED = 6;
+  // Marked as not a subscription at all.
+  SUBSCRIPTION_STATUS_NOT_A_SUBSCRIPTION = 7;
 }
 
-// Subscription is one vendor paid again and again.
+// A card a subscription was paid with.
+message SubscriptionCard {
+  // "visa 3776".
+  string card = 1;
+  // When it last paid for it, YYYY-MM-DD.
+  string last_used = 2;
+}
+
+// Subscription is one vendor's account's product, paid again and again.
 message Subscription {
+  // Its ID: the vendor's ID, then its account and product when they tell it
+  // apart from the vendor's others, joined by `:`: `slack.com`,
+  // `slack.com:fjordtech`, `atlassian.com::jira`.
+  string id = 1;
   // The vendor's ID: its catalog ID (its domain) when the catalog knows it,
-  // else its name's key. For its icon, and its receipts.
-  string vendor_id = 1;
-  string vendor_name = 2;
+  // else its name's key. For its icon.
+  string vendor_id = 2;
+  string vendor_name = 3;
   // The catalog's category: `ai`, `dev-tools`, `infrastructure`, …; empty
   // when the catalog doesn't know the vendor.
-  string category = 3;
-  // How often it's paid; unset when no document says.
-  Interval interval = 4;
-  SubscriptionStatus status = 5;
+  string category = 4;
+  // The account it's for, when its receipts say: a workspace, an email.
+  string account = 5;
+  // What it's for: the product its receipts name most.
+  string product = 6;
+  // How often it's paid; unset when no receipt says.
+  Interval interval = 7;
+  SubscriptionStatus status = 8;
   // What it costs a month, from the last payment, in the response's
   // currency: a plain decimal (`20.00`); empty when it can't be converted,
   // or nothing was paid.
-  string per_month = 6;
+  string per_month = 9;
   // The last payment: its day, YYYY-MM-DD, and its amount as it was paid.
-  string last_paid = 7;
-  string last_total = 8;
-  string last_currency = 9;
+  string last_paid = 10;
+  string last_total = 11;
+  string last_currency = 12;
   // The receipt of the last payment, or the newest document without one.
-  int64 last_document_id = 10;
-  // When it renews next, YYYY-MM-DD: as a document says, else a month,
-  // quarter or year from the last payment.
-  string next_renewal = 11;
-  // Seats paid for, as the newest receipt with seats says.
-  double seats = 12;
-  // The card it's paid with: "visa 3776".
-  string card = 13;
-  // How many of its documents there are.
-  int32 documents = 14;
+  int64 last_document_id = 13;
   // Its newest document: the notice of a failed payment, an invoice due.
-  int64 newest_document_id = 15;
-  // Its documents, newest first: ListReceipts' document_ids lists them.
-  repeated int64 document_ids = 16;
+  int64 newest_document_id = 14;
+  // When it renews next, YYYY-MM-DD: as a receipt says, else a month,
+  // quarter or year from the last payment. Empty when cancelled.
+  string next_renewal = 15;
+  // Seats paid for, as the newest receipt with seats says.
+  double seats = 16;
+  // The card of the last payment: what's charged next.
+  string card = 17;
+  // Every card it was paid with, the most recently used first.
+  repeated SubscriptionCard cards = 18;
+  // How many receipts and notices it's worked out from.
+  int32 documents = 19;
+  // Who in the organisation looks after it: their user ID and name; empty
+  // when nobody's been set.
+  string owner_id = 20;
+  string owner_name = 21;
+  // A note about it.
+  string note = 22;
+  // The day it was marked cancelled, YYYY-MM-DD; empty when it wasn't.
+  string cancelled_on = 23;
 }
 
 message ListSubscriptionsRequest {
-  // Also those lapsed for more than a year.
-  bool include_lapsed = 1;
+  // Also those lapsed or cancelled over a year ago, and those marked as not
+  // a subscription.
+  bool include_all = 1;
 }
 
 message ListSubscriptionsResponse {
@@ -86,4 +134,37 @@ message ListSubscriptionsResponse {
   string currency = 2;
   // What the active ones cost a month, together: a plain decimal.
   string monthly = 3;
+}
+
+message GetSubscriptionRequest {
+  string id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 300
+  }];
+}
+
+message GetSubscriptionResponse {
+  Subscription subscription = 1;
+  // The currency its amounts are in.
+  string currency = 2;
+}
+
+message UpdateSubscriptionRequest {
+  string id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 300
+  }];
+  // Who looks after it: a member's user ID; empty for nobody.
+  optional string owner_id = 2 [(buf.validate.field).string.max_len = 100];
+  optional string note = 3 [(buf.validate.field).string.max_len = 2000];
+  // Cancelled as of today; false undoes it.
+  optional bool cancelled = 4;
+  // Not a subscription at all; false undoes it.
+  optional bool not_a_subscription = 5;
+}
+
+message UpdateSubscriptionResponse {
+  Subscription subscription = 1;
+  // The currency its amounts are in.
+  string currency = 2;
 }

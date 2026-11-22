@@ -54,7 +54,7 @@ pub fn version() -> String {
 #[derive(Debug, Default, Deserialize)]
 struct SpendOptions {
     #[serde(flatten)]
-    options: spendyard_core::spend::SubscriptionOptions,
+    options: spendyard_core::subscriptions::SubscriptionOptions,
 
     #[serde(default)]
     rates: Vec<spendyard_core::rates::Rate>,
@@ -83,7 +83,7 @@ pub fn subscriptions_json(rows: &str, options: &str) -> String {
             serde_json::from_str(options).map_err(|error| error.to_string())?;
 
         let rates = spendyard_core::rates::RateTable::new(asked.rates);
-        let found = spendyard_core::spend::subscriptions(&rows, &asked.options, &rates);
+        let found = spendyard_core::subscriptions::subscriptions(&rows, &asked.options, &rates);
 
         serde_json::to_value(found).map_err(|error| error.to_string())
     })();

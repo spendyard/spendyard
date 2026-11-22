@@ -22,6 +22,7 @@ pub mod result;
 pub mod rows;
 pub mod spend;
 pub mod statement;
+pub mod subscriptions;
 pub mod text;
 pub mod validate;
 
