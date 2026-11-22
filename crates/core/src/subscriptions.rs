@@ -163,52 +163,49 @@ fn cadence(apart: i64) -> Option<&'static str> {
 pub(crate) fn with_intervals(rows: &[Row]) -> Vec<Row> {
     let mut rows = rows.to_vec();
 
-    let vendors: BTreeSet<String> = rows
-        .iter()
-        .filter(|row| row.payment.is_some())
-        .map(|row| row.vendor_key.clone())
-        .collect();
+    let vendors: BTreeSet<String> = rows.iter().map(|row| row.vendor_key.clone()).collect();
 
     for vendor in vendors {
+        // Payments with no receipt: the interval the vendor's receipts say, else their own rhythm.
         let from_receipts = rows
             .iter()
             .filter(|row| row.vendor_key == vendor && row.payment.is_none() && recurring(row))
             .find_map(|row| row.interval.clone());
 
-        let mut days: Vec<i64> = rows
-            .iter()
-            .filter(|row| row.vendor_key == vendor && row.payment.is_some())
-            .filter_map(|row| day_number(&row.date))
-            .collect();
+        let payments = days_of(
+            rows.iter()
+                .filter(|row| row.vendor_key == vendor && row.payment.is_some()),
+        );
 
-        days.sort_unstable();
-        days.dedup();
-
-        let gaps: Vec<&'static str> = days
-            .windows(2)
-            .filter_map(|pair| cadence(pair[1] - pair[0]))
-            .collect();
-
-        // The rhythm most gaps share, when they do.
-        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-
-        for gap in &gaps {
-            *counts.entry(gap).or_default() += 1;
+        if let Some(interval) = from_receipts.or_else(|| rhythm_of(&payments)) {
+            for row in rows
+                .iter_mut()
+                .filter(|row| row.vendor_key == vendor && row.payment.is_some())
+            {
+                row.interval = Some(interval.clone());
+                row.billing_model = Some("subscription".into());
+            }
         }
 
-        let rhythm = counts
-            .into_iter()
-            .max_by_key(|(_, count)| *count)
-            .filter(|(_, count)| *count * 2 >= days.len().saturating_sub(1).max(1))
-            .map(|(interval, _)| interval.to_string());
+        // Receipts read as one-offs, paid again and again: a subscription no receipt says is one. The rhythm tells; the
+        // amount may change (seats added, another plan). Only two could be a month apart by chance: those two must
+        // also be about the same amount.
+        let one_offs: Vec<&Row> = rows
+            .iter()
+            .filter(|row| row.vendor_key == vendor && one_off(row))
+            .collect();
 
-        let Some(interval) = from_receipts.or(rhythm) else {
+        if one_offs.len() < 2 || (one_offs.len() == 2 && !alike(&one_offs)) {
+            continue;
+        }
+
+        let Some(interval) = rhythm_of(&days_of(one_offs.into_iter())) else {
             continue;
         };
 
         for row in rows
             .iter_mut()
-            .filter(|row| row.vendor_key == vendor && row.payment.is_some())
+            .filter(|row| row.vendor_key == vendor && one_off(row))
         {
             row.interval = Some(interval.clone());
             row.billing_model = Some("subscription".into());
@@ -216,6 +213,78 @@ pub(crate) fn with_intervals(rows: &[Row]) -> Vec<Row> {
     }
 
     rows
+}
+
+/// A receipt read as a one-off: paid, with an amount, of the organisation's spend, and not already recurring.
+fn one_off(row: &Row) -> bool {
+    row.payment.is_none()
+        && row.total.is_some()
+        && !row.personal
+        && !row.ignored
+        && row.kind != "card_statement"
+        && !recurring(row)
+}
+
+/// Rows' days, each once, in order.
+fn days_of<'a>(rows: impl Iterator<Item = &'a Row>) -> Vec<i64> {
+    let mut days: Vec<i64> = rows.filter_map(|row| day_number(&row.date)).collect();
+
+    days.sort_unstable();
+    days.dedup();
+
+    days
+}
+
+/// The rhythm most gaps between days share, when they do: `month`, `year`, ….
+fn rhythm_of(days: &[i64]) -> Option<String> {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+
+    for gap in days
+        .windows(2)
+        .filter_map(|pair| cadence(pair[1] - pair[0]))
+    {
+        *counts.entry(gap).or_default() += 1;
+    }
+
+    counts
+        .into_iter()
+        .max_by_key(|(_, count)| *count)
+        .filter(|(_, count)| *count * 2 >= days.len().saturating_sub(1).max(1))
+        .map(|(interval, _)| interval.to_string())
+}
+
+/// How far two one-offs' amounts may be apart and still be the same thing paid again: a fifth of the middle one.
+const ALIKE: f64 = 0.2;
+
+/// Whether rows were paid in one currency, each about the same amount: a plan paid again, not two purchases that
+/// happen to be a month apart.
+fn alike(rows: &[&Row]) -> bool {
+    let currencies: BTreeSet<&str> = rows
+        .iter()
+        .filter_map(|row| row.currency.as_deref())
+        .collect();
+
+    if currencies.len() > 1 {
+        return false;
+    }
+
+    let mut amounts: Vec<f64> = rows
+        .iter()
+        .filter_map(|row| row.total.as_deref()?.parse::<f64>().ok())
+        .collect();
+
+    if amounts.len() != rows.len() {
+        return false;
+    }
+
+    amounts.sort_by(|a, b| a.total_cmp(b));
+
+    let middle = amounts[amounts.len() / 2];
+
+    middle > 0.0
+        && amounts
+            .iter()
+            .all(|amount| ((amount - middle) / middle).abs() <= ALIKE)
 }
 
 // --- one subscription per vendor ------------------------------------------------
@@ -735,6 +804,65 @@ mod tests {
         assert_eq!(slack.billed_to.len(), 2);
         assert!(slack.billed_to[0].eq_ignore_ascii_case("fjordtech"));
         assert_eq!(slack.billed_to[1], "fjordtech-labs");
+    }
+
+    #[test]
+    fn one_offs_paid_again_and_again_are_a_subscription() {
+        let plain = |id: i64, date: &str, total: &str| {
+            let mut row = row(id, date, "Plain", total, "USD");
+
+            row.billing_model = Some("one_time".into());
+            row.interval = None;
+
+            row
+        };
+
+        let ids = |stored: Vec<StoredRow>| {
+            found(stored, &options("2026-11-21"))
+                .subscriptions
+                .iter()
+                .map(|s| (s.id.clone(), s.interval.clone()))
+                .collect::<Vec<_>>()
+        };
+
+        // Two a month apart, about the same: monthly.
+        assert_eq!(
+            ids(vec![
+                plain(2, "2026-11-17", "803.00"),
+                plain(1, "2026-10-17", "790.00")
+            ]),
+            [("plain.com".to_string(), "month".to_string())]
+        );
+
+        // Two a month apart for very different amounts: could be two purchases, so not one.
+        assert!(
+            ids(vec![
+                plain(2, "2026-11-17", "803.00"),
+                plain(1, "2026-10-17", "120.00")
+            ])
+            .is_empty()
+        );
+
+        // Three a month apart, the amount changing as seats are added: still monthly.
+        assert_eq!(
+            ids(vec![
+                plain(3, "2026-11-17", "1203.00"),
+                plain(2, "2026-10-17", "803.00"),
+                plain(1, "2026-09-17", "403.00"),
+            ]),
+            [("plain.com".to_string(), "month".to_string())]
+        );
+
+        // One alone, or no rhythm: one-offs.
+        assert!(ids(vec![plain(1, "2026-10-17", "803.00")]).is_empty());
+        assert!(
+            ids(vec![
+                plain(3, "2026-11-17", "803.00"),
+                plain(2, "2026-11-02", "803.00"),
+                plain(1, "2026-06-17", "803.00"),
+            ])
+            .is_empty()
+        );
     }
 
     #[test]
