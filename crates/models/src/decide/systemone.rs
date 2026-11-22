@@ -30,6 +30,8 @@ pub struct SystemOne {
     key: Option<String>,
     model: String,
     images: bool,
+    /// The AI Gateway it goes through, by name (Workers AI only).
+    gateway: Option<String>,
 }
 
 impl SystemOne {
@@ -38,6 +40,13 @@ impl SystemOne {
         transport: Arc<dyn http::Transport>,
     ) -> Result<Self, ExtractError> {
         let key = settings.api_key.clone().filter(|key| !key.is_empty());
+        // Only Workers AI's own API knows a gateway by its name.
+        let workers_ai = matches!(settings.provider.as_str(), "clef" | "clef-flash");
+
+        let gateway = settings
+            .gateway
+            .clone()
+            .filter(|name| workers_ai && !name.is_empty());
 
         let missing_key = || {
             let variable = super::key_variable(&settings.provider).unwrap_or("the API key");
@@ -121,6 +130,7 @@ impl SystemOne {
             key,
             model,
             images,
+            gateway,
         };
 
         Ok(system_one)
@@ -131,6 +141,10 @@ impl SystemOne {
 
         if let Some(key) = &self.key {
             headers.push(("authorization".to_string(), format!("Bearer {key}")));
+        }
+
+        if let Some(gateway) = &self.gateway {
+            headers.push(("cf-aig-gateway-id".to_string(), gateway.clone()));
         }
 
         headers
@@ -242,6 +256,32 @@ mod tests {
         );
         assert_eq!(clef.name(), "clef-flash");
         assert!(clef.accepts_images());
+        assert_eq!(http::header(&clef.headers(), "cf-aig-gateway-id"), None);
+    }
+
+    #[test]
+    fn workers_ai_goes_through_a_gateway_by_its_name() {
+        let through = |provider: &str| {
+            let settings = Settings {
+                gateway: Some("spendyard".to_string()),
+                ..settings(provider)
+            };
+
+            SystemOne::new(settings, http::nowhere()).unwrap()
+        };
+
+        let clef = through("clef-flash");
+
+        assert_eq!(
+            http::header(&clef.headers(), "cf-aig-gateway-id").unwrap(),
+            "spendyard"
+        );
+
+        // Not to another provider, which wouldn't know it.
+        assert_eq!(
+            http::header(&through("jev").headers(), "cf-aig-gateway-id"),
+            None
+        );
     }
 
     #[test]

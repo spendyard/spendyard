@@ -202,6 +202,7 @@ pub fn decider_settings(
         api_key: key_variable.and_then(|variable| env(&variable)),
         account_id: env("CLOUDFLARE_ACCOUNT_ID"),
         base_url: provider_config.and_then(|settings| settings.base_url.clone()),
+        gateway: env("CLOUDFLARE_AI_GATEWAY"),
         provider,
         model,
     };

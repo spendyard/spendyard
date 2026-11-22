@@ -73,7 +73,7 @@ provider = "anthropic"
 model    = "claude-haiku-5-5"
 
 [decider]
-provider  = "clef-flash"   # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
+provider  = "clef-flash"   # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID; CLOUDFLARE_AI_GATEWAY to go through an AI Gateway
 threshold = 0.85
 
 [providers.openai-compatible]

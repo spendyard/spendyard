@@ -493,6 +493,8 @@ struct ModelOptions {
     account_id: Option<String>,
     base_url: Option<String>,
     max_tokens: Option<u32>,
+    /// An AI Gateway by name, for the first model on Workers AI.
+    gateway: Option<String>,
 }
 
 /// Reads a document with the whole pipeline, as `spendyard read` does, posting
@@ -598,6 +600,7 @@ fn decider_settings(options: ModelOptions) -> decide::Settings {
         api_key: options.api_key,
         account_id: options.account_id,
         base_url: options.base_url,
+        gateway: options.gateway,
     }
 }
 

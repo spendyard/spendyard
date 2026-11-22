@@ -153,6 +153,11 @@ pub struct Settings {
     pub account_id: Option<String>,
 
     pub base_url: Option<String>,
+
+    /// An AI Gateway in the same Cloudflare account, by its name, for `clef`
+    /// and `clef-flash`: their calls go through it (`cf-aig-gateway-id`), so
+    /// it logs, limits and counts them.
+    pub gateway: Option<String>,
 }
 
 /// Every decider's name, for help text and errors.
