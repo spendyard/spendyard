@@ -81,6 +81,11 @@ message Receipt {
   PaymentStatus status = 15;
   // Money was paid: a receipt, or a paid invoice. Only these are spend.
   bool paid = 16;
+  // The total in the organisation's currency, converted with the European
+  // Central Bank's rate of its day, a plain decimal; empty when it's in that
+  // currency already, or there's no rate to convert with.
+  string converted_total = 17;
+  string converted_currency = 18;
 }
 
 // Which kind of receipts ListReceipts lists.

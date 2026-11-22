@@ -98,6 +98,11 @@ message Document {
   string date = 14;
   // What it is, as its reading says; unset until it's read.
   DocumentType type = 15;
+  // The total in the organisation's currency, converted with the European
+  // Central Bank's rate of its day, a plain decimal; empty when it's in that
+  // currency already, or there's no rate to convert with.
+  string converted_total = 16;
+  string converted_currency = 17;
 }
 
 // Which documents ListDocuments lists.

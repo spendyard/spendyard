@@ -157,8 +157,8 @@ message UpdateOrgRequest {
     min_len: 1
     max_len: 80
   }];
-  // The currency to show amounts in, ISO 4217 ("NOK"); empty for the one it
-  // pays in most. Left as it is when unset.
+  // The currency to show amounts in, ISO 4217 ("NOK"); empty is USD. Left as
+  // it is when unset.
   optional string currency = 2 [(buf.validate.field).string.pattern = "^([A-Z]{3})?$"];
 }
 

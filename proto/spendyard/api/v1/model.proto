@@ -34,8 +34,7 @@ message Org {
   string slug = 2;
   string name = 3;
   google.protobuf.Timestamp create_time = 4;
-  // The currency its amounts are shown in, ISO 4217 ("NOK"); empty for the
-  // one it pays in most.
+  // The currency its amounts are shown in, ISO 4217 ("NOK"); empty is USD.
   string currency = 5;
 }
 
