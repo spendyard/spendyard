@@ -497,7 +497,8 @@ struct ModelOptions {
 
 /// Reads a document with the whole pipeline, as `spendyard read` does, posting
 /// to the models through `post`. Its answer is JSON: `{"document": …,
-/// "result": …, "rows": …}`, or `{"error": "…", "stage": …}` when it couldn't
+/// "result": …, "rows": …, "cost": …}` (`cost` in dollars, null when a
+/// model's price isn't known), or `{"error": "…", "stage": …}` when it couldn't
 /// read it (`stage` is `options`, `read` or `understand`).
 ///
 /// `post(url, headers, body)` takes the URL, the headers as JSON (`[[name,
@@ -562,6 +563,9 @@ async fn understand_with(
 
     let rows = spendyard_core::rows::rows(&result, received.as_deref());
 
+    // What reading it cost, in dollars, when its models' prices are known.
+    let cost = spendyard_core::eval::cost(&result);
+
     json!({
         "document": {
             "format": document.format,
@@ -572,6 +576,7 @@ async fn understand_with(
         },
         "result": result,
         "rows": rows,
+        "cost": cost,
     })
 }
 

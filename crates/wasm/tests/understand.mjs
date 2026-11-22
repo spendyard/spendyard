@@ -49,6 +49,9 @@ function answering(status, body, asked) {
   assert.equal(answer.rows.lines.length, 1);
   assert.equal(answer.rows.charges, null);
 
+  // 1,200 tokens in and 300 out at Haiku's prices.
+  assert.ok(Math.abs(answer.cost - 0.00027) < 1e-9, `cost ${answer.cost}`);
+
   console.log("read with a canned reply: Vercel, 20.00 USD, rows for the store");
 }
 
