@@ -53,7 +53,8 @@ message ListActivityRequest {
       "invites",
       "organisation",
       "addresses",
-      "vendors"
+      "vendors",
+      "documents"
     ]
   }];
   // Only what this person did, by email; empty for everyone.

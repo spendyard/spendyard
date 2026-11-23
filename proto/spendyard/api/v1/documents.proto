@@ -57,6 +57,14 @@ service DocumentService {
   rpc ReadDocumentAgain(ReadDocumentAgainRequest) returns (ReadDocumentAgainResponse) {
     option (spendyard.api.v1.permission) = "documents:write";
   }
+  // DeleteDocument deletes a document for good: what was read from it (a
+  // receipt, a statement's payments), what people decided about it, and its
+  // original. A payment it was the receipt of is missing one again. It can
+  // be added again afterwards. NOT_FOUND when it isn't the caller's to see;
+  // FAILED_PRECONDITION while it's being read. Recorded in the activity log.
+  rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse) {
+    option (spendyard.api.v1.permission) = "documents:write";
+  }
 }
 
 // Where a document is in being read.
@@ -153,6 +161,11 @@ message ReadDocumentAgainRequest {
 }
 
 message ReadDocumentAgainResponse {}
+
+message DeleteDocumentRequest {
+  int64 id = 1 [(buf.validate.field).int64.gt = 0];
+}
+message DeleteDocumentResponse {}
 
 message CreateDocumentUploadRequest {
   // The file's name, as it was chosen.
