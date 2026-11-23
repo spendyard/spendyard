@@ -70,10 +70,18 @@ service OrgService {
 }
 
 message CreateOrgRequest {
-  // The company's name: "Fjordtech AS". Its slug comes from it.
+  // The company's name: "Fjordtech AS".
   string name = 1 [(buf.validate.field).string = {
     min_len: 1
     max_len: 80
+  }];
+  // Its slug, as chosen: lowercase letters and digits, with single dashes
+  // between, at most 40: "fjordtech". Its forwarding addresses start with
+  // it. Empty for one from its name ("fjordtech-as", or "fjordtech-as-2"
+  // when that's taken). ALREADY_EXISTS when another organisation has it.
+  string slug = 2 [(buf.validate.field).string = {
+    max_len: 40
+    pattern: "^([a-z0-9]+(-[a-z0-9]+)*)?$"
   }];
 }
 
