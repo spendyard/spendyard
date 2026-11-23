@@ -3,6 +3,7 @@ syntax = "proto3";
 package spendyard.api.v1;
 
 import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
 import "spendyard/api/v1/options.proto";
 
 // DocumentService is the active organisation's documents: what arrived (files
@@ -134,6 +135,11 @@ message ListDocumentsRequest {
   // Only those from this kind of source: `upload`, `forward`, `cli`, later
   // `gmail`, `outlook`, `imap`.
   string source = 5 [(buf.validate.field).string.pattern = "^[a-z]*$"];
+  // Only those that arrived (received) at or after this time; unset for no
+  // bound. A day in the asker's own time zone is from its midnight to the next.
+  google.protobuf.Timestamp since = 6;
+  // Only those that arrived before this time; unset for no bound.
+  google.protobuf.Timestamp until = 7;
 }
 
 message ListDocumentsResponse {
