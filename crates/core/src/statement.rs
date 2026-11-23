@@ -51,8 +51,10 @@ printed for that card.
 - kind: purchase for an ordinary charge, refund for money back, fee for a fee from the bank \
 (currency fees, card fees), interest for interest, payment for a payment made to the card \
 account, other for anything else.
-- The summary fields (issuer, number, dates, currency, total, line_count) come from the \
-statement's summary or header. Leave them empty when the pages you are given don't show them.
+- The summary fields (issuer, card_brand, number, dates, currency, total, line_count) come from \
+the statement's summary or header. Leave them empty when the pages you are given don't show them.
+- card_brand is the cards' brand in lowercase, visa, mastercard or amex, as the statement names \
+it or shows its logo.
 - Dates are YYYY-MM-DD. Currencies are ISO 4217 codes.";
 
 /// What the model returns for one group of pages.
@@ -64,6 +66,11 @@ pub struct StatementOutput {
 
     /// The card issuer or bank, such as `DNB Corporate Mastercard`.
     pub issuer: Option<String>,
+
+    /// The cards' brand in lowercase, `visa`, `mastercard` or `amex`, as the
+    /// statement names it or shows its logo.
+    #[serde(default)]
+    pub card_brand: Option<String>,
 
     /// The statement or invoice number.
     pub number: Option<String>,
@@ -205,6 +212,10 @@ pub struct Card {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+
+    /// Its brand, `visa`, `mastercard` or `amex`: the statement's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brand: Option<String>,
 
     pub charges: usize,
 }
@@ -512,6 +523,12 @@ fn merge(outputs: Vec<StatementOutput>) -> Statement {
     };
 
     let issuer = first(|o| o.issuer.clone());
+
+    // As read; else as the issuer's name says it ("DNB Corporate Mastercard").
+    let brand = first(|o| o.card_brand.clone())
+        .and_then(|said| brand_of(&said))
+        .or_else(|| issuer.as_deref().and_then(brand_of));
+
     let number = first(|o| o.number.clone());
     let issued = first(|o| o.issued.clone());
     let due = first(|o| o.due.clone());
@@ -539,7 +556,7 @@ fn merge(outputs: Vec<StatementOutput>) -> Statement {
 
     charges.sort_by_key(|charge| charge.row.unwrap_or(u32::MAX));
 
-    let cards = cards(&charges);
+    let cards = cards(&charges, brand.as_deref());
 
     Statement {
         issuer,
@@ -591,7 +608,24 @@ fn normalize(charge: ChargeOutput) -> Charge {
     }
 }
 
-fn cards(charges: &[Charge]) -> Vec<Card> {
+/// A card brand from how it's named: "Mastercard", "VISA", "American Express".
+fn brand_of(name: &str) -> Option<String> {
+    let lowered = name.to_lowercase();
+
+    let brand = if lowered.contains("mastercard") || lowered.contains("master card") {
+        "mastercard"
+    } else if lowered.contains("visa") {
+        "visa"
+    } else if lowered.contains("amex") || lowered.contains("american express") {
+        "amex"
+    } else {
+        return None;
+    };
+
+    Some(brand.to_string())
+}
+
+fn cards(charges: &[Charge], brand: Option<&str>) -> Vec<Card> {
     let mut cards: Vec<Card> = Vec::new();
 
     for charge in charges {
@@ -611,6 +645,7 @@ fn cards(charges: &[Charge]) -> Vec<Card> {
             None => cards.push(Card {
                 last4: last4.clone(),
                 name: charge.name_on_card.clone(),
+                brand: brand.map(str::to_string),
                 charges: 1,
             }),
         }
@@ -1017,6 +1052,42 @@ mod tests {
             line_count: Some(3),
             ..StatementOutput::default()
         }
+    }
+
+    #[test]
+    fn its_cards_have_the_statements_brand() {
+        let pages = StatementOutput {
+            is_card_statement: true,
+            charges: vec![foreign(1, "22.01", "2.26", "9.738938")],
+            ..StatementOutput::default()
+        };
+
+        // From the issuer's name, when the model didn't say.
+        let named = merge(vec![summary(), pages.clone()]);
+
+        assert_eq!(named.cards[0].brand.as_deref(), Some("mastercard"));
+
+        // As read, whatever its case, over the issuer's.
+        let read = merge(vec![
+            StatementOutput {
+                card_brand: Some("VISA".to_string()),
+                ..summary()
+            },
+            pages.clone(),
+        ]);
+
+        assert_eq!(read.cards[0].brand.as_deref(), Some("visa"));
+
+        // Neither: no brand, rather than a guess.
+        let unknown = merge(vec![
+            StatementOutput {
+                issuer: Some("Some Bank".to_string()),
+                ..summary()
+            },
+            pages,
+        ]);
+
+        assert_eq!(unknown.cards[0].brand, None);
     }
 
     #[test]
