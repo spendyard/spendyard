@@ -58,6 +58,11 @@ message ListActivityRequest {
   }];
   // Only what this person did, by email; empty for everyone.
   string actor = 4 [(buf.validate.field).string.max_len = 320];
+  // Only what happened at or after this time; unset for no bound. A day in the
+  // asker's own time zone is from its midnight to the next.
+  google.protobuf.Timestamp since = 5;
+  // Only what happened before this time; unset for no bound.
+  google.protobuf.Timestamp until = 6;
 }
 
 message ListActivityResponse {
