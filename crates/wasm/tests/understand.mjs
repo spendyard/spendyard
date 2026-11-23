@@ -55,6 +55,22 @@ function answering(status, body, asked) {
   console.log("read with a canned reply: Vercel, 20.00 USD, rows for the store");
 }
 
+// No key of one's own, through an authenticated AI Gateway: only its token, and the gateway pays from its credits.
+{
+  const asked = [];
+
+  const billed = JSON.parse(options);
+
+  delete billed.extractor.apiKey;
+  billed.extractor.gatewayToken = "cf-gateway";
+
+  const answer = JSON.parse(await understand(receipt, JSON.stringify(billed), answering(200, reply, asked)));
+
+  assert.equal(answer.error, undefined, answer.error);
+  assert.equal(asked[0].headers["x-api-key"], undefined);
+  assert.equal(asked[0].headers["cf-aig-authorization"], "Bearer cf-gateway");
+}
+
 // The provider failing: an error the host can show, and from which stage.
 {
   const asked = [];

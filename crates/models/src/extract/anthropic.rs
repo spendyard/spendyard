@@ -47,6 +47,9 @@ pub struct Anthropic {
 enum Credential {
     ApiKey(String),
     Token(String),
+    /// No key of one's own: an authenticated AI Gateway pays Anthropic from
+    /// its account's credits (Cloudflare's Unified Billing).
+    Gateway,
 }
 
 impl Anthropic {
@@ -54,18 +57,21 @@ impl Anthropic {
         settings: Settings,
         transport: Arc<dyn http::Transport>,
     ) -> Result<Self, ExtractError> {
-        let credential = match (&settings.api_key, &settings.auth_token) {
-            (Some(key), _) if !key.is_empty() => Credential::ApiKey(key.clone()),
-            (_, Some(token)) if !token.is_empty() => Credential::Token(token.clone()),
-            _ => return Err(ExtractError::MissingKey("ANTHROPIC_API_KEY".to_string())),
-        };
-
-        let base = settings.base_url.as_deref().unwrap_or(DEFAULT_URL);
-
         let gateway_token = settings
             .gateway_token
             .clone()
             .filter(|token| !token.is_empty());
+
+        // A key of one's own is billed by Anthropic; without one, a gateway's
+        // token is billed by the gateway, from its credits.
+        let credential = match (&settings.api_key, &settings.auth_token) {
+            (Some(key), _) if !key.is_empty() => Credential::ApiKey(key.clone()),
+            (_, Some(token)) if !token.is_empty() => Credential::Token(token.clone()),
+            _ if gateway_token.is_some() => Credential::Gateway,
+            _ => return Err(ExtractError::MissingKey("ANTHROPIC_API_KEY".to_string())),
+        };
+
+        let base = settings.base_url.as_deref().unwrap_or(DEFAULT_URL);
 
         let anthropic = Anthropic {
             transport,
@@ -101,6 +107,9 @@ impl Anthropic {
 
                 betas.push(OAUTH_BETA);
             }
+
+            // The gateway's token below says who pays.
+            Credential::Gateway => {}
         }
 
         if let Some(token) = &self.gateway_token {
@@ -344,6 +353,45 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn without_a_key_the_gateway_pays() {
+        let gateway = "https://gateway.ai.cloudflare.com/v1/acct/gw/anthropic";
+
+        let billed = Anthropic::new(
+            Settings {
+                provider: "anthropic".to_string(),
+                base_url: Some(gateway.to_string()),
+                gateway_token: Some("cf-gateway".to_string()),
+                ..Settings::default()
+            },
+            http::nowhere(),
+        )
+        .unwrap();
+
+        let headers = billed.headers();
+
+        // Only the gateway's token: no key of one's own for it to bill instead.
+        assert_eq!(http::header(&headers, "x-api-key"), None);
+        assert_eq!(http::header(&headers, "authorization"), None);
+        assert_eq!(
+            http::header(&headers, "cf-aig-authorization").unwrap(),
+            "Bearer cf-gateway"
+        );
+
+        // No key and no gateway token: nothing to bill.
+        let unbilled = Anthropic::new(
+            Settings {
+                provider: "anthropic".to_string(),
+                base_url: Some(gateway.to_string()),
+                api_key: Some(String::new()),
+                ..Settings::default()
+            },
+            http::nowhere(),
+        );
+
+        assert!(matches!(unbilled, Err(ExtractError::MissingKey(_))));
     }
 
     #[test]
