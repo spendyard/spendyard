@@ -51,8 +51,9 @@ service OrgService {
     option (spendyard.api.v1.permission) = "orgs:transfer";
     option (spendyard.api.v1.interactive_only) = true;
   }
-  // UpdateOrg changes the active organisation's name, the currency its
-  // amounts are shown in, and its slug; the owner and admins.
+  // UpdateOrg changes the active organisation's name, and the currency its
+  // amounts are shown in; the owner and admins. Its slug stays: it's chosen
+  // when the organisation is made (CreateOrgRequest.slug).
   rpc UpdateOrg(UpdateOrgRequest) returns (UpdateOrgResponse) {
     option (spendyard.api.v1.permission) = "orgs:manage";
   }
@@ -167,15 +168,10 @@ message UpdateOrgRequest {
   // The currency to show amounts in, ISO 4217 ("NOK"); empty is USD. Left as
   // it is when unset.
   optional string currency = 2 [(buf.validate.field).string.pattern = "^([A-Z]{3})?$"];
-  // A new slug, as CreateOrgRequest.slug takes one; left as it is when unset.
-  // New forwarding addresses start with it; those made before keep working,
-  // and so do invite links sent before. ALREADY_EXISTS when another
-  // organisation has it.
-  optional string slug = 3 [(buf.validate.field).string = {
-    min_len: 1
-    max_len: 40
-    pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
-  }];
+  // A slug, for a while: it's chosen when the organisation is made, and
+  // stays.
+  reserved 3;
+  reserved "slug";
 }
 
 message UpdateOrgResponse {
