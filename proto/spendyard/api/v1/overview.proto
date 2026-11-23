@@ -30,6 +30,8 @@ message SpendMonth {
   string subscription = 2;
   string usage = 3;
   string other = 4;
+  // Paid with no receipt: what for isn't known (VendorMonth.unreceipted).
+  string unreceipted = 5;
 }
 
 // A subscription that renews soon.

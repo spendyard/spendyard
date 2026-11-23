@@ -18,7 +18,7 @@ use crate::catalog::catalog;
 use crate::dates::shift_date;
 use crate::rates::Rates;
 use crate::spend::{Row, StoredRow, converted, report_currency, spend};
-use crate::subscriptions::{CardSeen, SubscriptionOptions, subscriptions, with_intervals};
+use crate::subscriptions::{CardSeen, SubscriptionOptions, subscriptions};
 
 /// What someone decided about a vendor, by its key.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -174,8 +174,9 @@ pub fn vendor_ref(
 }
 
 /// One month of a vendor's spend, in the report's currency: on
-/// subscriptions, on usage, and one-offs; and the most seats any of its
-/// receipts that month paid for.
+/// subscriptions, on usage, and one-offs, as receipts say; paid with no
+/// receipt to say which; and the most seats any of its receipts that month
+/// paid for.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct VendorMonth {
     /// `YYYY-MM`.
@@ -183,6 +184,9 @@ pub struct VendorMonth {
     pub subscription: Decimal,
     pub usage: Decimal,
     pub other: Decimal,
+    /// Payments from statements with no receipt: what they were for isn't
+    /// known, so they're not guessed into the others.
+    pub unreceipted: Decimal,
     pub seats: Option<f64>,
 }
 
@@ -303,6 +307,12 @@ fn months_of(
             continue;
         };
 
+        if row.payment.is_some() {
+            entry.unreceipted += value;
+
+            continue;
+        }
+
         match bucket(row) {
             "usage" => entry.usage += value,
             "subscription" => entry.subscription += value,
@@ -331,8 +341,13 @@ fn cards_of(rows: &[&Row]) -> Vec<CardSeen> {
 /// the most spent on these last twelve months first. Personal and not-spend
 /// vendors only with `all`.
 pub fn vendors(rows: &[Row], options: &VendorOptions, rates: &impl Rates) -> Vendors {
-    // Payments without receipts recur as subscriptions have them: their months fall under subscriptions.
-    let rows = &with_intervals(rows);
+    // Payments without receipts count as spend, but say nothing of what for: their months are their own part, and
+    // its subscriptions are its receipts' alone.
+    let receipted: Vec<Row> = rows
+        .iter()
+        .filter(|row| row.payment.is_none())
+        .cloned()
+        .collect();
 
     let paid_all = spend(rows);
     let currency = report_currency(options.currency.clone(), &paid_all);
@@ -340,7 +355,7 @@ pub fn vendors(rows: &[Row], options: &VendorOptions, rates: &impl Rates) -> Ven
     let year_ago = shift_date(today, -12, 0);
 
     let found_subscriptions = subscriptions(
-        rows,
+        &receipted,
         &SubscriptionOptions {
             currency: Some(currency.clone()),
             today: today.to_string(),
@@ -666,7 +681,13 @@ mod tests {
 
         assert_eq!((figma.receipts, figma.payments), (0, 2));
         assert_eq!(figma.spent_year, Decimal::new(9000, 2));
-        assert_eq!(figma.months[11].subscription, Decimal::new(4500, 2));
+        // Its own part, not guessed a subscription: no receipt says it is one.
+        assert_eq!(figma.months[11].unreceipted, Decimal::new(4500, 2));
+        assert_eq!(figma.months[11].subscription, Decimal::ZERO);
+        assert_eq!(
+            (figma.subscriptions, figma.monthly),
+            (0, Decimal::new(0, 2))
+        );
         assert_eq!(figma.payment_ids, ["50:2", "50:1"]);
 
         // The statement isn't one of its receipts.

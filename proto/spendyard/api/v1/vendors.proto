@@ -44,10 +44,13 @@ service VendorService {
 message VendorMonth {
   // YYYY-MM.
   string month = 1;
-  // On subscriptions, on usage, and one-offs.
+  // On subscriptions, on usage, and one-offs, as receipts say.
   string subscription = 2;
   string usage = 3;
   string other = 4;
+  // Paid with no receipt (a statement's payment): what for isn't known, so
+  // it isn't guessed into the others.
+  string unreceipted = 6;
   // The most seats any of its receipts that month paid for; 0 when none
   // said.
   double seats = 5;
