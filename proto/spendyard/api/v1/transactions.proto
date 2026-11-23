@@ -128,9 +128,9 @@ message ListTransactionsResponse {
   string next_page_token = 2;
   // How many the request picks in all, every page together.
   int64 total = 3;
-  // Of all the caller's transactions, whatever was asked: how many are
-  // matched, missing a receipt, and need none; and what the missing ones
-  // come to, per currency.
+  // Of the caller's transactions in the days asked (from and to; all of them
+  // when neither), whatever else was: how many are matched, missing a
+  // receipt, and need none; and what the missing ones come to, per currency.
   int64 matched = 4;
   int64 missing = 5;
   int64 no_receipt_needed = 6;
