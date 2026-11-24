@@ -2998,7 +2998,7 @@ dependencies = [
 
 [[package]]
 name = "spendyard"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-imap",
@@ -3029,7 +3029,7 @@ dependencies = [
 
 [[package]]
 name = "spendyard-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -3051,7 +3051,7 @@ dependencies = [
 
 [[package]]
 name = "spendyard-models"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -3063,7 +3063,7 @@ dependencies = [
 
 [[package]]
 name = "spendyard-wasm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "js-sys",
