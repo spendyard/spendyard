@@ -37,7 +37,137 @@ service VendorService {
   rpc UpdateVendor(UpdateVendorRequest) returns (UpdateVendorResponse) {
     option (spendyard.api.v1.permission) = "vendors:write";
   }
+  // ListOwnVendors lists the organisation's own vendors, by name: those it
+  // added because the catalog lacked them, and its own view of any the
+  // catalog has.
+  rpc ListOwnVendors(ListOwnVendorsRequest) returns (ListOwnVendorsResponse) {
+    option (spendyard.api.v1.permission) = "vendors:read";
+  }
+  // SetOwnVendor keeps a vendor of the organisation's own, by its domain:
+  // added, or replaced when it's there. It goes on top of the catalog for
+  // this organisation only, as the CLI's local vendor files do: receipts
+  // and card payments are found by its domains, names and statement
+  // descriptors from then on, those already in too; one with a catalog
+  // vendor's domain replaces that vendor. The owner and admins only:
+  // PERMISSION_DENIED for a member.
+  rpc SetOwnVendor(SetOwnVendorRequest) returns (SetOwnVendorResponse) {
+    option (spendyard.api.v1.permission) = "vendors:write";
+  }
+  // DeleteOwnVendor takes one away: its receipts go back to the catalog's
+  // vendor, or to the names they show. NOT_FOUND when there's none by that
+  // domain. The owner and admins only.
+  rpc DeleteOwnVendor(DeleteOwnVendorRequest) returns (DeleteOwnVendorResponse) {
+    option (spendyard.api.v1.permission) = "vendors:write";
+  }
 }
+
+// OwnVendor is a vendor the organisation added itself, in the catalog's
+// terms.
+message OwnVendor {
+  // Its main domain, which is its ID: `fjordbyra.no`.
+  string domain = 1 [(buf.validate.field).string = {
+    min_len: 3
+    max_len: 200
+    pattern: "^[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+  }];
+  // The name to show.
+  string name = 2 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 200
+  }];
+  string category = 3 [(buf.validate.field).string = {
+    in: [
+      "ai",
+      "dev-tools",
+      "infrastructure",
+      "observability",
+      "security",
+      "data",
+      "design",
+      "productivity",
+      "communication",
+      "analytics",
+      "marketing",
+      "sales",
+      "support",
+      "finance",
+      "hr",
+      "legal",
+      "education",
+      "other"
+    ]
+  }];
+  // Other names on its receipts: legal, old, trading names.
+  repeated string aliases = 4 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {
+      string: {
+        min_len: 1
+        max_len: 200
+      }
+    }
+  }];
+  // Other domains its site and mail use; subdomains match too.
+  repeated string domains = 5 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {
+      string: {
+        min_len: 3
+        max_len: 200
+        pattern: "^[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+      }
+    }
+  }];
+  // How its charges start on card statements, when its name alone doesn't
+  // find them: `FJORDBYRA AS`.
+  repeated string descriptors = 6 [(buf.validate.field).repeated = {
+    max_items: 20
+    items: {
+      string: {
+        min_len: 2
+        max_len: 100
+      }
+    }
+  }];
+  // How it charges: `seat`, `usage`, `plan`, `one_time`.
+  repeated string pricing = 7 [(buf.validate.field).repeated = {
+    max_items: 4
+    unique: true
+    items: {
+      string: {
+        in: [
+          "seat",
+          "usage",
+          "plan",
+          "one_time"
+        ]
+      }
+    }
+  }];
+}
+
+message ListOwnVendorsRequest {}
+
+message ListOwnVendorsResponse {
+  repeated OwnVendor vendors = 1;
+}
+
+message SetOwnVendorRequest {
+  OwnVendor vendor = 1 [(buf.validate.field).required = true];
+}
+
+message SetOwnVendorResponse {
+  OwnVendor vendor = 1;
+}
+
+message DeleteOwnVendorRequest {
+  string domain = 1 [(buf.validate.field).string = {
+    min_len: 3
+    max_len: 200
+  }];
+}
+
+message DeleteOwnVendorResponse {}
 
 // One month of a vendor's spend, in the organisation's currency: plain
 // decimals (`20.00`).
@@ -97,6 +227,8 @@ message Vendor {
   // Its payments on card statements with no receipt: counted in its spend,
   // and missing their receipts.
   int32 payments = 21;
+  // Set when it's one of the organisation's own vendors (SetOwnVendor).
+  OwnVendor own = 22;
 }
 
 message ListVendorsRequest {
