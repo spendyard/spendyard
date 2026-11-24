@@ -25,7 +25,7 @@ import "google/protobuf/descriptor.proto";
 // What the permission allows is the kind of call; which records the caller
 // sees (a member's own receipts) is still each method's.
 extend google.protobuf.MethodOptions {
-  // The permission calling this RPC takes: `receipts:read`, `members:manage`.
+  // The permission calling this RPC takes: `documents:read`, `members:manage`.
   //
   // 50001: in the range protobuf keeps for an organization's own options
   // (50000–99999).

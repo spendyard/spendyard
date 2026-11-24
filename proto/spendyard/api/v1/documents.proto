@@ -4,20 +4,26 @@ package spendyard.api.v1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
+import "spendyard/api/v1/model.proto";
 import "spendyard/api/v1/options.proto";
 
 // DocumentService is the active organisation's documents: what arrived (files
 // dropped in the browser, forwarded mail, later mailboxes and the CLI's
-// pushes), where each is in being read, and what was read from it. Reading
-// happens on its own, in the background, as each arrives.
+// pushes), where each is in being read, what was read from it, and checking
+// and correcting that. Reading happens on its own, in the background, as each
+// arrives.
+//
+// A receipt, an invoice, a renewal notice or a failed payment is a document:
+// what was read from it is on it (vendor, total, day, what paid it), and so
+// is what people decided about it (checked, a note, personal, set aside).
+// Only what was paid is spend: a receipt, or a paid invoice (`paid`, and
+// `paid_by` for how that's known). The review queue is every document with
+// something flagged, not checked and not set aside.
 //
 // Files go to and come from the blob store directly, by signed URL, not
 // through the API: CreateDocumentUpload gives a URL to PUT a file to,
 // AddDocument takes it in, GetDocumentOriginal gives a URL to download one
 // from.
-//
-// What was read is ReceiptService's: the receipts and invoices, checking
-// them, correcting them.
 service DocumentService {
   // ListDocuments lists the documents, newest first, a page at a time. A
   // member sees the ones they added; the owner, admins and an accountant see
@@ -38,12 +44,20 @@ service DocumentService {
   rpc AddDocument(AddDocumentRequest) returns (AddDocumentResponse) {
     option (spendyard.api.v1.permission) = "documents:write";
   }
-  // GetDocument gives one document, read or not: where it is in being read,
-  // why it couldn't be, and what it came as. What was read is
-  // ReceiptService.GetReceipt's.
-  // NOT_FOUND when it isn't the caller's to see.
+  // GetDocument gives one document whole, read or not: where it is in being
+  // read, why it couldn't be, what it came as, and what was read from it,
+  // with the quote behind each value, what the checks flagged, how it was
+  // corrected and who checked it. NOT_FOUND when it isn't the caller's to
+  // see.
   rpc GetDocument(GetDocumentRequest) returns (GetDocumentResponse) {
     option (spendyard.api.v1.permission) = "documents:read";
+  }
+  // UpdateDocument corrects what was read by hand, says it's checked, or
+  // marks it: the fields given, the rest as they were. A correction stays
+  // when it's read again; reading it again puts it back in the review queue
+  // when the new reading is flagged. NOT_FOUND when it isn't the caller's.
+  rpc UpdateDocument(UpdateDocumentRequest) returns (UpdateDocumentResponse) {
+    option (spendyard.api.v1.permission) = "documents:write";
   }
   // GetDocumentOriginal gives a URL to download a document as it came, good
   // for a few minutes. NOT_FOUND when it isn't the caller's to see, or its
@@ -100,9 +114,10 @@ message Document {
   // `understand`); empty unless it failed.
   string error = 9;
   string error_stage = 10;
-  // What was read, when it's about money: the vendor (as edited, if it was),
-  // the total and its currency, and the day it was issued (YYYY-MM-DD).
-  string vendor_name = 11;
+  // What was read, when it's about money: the total and its currency, and
+  // the day it was issued (YYYY-MM-DD), or arrived when it doesn't say.
+  reserved 11;
+  reserved "vendor_name";
   string total = 12;
   string currency = 13;
   string date = 14;
@@ -115,8 +130,57 @@ message Document {
   string converted_currency = 17;
   // When it was last read, RFC 3339; empty when it hasn't been.
   string read_at = 18;
-  // The payment it's evidence of (PaymentService); 0 when it's no payment's.
+  // The payment it's evidence of (PaymentService); 0 when it's no payment's:
+  // an invoice not paid, a notice, one set aside.
   int32 payment_id = 19;
+  // Its vendor, as corrected if it was, as Vendors names it (merges and
+  // all); unset when nothing says.
+  VendorRef vendor = 20;
+  // How many things the checks flagged when it was read.
+  int32 flags = 21;
+  // Someone checked it: it isn't waiting for review.
+  bool confirmed = 22;
+  // Marked by hand as personal, or as not spend at all (set aside).
+  bool personal = 23;
+  bool ignored = 24;
+  // A note on it, by hand.
+  string note = 25;
+  // Where the payment stands, as it says.
+  PaymentStatus status = 26;
+  // Money was paid: a receipt, or a paid invoice. Only these are spend.
+  bool paid = 27;
+  // How it's known to be paid; unspecified when it isn't. It saying so
+  // comes first, then a card payment, then a mark by hand.
+  PaidBy paid_by = 28;
+  // The card it says it was paid with, its last four digits.
+  string card_last4 = 29;
+  // The statement's line that paid it (matched, or linked by hand); unset
+  // when none is.
+  PaidWith paid_with = 30;
+}
+
+// PaidWith is the line on a card statement that paid a document.
+message PaidWith {
+  // Its id in TransactionService: `<statement>:<line>`.
+  string transaction_id = 1;
+  // Its day, YYYY-MM-DD.
+  string date = 2;
+  // The card as statements name it ("Mastercard 3776").
+  string card = 3;
+}
+
+// How a document is known to have been paid.
+enum PaidBy {
+  // It isn't known to be.
+  PAID_BY_UNSPECIFIED = 0;
+  // It says so: a receipt, or an invoice read as paid.
+  PAID_BY_DOCUMENT = 1;
+  // A payment from a card statement is its, matched or linked by hand
+  // (TransactionService): an invoice that only says what's due.
+  PAID_BY_PAYMENT = 2;
+  // Marked paid by hand (UpdateDocumentRequest.paid): paid some other way,
+  // or before the card's statements are in.
+  PAID_BY_HAND = 3;
 }
 
 // Which documents ListDocuments lists.
@@ -209,8 +273,39 @@ message GetDocumentRequest {
 message GetDocumentResponse {
   Document document = 1;
   // What it came as, each with its text, and a link to see and to download
-  // the PDFs and pictures; none when the original isn't kept.
+  // the PDFs and pictures; none when the original isn't kept. Where the
+  // reading's quotes are found.
   repeated DocumentPart parts = 2;
+  // What was read; unset until it's read.
+  Reading reading = 3;
+  // A URL to show the original in the page, good for a few minutes: for a
+  // PDF or a picture only, empty otherwise.
+  string preview_url = 4;
+  // Its corrections by hand; unset when there are none.
+  DocumentEdit edit = 5;
+  // Who checked it, and when; unset until someone has.
+  DocumentConfirmation confirmation = 6;
+}
+
+message UpdateDocumentRequest {
+  int32 id = 1 [(buf.validate.field).int32.gt = 0];
+  // The vendor's name as it should be; empty puts the reading's back.
+  optional string vendor_name = 2 [(buf.validate.field).string.max_len = 200];
+  // Personal, not the organisation's spend.
+  optional bool personal = 3;
+  // Not spend at all: a newsletter, a duplicate.
+  optional bool ignored = 4;
+  optional string note = 5 [(buf.validate.field).string.max_len = 2000];
+  // Paid, though it doesn't say so: an invoice paid some other way, or
+  // before the card's statements are in. False takes the mark away.
+  optional bool paid = 6;
+  // Checked: right as read, or as corrected. It leaves the review queue.
+  // Only true: a document read again is checked again.
+  optional bool confirmed = 7 [(buf.validate.field).bool.const = true];
+}
+
+message UpdateDocumentResponse {
+  Document document = 1;
 }
 
 // DocumentPart is one part of a document: the mail's body, an attachment,
@@ -266,4 +361,198 @@ enum DocumentType {
   // credit on account or lowers an unpaid invoice. Spend counts one paid
   // back as money back, below nothing.
   DOCUMENT_TYPE_CREDIT_NOTE = 7;
+}
+
+// Reading is what was read from a document, as the CLI's `spendyard read`
+// gives it: amounts are plain decimals (`1234.50`), days YYYY-MM-DD.
+message Reading {
+  // What the document is.
+  DocumentType document_type = 1;
+  // Money was paid: a receipt, or a paid invoice.
+  bool is_receipt = 2;
+  bool is_invoice = 3;
+  PaymentStatus status = 4;
+  // The model's own confidence, 0 to 1. Not calibrated.
+  double confidence = 5;
+  ReadVendor vendor = 6;
+  ReadAmount amount = 7;
+  ReadBilling billing = 8;
+  repeated ReadLine lines = 9;
+  repeated ReadPayment payments = 10;
+  string invoice_number = 11;
+  string receipt_number = 12;
+  // On a credit note: the number of the invoice it credits, as written;
+  // empty when it names none.
+  string credited_invoice = 21;
+  string issued = 13;
+  // The quote behind each value, keyed by field path: `vendor.name`,
+  // `amount.total`, `lines[0].amount`.
+  map<string, Evidence> evidence = 14;
+  // What the checks found wrong or doubtful. Empty is good.
+  repeated Flag flags = 15;
+  // Problems reading the input, such as parts that couldn't be sent.
+  repeated string warnings = 16;
+  // Which models read it, `provider/model`, and when.
+  string extractor = 17;
+  string model = 18;
+  string decider = 19;
+  google.protobuf.Timestamp read_at = 20;
+}
+
+message ReadVendor {
+  string id = 1;
+  string name = 2;
+  // The name as printed, when it differs from `name`.
+  string legal_name = 3;
+  string category = 4;
+  // Found in the vendor catalog.
+  bool known = 5;
+  // Who took the payment for it: `stripe`, `paddle`.
+  string processor = 6;
+  string account_email = 7;
+  string account_workspace = 8;
+  string account_customer_id = 9;
+}
+
+message ReadAmount {
+  string total = 1;
+  string subtotal = 2;
+  string tax = 3;
+  string currency = 4;
+}
+
+message ReadBilling {
+  BillingModel model = 1;
+  Interval interval = 2;
+  string period_start = 3;
+  string period_end = 4;
+  string next_renewal = 5;
+}
+
+message ReadLine {
+  LineKind kind = 1;
+  string product = 2;
+  string plan = 3;
+  string description = 4;
+  double quantity = 5;
+  string unit = 6;
+  string unit_price = 7;
+  string amount = 8;
+  Interval interval = 9;
+}
+
+message ReadPayment {
+  PaymentMethod method = 1;
+  string brand = 2;
+  string last4 = 3;
+  string amount = 4;
+}
+
+// Evidence is the quote behind one value.
+message Evidence {
+  string quote = 1;
+  // The part it's from: DocumentPart.index.
+  int32 part = 2;
+  // The quote was found in the part's text. False when it wasn't, or the
+  // part has no text to check against (a picture).
+  bool checked = 3;
+}
+
+// Flag is one thing the checks found wrong or doubtful.
+message Flag {
+  // A stable code, such as `totals_dont_add_up`.
+  string code = 1;
+  // The field it's about, as evidence names fields; empty for the whole.
+  string field = 2;
+  string message = 3;
+}
+
+// DocumentEdit is how a document's reading was corrected, or marked, by hand.
+message DocumentEdit {
+  // The vendor as it should be; empty when the reading's stands.
+  string vendor_name = 1;
+  bool personal = 2;
+  bool ignored = 3;
+  string note = 4;
+  google.protobuf.Timestamp updated_at = 5;
+  // Marked paid by hand.
+  bool paid = 6;
+}
+
+message DocumentConfirmation {
+  // Who checked it.
+  UserRef confirmed_by = 1;
+  google.protobuf.Timestamp confirmed_at = 2;
+}
+
+// Where the payment a document is about stands.
+enum PaymentStatus {
+  PAYMENT_STATUS_UNSPECIFIED = 0;
+  PAYMENT_STATUS_PAID = 1;
+  PAYMENT_STATUS_DUE = 2;
+  PAYMENT_STATUS_FAILED = 3;
+  PAYMENT_STATUS_UPCOMING = 4;
+  // It doesn't say, or isn't about a payment.
+  PAYMENT_STATUS_NONE = 5;
+}
+
+// How a vendor charges, as far as a document shows.
+enum BillingModel {
+  BILLING_MODEL_UNSPECIFIED = 0;
+  // A recurring fee: plans and seats.
+  BILLING_MODEL_SUBSCRIPTION = 1;
+  // Charged for what was used.
+  BILLING_MODEL_USAGE = 2;
+  // Both subscription and usage charges.
+  BILLING_MODEL_MIXED = 3;
+  BILLING_MODEL_ONE_TIME = 4;
+  BILLING_MODEL_UNKNOWN = 5;
+}
+
+// How often something is charged.
+enum Interval {
+  INTERVAL_UNSPECIFIED = 0;
+  INTERVAL_MONTH = 1;
+  INTERVAL_YEAR = 2;
+  INTERVAL_WEEK = 3;
+  INTERVAL_QUARTER = 4;
+  INTERVAL_OTHER = 5;
+}
+
+// What a line on a document charges for.
+enum LineKind {
+  LINE_KIND_UNSPECIFIED = 0;
+  // Priced per seat or user.
+  LINE_KIND_SEAT = 1;
+  // A flat recurring fee for a plan.
+  LINE_KIND_PLAN = 2;
+  // Charged by use: requests, tokens, minutes, overage.
+  LINE_KIND_USAGE = 3;
+  LINE_KIND_ADDON = 4;
+  LINE_KIND_DISCOUNT = 5;
+  LINE_KIND_CREDIT = 6;
+  LINE_KIND_ONE_TIME = 7;
+  LINE_KIND_OTHER = 8;
+}
+
+// How something was paid.
+enum PaymentMethod {
+  PAYMENT_METHOD_UNSPECIFIED = 0;
+  PAYMENT_METHOD_CARD = 1;
+  PAYMENT_METHOD_PAYPAL = 2;
+  PAYMENT_METHOD_BANK_TRANSFER = 3;
+  PAYMENT_METHOD_DIRECT_DEBIT = 4;
+  PAYMENT_METHOD_APPLE_PAY = 5;
+  PAYMENT_METHOD_GOOGLE_PAY = 6;
+  PAYMENT_METHOD_CREDITS = 7;
+  PAYMENT_METHOD_INVOICE = 8;
+  PAYMENT_METHOD_OTHER = 9;
+}
+
+// UsedCard is a card something was paid with, and when last.
+message UsedCard {
+  // "visa 3776".
+  string card = 1;
+  // When it last paid, YYYY-MM-DD.
+  string last_used = 2;
 }

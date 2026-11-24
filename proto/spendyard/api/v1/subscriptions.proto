@@ -3,9 +3,9 @@ syntax = "proto3";
 package spendyard.api.v1;
 
 import "buf/validate/validate.proto";
+import "spendyard/api/v1/documents.proto";
 import "spendyard/api/v1/model.proto";
 import "spendyard/api/v1/options.proto";
-import "spendyard/api/v1/receipts.proto";
 
 // SubscriptionService is the active organisation's subscriptions: what it
 // pays again and again, worked out from its receipts, and from payments on
@@ -30,7 +30,7 @@ service SubscriptionService {
     option (spendyard.api.v1.permission) = "subscriptions:read";
   }
   // GetSubscription gives one subscription, whatever its status. Its
-  // receipts are ListReceipts' with its subscription_id. NOT_FOUND when it
+  // documents are those in Subscription.document_ids. NOT_FOUND when it
   // isn't the caller's to see.
   rpc GetSubscription(GetSubscriptionRequest) returns (GetSubscriptionResponse) {
     option (spendyard.api.v1.permission) = "subscriptions:read";
@@ -116,6 +116,9 @@ message Subscription {
   // Who it's billed to, as its receipts say: workspaces and emails, each
   // once, the most said first. One account can be named several ways.
   repeated string billed_to = 26;
+  // The documents it was worked out from (DocumentService): its receipts and
+  // invoices, its notices.
+  repeated int32 document_ids = 27;
 }
 
 // Where a subscription is known from.

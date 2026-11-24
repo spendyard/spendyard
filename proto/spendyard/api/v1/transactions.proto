@@ -6,7 +6,6 @@ import "buf/validate/validate.proto";
 import "spendyard/api/v1/documents.proto";
 import "spendyard/api/v1/model.proto";
 import "spendyard/api/v1/options.proto";
-import "spendyard/api/v1/receipts.proto";
 
 // TransactionService is the active organisation's transactions: every
 // payment read from its card statements, each matched to the receipt or
@@ -154,9 +153,9 @@ message GetTransactionResponse {
   // The statement it was read from.
   Document statement = 2;
   // Its receipt, when it has one.
-  Receipt receipt = 3;
+  Document receipt = 3;
   // Receipts that could be its, the likeliest first, when it has none.
-  repeated Receipt suggestions = 4;
+  repeated Document suggestions = 4;
 }
 
 message UpdateTransactionRequest {

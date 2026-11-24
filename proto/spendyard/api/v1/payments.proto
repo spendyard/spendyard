@@ -3,9 +3,9 @@ syntax = "proto3";
 package spendyard.api.v1;
 
 import "buf/validate/validate.proto";
+import "spendyard/api/v1/documents.proto";
 import "spendyard/api/v1/model.proto";
 import "spendyard/api/v1/options.proto";
-import "spendyard/api/v1/receipts.proto";
 import "spendyard/api/v1/transactions.proto";
 
 // PaymentService is the active organisation's payments: what Spendyard
@@ -131,10 +131,10 @@ message GetPaymentRequest {
 message GetPaymentResponse {
   Payment payment = 1;
   // Its documents' readings, newest first.
-  repeated Receipt documents = 2;
+  repeated Document documents = 2;
   // Its lines on statements.
   repeated Transaction transactions = 3;
   // When it has no document and is on a statement: receipts that could be
   // its, the likeliest first, to link to its line (UpdateTransaction).
-  repeated Receipt suggestions = 4;
+  repeated Document suggestions = 4;
 }

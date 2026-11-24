@@ -3,15 +3,15 @@ syntax = "proto3";
 package spendyard.api.v1;
 
 import "buf/validate/validate.proto";
+import "spendyard/api/v1/documents.proto";
 import "spendyard/api/v1/model.proto";
 import "spendyard/api/v1/options.proto";
-import "spendyard/api/v1/receipts.proto";
 
 // VendorService is the active organisation's vendors: who it pays, worked
 // out from its receipts by the CLI's own code, with what each has cost
 // month by month (subscriptions, usage, one-offs), its seats over time, and
-// its subscriptions, cards and accounts. Its receipts are ListReceipts'
-// with its vendor_id.
+// its subscriptions, cards and accounts. Its documents are those whose
+// vendor (Document.vendor) is it.
 //
 // What people decide about a vendor is kept by its ID and applied before
 // anything is worked out, so receipts that come later follow it, and
@@ -229,6 +229,8 @@ message Vendor {
   int32 payments = 21;
   // Set when it's one of the organisation's own vendors (SetOwnVendor).
   OwnVendor own = 22;
+  // The documents it was worked out from (DocumentService), merges and all.
+  repeated int32 document_ids = 23;
 }
 
 message ListVendorsRequest {
