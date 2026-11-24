@@ -39,6 +39,14 @@ service SyncService {
   rpc SyncBootstrap(SyncBootstrapRequest) returns (SyncBootstrapResponse) {
     option (spendyard.api.v1.permission) = "sync:read";
   }
+  // WatchChanges says, for as long as the caller stays connected, each time
+  // the organisation's log moves on: the newest sync id, a hint to ask
+  // SyncChanges. It carries no changes, and isn't needed to catch up: a
+  // client that wasn't watching asks SyncChanges as it comes back. Ends when
+  // the server is redeployed, or sooner: watch again.
+  rpc WatchChanges(WatchChangesRequest) returns (stream WatchChangesResponse) {
+    option (spendyard.api.v1.permission) = "sync:read";
+  }
 }
 
 // What a change is of.
@@ -126,4 +134,19 @@ message SyncBootstrapResponse {
   // Each as a change: its id is 0.
   repeated Change changes = 3;
   string next_page_token = 4;
+}
+
+message WatchChangesRequest {
+  string org_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+  }];
+}
+
+message WatchChangesResponse {
+  // The newest sync id: past what the caller holds, there's more to ask
+  // for. The first message says it as the watch starts.
+  int64 last_sync_id = 1;
+  // Nothing moved: sent now and again, so the connection stays open.
+  bool heartbeat = 2;
 }
