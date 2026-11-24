@@ -18,7 +18,7 @@ use spendyard_core::{Document, ReadResult};
 use super::config;
 
 /// Bump with every change to the tables, and add a step to `migrate`.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
@@ -147,20 +147,23 @@ CREATE INDEX IF NOT EXISTS charges_card_date ON charges (card_last4, date);
 -- Payments (spendyard_core::payments): which payment each piece of evidence
 -- is, a document (document_id) or a statement's line (statement_id and
 -- position). The grouping is worked out again from the store; what's kept is
--- each payment's ID, so links to one hold when its evidence changes.
+-- each payment's ID, a number never given to another, so links to one hold
+-- when its evidence changes. A deleted document leaves its row with nothing
+-- in it, so the payment is still known, and found gone.
 CREATE TABLE IF NOT EXISTS payment_evidence (
-    payment_id    TEXT NOT NULL,
-    document_id   INTEGER REFERENCES documents (id) ON DELETE CASCADE,
-    statement_id  INTEGER REFERENCES documents (id) ON DELETE CASCADE,
+    payment_id    INTEGER NOT NULL,
+    document_id   INTEGER REFERENCES documents (id) ON DELETE SET NULL,
+    statement_id  INTEGER REFERENCES documents (id) ON DELETE SET NULL,
     position      INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS payment_evidence_payment ON payment_evidence (payment_id);
 
--- A payment that became part of another: links to from_id go to to_id.
+-- A payment retired: moved into another (links to from_id go to to_id), or
+-- gone (to_id NULL: its evidence is all gone). Its number isn't given again.
 CREATE TABLE IF NOT EXISTS payment_moves (
-    from_id  TEXT PRIMARY KEY,
-    to_id    TEXT NOT NULL
+    from_id  INTEGER PRIMARY KEY,
+    to_id    INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS scans (
@@ -231,6 +234,12 @@ impl Store {
             .pragma_query_value(None, "user_version", |row| row.get(0))?;
 
         if version < SCHEMA_VERSION {
+            // Version 4 numbered payments with text; from 5 with numbers. Nothing filled them yet.
+            if version == 4 {
+                self.connection
+                    .execute_batch("DROP TABLE payment_evidence; DROP TABLE payment_moves;")?;
+            }
+
             self.connection.execute_batch(SCHEMA)?;
 
             // Version 2 kept a charge once per document; from 3 once in all.

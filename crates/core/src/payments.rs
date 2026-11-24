@@ -63,18 +63,19 @@ impl Evidence {
     }
 }
 
-/// One payment: its own ID, and its evidence.
+/// One payment: its own ID, a number given once and never to another, and
+/// its evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Payment {
-    pub id: String,
+    pub id: i64,
     pub evidence: Evidence,
 }
 
 /// A payment that became part of another: links to `from` go to `to`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Moved {
-    pub from: String,
-    pub to: String,
+    pub from: i64,
+    pub to: i64,
 }
 
 /// Payments grouped again, with what happened to the ones stored before.
@@ -84,7 +85,7 @@ pub struct Regrouped {
     /// Stored payments merged into another.
     pub moved: Vec<Moved>,
     /// Stored payments whose evidence is all gone.
-    pub gone: Vec<String>,
+    pub gone: Vec<i64>,
 }
 
 /// The evidence of each payment, from the store's rows (one per document,
@@ -236,11 +237,11 @@ fn join_credit_notes_and_refunds(rows: &[&Row], sets: &mut Sets) {
 pub fn keep_ids(
     groups: Vec<Evidence>,
     stored: &[Payment],
-    mut new_id: impl FnMut(&Evidence) -> String,
+    mut new_id: impl FnMut(&Evidence) -> i64,
 ) -> Regrouped {
     let shared = shared_evidence(&groups, stored);
 
-    let mut ids: Vec<Option<String>> = vec![None; groups.len()];
+    let mut ids: Vec<Option<i64>> = vec![None; groups.len()];
     let mut kept: BTreeSet<usize> = BTreeSet::new();
 
     for &(_, group, old) in &shared {
@@ -248,11 +249,11 @@ pub fn keep_ids(
             continue;
         }
 
-        ids[group] = Some(stored[old].id.clone());
+        ids[group] = Some(stored[old].id);
         kept.insert(old);
     }
 
-    let ids: Vec<String> = ids
+    let ids: Vec<i64> = ids
         .into_iter()
         .zip(&groups)
         .map(|(id, evidence)| id.unwrap_or_else(|| new_id(evidence)))
@@ -269,14 +270,14 @@ pub fn keep_ids(
         let into = shared
             .iter()
             .find(|&&(_, _, other)| other == old)
-            .map(|&(_, group, _)| ids[group].clone());
+            .map(|&(_, group, _)| ids[group]);
 
         match into {
             Some(to) => regrouped.moved.push(Moved {
-                from: payment.id.clone(),
+                from: payment.id,
                 to,
             }),
-            None => regrouped.gone.push(payment.id.clone()),
+            None => regrouped.gone.push(payment.id),
         }
     }
 
@@ -326,7 +327,7 @@ fn shared_evidence(groups: &[Evidence], stored: &[Payment]) -> Vec<(usize, usize
 /// documents say of it) and its evidence.
 #[derive(Debug, Clone, Serialize)]
 pub struct Record {
-    pub id: String,
+    pub id: i64,
     /// `payment`, money paid; `refund`, money back on a statement; or
     /// `credit`, a credit note paid back.
     pub kind: String,
@@ -341,33 +342,37 @@ pub struct Records {
     pub records: Vec<Record>,
     pub payments: Vec<Payment>,
     pub moved: Vec<Moved>,
-    pub gone: Vec<String>,
+    pub gone: Vec<i64>,
 }
 
 /// Every payment in `rows` (with the statements' payments that stand in
 /// for a receipt, as [`crate::transactions::payment_rows`] makes them) and
 /// `matching`, keeping the IDs of those `stored` ([`keep_ids`]). A new one
-/// gets [`fresh_id`], never one `stored` or `moved_before` (moved earlier,
-/// whose links still arrive) has.
-pub fn records(
-    rows: &[Row],
-    matching: &Matching,
-    stored: &[Payment],
-    moved_before: &[Moved],
-) -> Records {
-    let mut taken: BTreeSet<String> = stored.iter().map(|payment| payment.id.clone()).collect();
+/// gets the next number: one more than any payment ever had, `stored` or
+/// `retired` (moved into another or gone, whose links still arrive), so
+/// none is given twice. The oldest new ones get the lower numbers.
+pub fn records(rows: &[Row], matching: &Matching, stored: &[Payment], retired: &[i64]) -> Records {
+    let highest = stored
+        .iter()
+        .map(|payment| payment.id)
+        .chain(retired.iter().copied())
+        .max()
+        .unwrap_or(0);
 
-    taken.extend(moved_before.iter().map(|moved| moved.from.clone()));
+    let mut next = highest;
 
-    let new_id = |evidence: &Evidence| {
-        let id = fresh_id(evidence, &taken);
+    let new_id = |_: &Evidence| {
+        next += 1;
 
-        taken.insert(id.clone());
-
-        id
+        next
     };
 
-    let regrouped = keep_ids(group(rows, matching), stored, new_id);
+    // Oldest first, so numbers go up with time: groups come newest first, as the rows do.
+    let mut groups = group(rows, matching);
+
+    groups.reverse();
+
+    let regrouped = keep_ids(groups, stored, new_id);
 
     let mut rows_of: BTreeMap<Piece, Vec<&Row>> = BTreeMap::new();
 
@@ -381,7 +386,7 @@ pub fn records(
         .filter_map(|payment| record_of(payment, &rows_of))
         .collect();
 
-    records.sort_by(|a, b| b.row.date.cmp(&a.row.date).then(a.id.cmp(&b.id)));
+    records.sort_by(|a, b| b.row.date.cmp(&a.row.date).then(b.id.cmp(&a.id)));
 
     Records {
         records,
@@ -418,34 +423,11 @@ fn record_of(payment: &Payment, rows_of: &BTreeMap<Piece, Vec<&Row>>) -> Option<
     };
 
     Some(Record {
-        id: payment.id.clone(),
+        id: payment.id,
         kind: kind.into(),
         row,
         evidence: payment.evidence.clone(),
     })
-}
-
-/// A new payment's ID, from its first piece of evidence: `p-d7` for
-/// document 7, `p-c90-4` for line 4 of statement 90; `-2`, `-3`, … after it
-/// when that is `taken`. Stored, it stays the payment's whatever its
-/// evidence becomes.
-pub fn fresh_id(evidence: &Evidence, taken: &BTreeSet<String>) -> String {
-    let first = match evidence.pieces().next() {
-        Some(Piece::Document(id)) => format!("d{id}"),
-        Some(Piece::Charge(key)) => format!("c{}", key.replace(':', "-")),
-        None => "none".to_string(),
-    };
-
-    let base = format!("p-{first}");
-
-    if !taken.contains(&base) {
-        return base;
-    }
-
-    (2..)
-        .map(|n| format!("{base}-{n}"))
-        .find(|id| !taken.contains(id))
-        .unwrap_or(base)
 }
 
 /// Pieces joined into groups: a union-find over the pieces added.
@@ -591,21 +573,21 @@ mod tests {
         }
     }
 
-    fn payment(id: &str, documents: &[i64], charges: &[&str]) -> Payment {
+    fn payment(id: i64, documents: &[i64], charges: &[&str]) -> Payment {
         Payment {
-            id: id.into(),
+            id,
             evidence: evidence(documents, charges),
         }
     }
 
-    /// New IDs `new 1`, `new 2`, … in the order asked for.
-    fn counter() -> impl FnMut(&Evidence) -> String {
-        let mut next = 0;
+    /// New IDs 101, 102, … in the order asked for.
+    fn counter() -> impl FnMut(&Evidence) -> i64 {
+        let mut next = 100;
 
         move |_| {
             next += 1;
 
-            format!("new {next}")
+            next
         }
     }
 
@@ -711,12 +693,12 @@ mod tests {
 
         let found = records(&rows, &matching, &[], &[]);
 
-        let summary: Vec<(&str, &str, &str)> = found
+        let summary: Vec<(i64, &str, &str)> = found
             .records
             .iter()
             .map(|record| {
                 (
-                    record.id.as_str(),
+                    record.id,
                     record.kind.as_str(),
                     record.row.total.as_deref().unwrap_or(""),
                 )
@@ -726,9 +708,9 @@ mod tests {
         assert_eq!(
             summary,
             [
-                ("p-c90-6", "refund", "-45.00"),
-                ("p-d3", "credit", "-5.00"),
-                ("p-d1", "payment", "20.00")
+                (3, "refund", "-45.00"),
+                (2, "credit", "-5.00"),
+                (1, "payment", "20.00")
             ]
         );
 
@@ -738,77 +720,64 @@ mod tests {
     }
 
     #[test]
-    fn records_keep_stored_ids_and_never_reuse_one_that_moved() {
+    fn records_keep_stored_ids_and_never_give_a_retired_one_again() {
         let rows = rows(vec![
             row(2, "2026-11-03", "Vercel", "20.00"),
             row(1, "2026-10-03", "Vercel", "20.00"),
         ]);
 
-        let stored = [payment("mine", &[2], &[])];
-        let moved = [Moved {
-            from: "p-d1".into(),
-            to: "mine".into(),
-        }];
+        // Payment 9 moved into another, or is gone: its number is never given again.
+        let stored = [payment(5, &[2], &[])];
 
-        let found = records(&rows, &Matching::default(), &stored, &moved);
+        let found = records(&rows, &Matching::default(), &stored, &[9]);
 
-        let ids: Vec<&str> = found
-            .records
-            .iter()
-            .map(|record| record.id.as_str())
-            .collect();
+        let ids: Vec<i64> = found.records.iter().map(|record| record.id).collect();
 
-        assert_eq!(ids, ["mine", "p-d1-2"]);
+        assert_eq!(ids, [5, 10]);
     }
 
     #[test]
     fn a_payment_keeps_its_id_when_its_invoice_comes_after_its_card_line() {
-        let stored = [payment("p1", &[], &["90:4"])];
+        let stored = [payment(1, &[], &["90:4"])];
         let groups = vec![evidence(&[7], &["90:4"])];
 
         let regrouped = keep_ids(groups, &stored, counter());
 
-        assert_eq!(regrouped.payments, [payment("p1", &[7], &["90:4"])]);
+        assert_eq!(regrouped.payments, [payment(1, &[7], &["90:4"])]);
         assert!(regrouped.moved.is_empty() && regrouped.gone.is_empty());
     }
 
     #[test]
     fn when_two_payments_merge_one_keeps_its_id_and_the_other_moves_to_it() {
-        let stored = [payment("p1", &[], &["90:4"]), payment("p2", &[8], &[])];
+        let stored = [payment(1, &[], &["90:4"]), payment(2, &[8], &[])];
         let groups = vec![evidence(&[7, 8], &["90:4"])];
 
         let regrouped = keep_ids(groups, &stored, counter());
 
-        assert_eq!(regrouped.payments, [payment("p1", &[7, 8], &["90:4"])]);
-        assert_eq!(
-            regrouped.moved,
-            [Moved {
-                from: "p2".into(),
-                to: "p1".into()
-            }]
-        );
+        assert_eq!(regrouped.payments, [payment(1, &[7, 8], &["90:4"])]);
+        assert_eq!(regrouped.moved, [Moved { from: 2, to: 1 }]);
     }
 
     #[test]
     fn when_a_payment_splits_the_larger_part_keeps_its_id() {
-        let stored = [payment("p1", &[1, 2], &["90:4"])];
+        let stored = [payment(1, &[1, 2], &["90:4"])];
         let groups = vec![evidence(&[2], &[]), evidence(&[1], &["90:4"])];
 
         let regrouped = keep_ids(groups, &stored, counter());
 
         assert_eq!(
             regrouped.payments,
-            [payment("new 1", &[2], &[]), payment("p1", &[1], &["90:4"])]
+            [payment(101, &[2], &[]), payment(1, &[1], &["90:4"])]
         );
     }
 
     #[test]
     fn a_payment_whose_evidence_is_gone_is_gone() {
-        let stored = [payment("p1", &[1], &[])];
+        let stored = [payment(1, &[1], &[])];
 
         let regrouped = keep_ids(vec![evidence(&[2], &[])], &stored, counter());
 
-        assert_eq!(regrouped.payments, [payment("new 1", &[2], &[])]);
-        assert_eq!(regrouped.gone, ["p1"]);
+        assert_eq!(regrouped.payments, [payment(101, &[2], &[])]);
+        assert_eq!(regrouped.gone, [1]);
     }
 }

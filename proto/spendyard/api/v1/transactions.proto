@@ -66,7 +66,7 @@ message Transaction {
   // Its statement and its line on it: `<document>:<line>`.
   string id = 1;
   // The statement it was read from: a document.
-  int64 statement_id = 2;
+  int32 statement_id = 2;
   // When it was paid, and when the bank booked it: YYYY-MM-DD.
   string date = 3;
   string posted = 4;
@@ -91,7 +91,7 @@ message Transaction {
   VendorRef vendor = 13;
   TransactionState state = 15;
   // Its receipt: a document ID; 0 when it has none.
-  int64 receipt_id = 16;
+  int32 receipt_id = 16;
   // Its receipt was linked by hand, not found by matching.
   bool by_hand = 17;
   string note = 18;
@@ -127,13 +127,13 @@ message ListTransactionsResponse {
   // For the page after this one; empty when this is the last.
   string next_page_token = 2;
   // How many the request picks in all, every page together.
-  int64 total = 3;
+  int32 total = 3;
   // Of the caller's transactions in the days asked (from and to; all of them
   // when neither), whatever else was: how many are matched, missing a
   // receipt, and need none; and what the missing ones come to, per currency.
-  int64 matched = 4;
-  int64 missing = 5;
-  int64 no_receipt_needed = 6;
+  int32 matched = 4;
+  int32 missing = 5;
+  int32 no_receipt_needed = 6;
   repeated Money missing_amounts = 7;
   // The cards the statements are for: their last four digits.
   repeated string cards = 8;
@@ -163,7 +163,7 @@ message UpdateTransactionRequest {
   }];
   // Its receipt, linked by hand: a receipt's document ID; 0 lets matching
   // find it again.
-  optional int64 receipt_id = 2 [(buf.validate.field).int64.gte = 0];
+  optional int32 receipt_id = 2 [(buf.validate.field).int32.gte = 0];
   // It needs no receipt; false undoes it.
   optional bool no_receipt_needed = 3;
   optional string note = 4 [(buf.validate.field).string.max_len = 2000];

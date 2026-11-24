@@ -64,7 +64,7 @@ message FailedSubscription {
   string subscription_id = 1;
   VendorRef vendor = 2;
   // Its newest document: the notice of the failed payment.
-  int64 document_id = 3;
+  int32 document_id = 3;
 }
 
 // A vendor first paid recently.
@@ -87,10 +87,10 @@ message TopVendor {
 
 // What waits in the Inbox.
 message InboxCounts {
-  int64 to_review = 1;
-  int64 couldnt_read = 2;
-  int64 missing_receipts = 3;
-  int64 being_read = 4;
+  int32 to_review = 1;
+  int32 couldnt_read = 2;
+  int32 missing_receipts = 3;
+  int32 being_read = 4;
 }
 
 message GetOverviewResponse {
@@ -119,5 +119,5 @@ message GetOverviewResponse {
   repeated TopVendor top_vendors = 13;
   InboxCounts inbox = 14;
   // How many documents have come in at all: none means nothing to show yet.
-  int64 documents = 15;
+  int32 documents = 15;
 }

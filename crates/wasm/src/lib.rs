@@ -118,7 +118,8 @@ struct VendorsOptions {
 /// What [`payments`] works with: the rates matching converts with, what
 /// people decided about vendors, the statements' payments with the
 /// receipts they're matched to and links by hand, and the payments the
-/// store keeps: their IDs, and those that moved.
+/// store keeps: their IDs, and those retired (moved into another, or gone),
+/// whose numbers aren't given again.
 #[derive(Debug, Default, Deserialize)]
 struct PaymentsOptions {
     #[serde(default)]
@@ -137,14 +138,14 @@ struct PaymentsOptions {
     #[serde(default)]
     stored: Vec<spendyard_core::payments::Payment>,
     #[serde(default)]
-    moved: Vec<spendyard_core::payments::Moved>,
+    retired: Vec<i64>,
 }
 
 /// Every payment in a store's rows and statements, newest first, as
 /// `spendyard_core::payments::records` has them: `{"records", "payments",
 /// "moved", "gone"}`, `payments` being what the store keeps from now on;
 /// or `{"error": "…"}`. `options` is `{"rates"?, "vendor_edits"?,
-/// "charges"?, "match_receipts"?, "links"?, "stored"?, "moved"?}`.
+/// "charges"?, "match_receipts"?, "links"?, "stored"?, "retired"?}`.
 fn payments_json_here(rows: &str, options: &str) -> String {
     let answer = (|| -> Result<Value, String> {
         let mut rows = report_rows(rows)?;
@@ -165,7 +166,8 @@ fn payments_json_here(rows: &str, options: &str) -> String {
 
         let rows = spendyard_core::vendors::apply_vendor_edits(rows, &asked.vendor_edits);
 
-        let found = spendyard_core::payments::records(&rows, &matched, &asked.stored, &asked.moved);
+        let found =
+            spendyard_core::payments::records(&rows, &matched, &asked.stored, &asked.retired);
 
         serde_json::to_value(found).map_err(|error| error.to_string())
     })();
@@ -768,7 +770,8 @@ mod tests {
                 "document_id": 2, "vendor_name": "Vercel", "date": "2026-11-03",
                 "total": "20.00", "currency": "USD", "kind": "receipt"
             }],
-            "stored": [{ "id": "p-c90-4", "evidence": { "documents": [], "charges": ["90:4"] } }]
+            "stored": [{ "id": 4, "evidence": { "documents": [], "charges": ["90:4"] } }],
+            "retired": [7]
         });
 
         let answer: Value =
@@ -777,7 +780,7 @@ mod tests {
         let record = &answer["records"][0];
 
         assert_eq!(answer["records"].as_array().unwrap().len(), 1);
-        assert_eq!(record["id"], "p-c90-4");
+        assert_eq!(record["id"], 4);
         assert_eq!(record["kind"], "payment");
         assert_eq!(record["row"]["id"], 2);
         assert_eq!(record["row"]["interval"], "month");
@@ -785,7 +788,7 @@ mod tests {
             record["evidence"],
             json!({ "documents": [1, 2], "charges": ["90:4"] })
         );
-        assert_eq!(answer["payments"][0]["id"], "p-c90-4");
+        assert_eq!(answer["payments"][0]["id"], 4);
     }
 
     #[test]

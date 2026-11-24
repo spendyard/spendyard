@@ -64,7 +64,7 @@ message Forwarder {
   // As the mail came: the forwarding mailbox's address.
   string sender = 1;
   google.protobuf.Timestamp last_at = 2;
-  int64 count = 3;
+  int32 count = 3;
 }
 
 message ListForwardAddressesRequest {}

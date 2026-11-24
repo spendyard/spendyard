@@ -88,9 +88,9 @@ message Subscription {
   string last_total = 11;
   string last_currency = 12;
   // The receipt of the last payment, or the newest document without one.
-  int64 last_document_id = 13;
+  int32 last_document_id = 13;
   // Its newest document: the notice of a failed payment, an invoice due.
-  int64 newest_document_id = 14;
+  int32 newest_document_id = 14;
   // When it renews next, YYYY-MM-DD: as a receipt says, else a month,
   // quarter or year from the last payment. Empty when cancelled.
   string next_renewal = 15;

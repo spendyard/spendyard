@@ -59,9 +59,9 @@ enum PaymentFilter {
 // Payment is one payment: what moved, when, to or from whom, and the
 // evidence for it.
 message Payment {
-  // Given once and kept: `p-d7` when it began as document 7, `p-c90-4` as
-  // line 4 of statement 90. Never reused.
-  string id = 1;
+  // A number given once and kept whatever its evidence becomes: one more
+  // than any payment had before. Never given to another.
+  int32 id = 1;
   PaymentKind kind = 2;
   // Its vendor; unset when nothing says who.
   VendorRef vendor = 3;
@@ -88,7 +88,7 @@ message Payment {
   string product = 14;
   // Its evidence: documents by ID, transactions by ID
   // (`<statement>:<line>`).
-  repeated int64 document_ids = 15;
+  repeated int32 document_ids = 15;
   repeated string transaction_ids = 16;
 }
 
@@ -115,14 +115,11 @@ message ListPaymentsResponse {
   // For the page after this one; empty when this is the last.
   string next_page_token = 2;
   // How many the request picks in all, every page together.
-  int64 total = 3;
+  int32 total = 3;
 }
 
 message GetPaymentRequest {
-  string id = 1 [(buf.validate.field).string = {
-    min_len: 1
-    max_len: 100
-  }];
+  int32 id = 1 [(buf.validate.field).int32.gt = 0];
 }
 
 message GetPaymentResponse {

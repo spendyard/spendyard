@@ -83,7 +83,7 @@ enum DocumentState {
 // Document is one document an organisation has, and what was read from it.
 message Document {
   // The organisation's own number for it.
-  int64 id = 1;
+  int32 id = 1;
   // The file's name, or the mail's subject.
   string name = 2;
   // Where it came from: `upload:<user id>`, `forward:<address>`, `cli:<machine>`.
@@ -94,7 +94,7 @@ message Document {
   string received = 5;
   // `email`, `pdf`, `image`, `html`, `text`.
   string format = 6;
-  int64 size = 7;
+  int32 size = 7;
   DocumentState state = 8;
   // Why it couldn't be read, and at which stage (`read`, `options`,
   // `understand`); empty unless it failed.
@@ -136,7 +136,7 @@ message ListDocumentsRequest {
     lte: 500
   }];
   // The page after another: the last id it ended with.
-  int64 before_id = 2;
+  int32 before_id = 2;
   DocumentFilter filter = 3;
   // Only those whose name or sender holds this, whatever its case.
   string query = 4 [(buf.validate.field).string.max_len = 200];
@@ -153,17 +153,17 @@ message ListDocumentsRequest {
 message ListDocumentsResponse {
   repeated Document documents = 1;
   // How many the request picks in all, every page together.
-  int64 total = 2;
+  int32 total = 2;
 }
 
 message ReadDocumentAgainRequest {
-  int64 id = 1 [(buf.validate.field).int64.gt = 0];
+  int32 id = 1 [(buf.validate.field).int32.gt = 0];
 }
 
 message ReadDocumentAgainResponse {}
 
 message DeleteDocumentRequest {
-  int64 id = 1 [(buf.validate.field).int64.gt = 0];
+  int32 id = 1 [(buf.validate.field).int32.gt = 0];
 }
 message DeleteDocumentResponse {}
 
@@ -176,7 +176,7 @@ message CreateDocumentUploadRequest {
   // Its MIME type, as the browser says; empty when it doesn't.
   string content_type = 2 [(buf.validate.field).string.max_len = 255];
   // Its size in bytes.
-  int64 size = 3 [(buf.validate.field).int64 = {
+  int32 size = 3 [(buf.validate.field).int32 = {
     gt: 0
     lte: 26214400
   }];
@@ -201,7 +201,7 @@ message AddDocumentResponse {
 }
 
 message GetDocumentRequest {
-  int64 id = 1 [(buf.validate.field).int64.gt = 0];
+  int32 id = 1 [(buf.validate.field).int32.gt = 0];
 }
 
 message GetDocumentResponse {
@@ -235,7 +235,7 @@ message DocumentPart {
 }
 
 message GetDocumentOriginalRequest {
-  int64 id = 1 [(buf.validate.field).int64.gt = 0];
+  int32 id = 1 [(buf.validate.field).int32.gt = 0];
 }
 
 message GetDocumentOriginalResponse {

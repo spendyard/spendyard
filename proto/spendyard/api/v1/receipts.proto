@@ -54,7 +54,7 @@ service ReceiptService {
 // and where it stands in being checked.
 message Receipt {
   // Its document's id: a receipt is one document's reading.
-  int64 document_id = 1;
+  int32 document_id = 1;
   // What its document is: a receipt, an invoice, a renewal notice, a failed
   // payment; in the review queue, anything else read with flags.
   DocumentType document_type = 2;
@@ -166,11 +166,11 @@ message ListReceiptsResponse {
   // For the page after this one; empty when this is the last.
   string next_page_token = 2;
   // How many the request picks in all, every page together.
-  int64 total = 3;
+  int32 total = 3;
 }
 
 message GetReceiptRequest {
-  int64 document_id = 1 [(buf.validate.field).int64.gt = 0];
+  int32 document_id = 1 [(buf.validate.field).int32.gt = 0];
 }
 
 message GetReceiptResponse {
@@ -312,7 +312,7 @@ message ReceiptConfirmation {
 }
 
 message ConfirmReceiptRequest {
-  int64 document_id = 1 [(buf.validate.field).int64.gt = 0];
+  int32 document_id = 1 [(buf.validate.field).int32.gt = 0];
 }
 
 message ConfirmReceiptResponse {
@@ -320,7 +320,7 @@ message ConfirmReceiptResponse {
 }
 
 message UpdateReceiptRequest {
-  int64 document_id = 1 [(buf.validate.field).int64.gt = 0];
+  int32 document_id = 1 [(buf.validate.field).int32.gt = 0];
   // The vendor's name as it should be; empty puts the reading's back.
   optional string vendor_name = 2 [(buf.validate.field).string.max_len = 200];
   // Personal, not the organisation's spend.
