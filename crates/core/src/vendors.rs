@@ -384,6 +384,13 @@ pub fn vendors(rows: &[Row], options: &VendorOptions, rates: &impl Rates) -> Ven
             .filter(|row| row.vendor_key == key)
             .collect();
 
+        // Spend counts refunds; when it was paid, and how often, doesn't.
+        let payments: Vec<&Row> = paid
+            .iter()
+            .copied()
+            .filter(|row| row.kind != "refund")
+            .collect();
+
         let spent_year: Decimal = paid
             .iter()
             .filter(|row| row.date >= year_ago)
@@ -419,10 +426,10 @@ pub fn vendors(rows: &[Row], options: &VendorOptions, rates: &impl Rates) -> Ven
             known: rows.iter().any(|row| row.category.is_some()),
             spent_year,
             monthly,
-            receipts: paid.iter().filter(|row| row.payment.is_none()).count(),
-            payments: paid.iter().filter(|row| row.payment.is_some()).count(),
-            first_paid: paid.iter().map(|row| row.date.clone()).min(),
-            last_paid: paid.iter().map(|row| row.date.clone()).max(),
+            receipts: payments.iter().filter(|row| row.payment.is_none()).count(),
+            payments: payments.iter().filter(|row| row.payment.is_some()).count(),
+            first_paid: payments.iter().map(|row| row.date.clone()).min(),
+            last_paid: payments.iter().map(|row| row.date.clone()).max(),
             subscriptions: theirs.len(),
             months: months_of(&rows, &paid, &currency, today, rates),
             cards: cards_of(&rows),
@@ -649,6 +656,44 @@ mod tests {
                 .as_deref(),
             Some("tiny.example")
         );
+    }
+
+    #[test]
+    fn a_refund_lowers_spend_but_isnt_a_payment() {
+        let line = |id: i64, date: &str, kind: &str, total: &str| {
+            let mut row = Row::from_stored(
+                StoredRow {
+                    id: 50,
+                    date: date.into(),
+                    kind: kind.into(),
+                    status: "paid".into(),
+                    is_receipt: 1,
+                    vendor_name: "Figma".into(),
+                    total: Some(total.into()),
+                    currency: Some("USD".into()),
+                    ..StoredRow::default()
+                },
+                &catalog(),
+            );
+
+            row.payment = Some(format!("50:{id}"));
+
+            row
+        };
+
+        let rows = vec![
+            line(3, "2026-11-12", "refund", "-15.00"),
+            line(2, "2026-11-05", "receipt", "45.00"),
+            line(1, "2026-10-05", "receipt", "45.00"),
+        ];
+
+        let found = found(&rows);
+        let figma = &found.vendors[0];
+
+        assert_eq!(figma.spent_year, Decimal::new(7500, 2));
+        assert_eq!(figma.payments, 2);
+        assert_eq!(figma.last_paid.as_deref(), Some("2026-11-05"));
+        assert_eq!(figma.months[11].unreceipted, Decimal::new(3000, 2));
     }
 
     #[test]

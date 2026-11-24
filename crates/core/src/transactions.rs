@@ -523,7 +523,12 @@ pub fn match_transactions(
             .get(charge.key().as_str())
             .is_some_and(|link| link.no_receipt);
 
-        if !charge.needs_receipt() || no_receipt || taken.charges.contains(&charge.key()) {
+        // Money back is a refund's own: the store's receipts are what was paid, so a refund takes one
+        // only by hand, never a purchase's by its amount.
+        let refund = charge.kind == "refund";
+
+        if !charge.needs_receipt() || no_receipt || refund || taken.charges.contains(&charge.key())
+        {
             continue;
         }
 
@@ -639,27 +644,43 @@ pub fn suggestions(
 }
 
 /// The payments with no receipt, as rows standing in for their receipts:
-/// what subscriptions are worked out from beside the receipts. Purchases
-/// only; a payment with its receipt is counted through the receipt.
+/// what subscriptions are worked out from beside the receipts; a payment
+/// with its receipt is counted through the receipt. And every refund, as a
+/// row of its own below nothing (kind `refund`): money back lowers spend,
+/// with or without a document for it.
 pub fn payment_rows(matching: &Matching) -> Vec<Row> {
     matching
         .transactions
         .iter()
-        .filter(|found| found.state == "missing" && found.charge.kind == "purchase")
+        .filter(|found| stands_in(found))
         .filter_map(payment_row)
         .collect()
 }
 
+/// Whether a payment from a statement is a row of its own: a purchase with
+/// no receipt, or a refund.
+fn stands_in(found: &Transaction) -> bool {
+    let missing_purchase = found.state == "missing" && found.charge.kind == "purchase";
+    let refund = found.charge.kind == "refund";
+
+    missing_purchase || refund
+}
+
 /// One payment as a row: paid, on its day, its vendor as the catalog knows
-/// the merchant, else the merchant's own words.
+/// the merchant, else the merchant's own words. A refund is below nothing,
+/// whichever way its statement wrote it.
 fn payment_row(found: &Transaction) -> Option<Row> {
     let charge = &found.charge;
-    let total = amount(&charge.amount)?.abs();
+    let refund = charge.kind == "refund";
+
+    let paid = amount(&charge.amount)?.abs();
+    let total = if refund { -paid } else { paid };
+    let kind = if refund { "refund" } else { "receipt" };
 
     let stored = StoredRow {
         id: charge.document_id,
         date: charge.date.clone(),
-        kind: "receipt".into(),
+        kind: kind.into(),
         status: "paid".into(),
         is_receipt: 1,
         vendor_id: charge.vendor_id.clone(),
@@ -961,6 +982,33 @@ mod tests {
         assert_eq!(rows[0].vendor_key, "figma.com");
         assert_eq!(rows[0].payment.as_deref(), Some("100:1"));
         assert_eq!(rows[0].card.as_deref(), Some("card 3776"));
+    }
+
+    #[test]
+    fn a_refund_is_a_row_below_nothing_and_takes_no_receipt_by_itself() {
+        let mut refund = charge(2, "2026-11-06", "FIGMA MONTHLY", "-45.00");
+
+        refund.kind = "refund".into();
+
+        let charges = vec![refund, charge(1, "2026-11-05", "FIGMA MONTHLY", "45.00")];
+
+        let matched = match_transactions(
+            charges,
+            vec![receipt(7, "2026-11-05", "Figma", "45.00")],
+            &[],
+            &RateTable::default(),
+        );
+
+        // The purchase has the receipt, the refund none.
+        assert_eq!(matched.transactions[1].receipt_id, Some(7));
+        assert_eq!(matched.transactions[0].receipt_id, None);
+
+        let rows = payment_rows(&matched);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].kind, "refund");
+        assert_eq!(rows[0].total.as_deref(), Some("-45.00"));
+        assert_eq!(rows[0].payment.as_deref(), Some("100:2"));
     }
 
     #[test]

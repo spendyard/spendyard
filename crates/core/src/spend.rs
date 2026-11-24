@@ -209,7 +209,7 @@ pub fn amount(text: &str) -> Option<Decimal> {
     text.parse().ok()
 }
 
-/// Paid receipts that count as spend, each payment once
+/// Paid receipts that count as spend, refunds lowering it, each payment once
 /// ([`crate::payments`]): its receipt (else its first document) with what
 /// its other documents say and it doesn't, such as its invoice's interval,
 /// seats and next renewal; payments from statements with no receipt as
@@ -288,16 +288,17 @@ pub(crate) fn same_vendor_and_amount(a: &Row, b: &Row) -> bool {
     a.vendor_key == b.vendor_key && a.currency == b.currency && total(a) == total(b)
 }
 
-/// Whether a row is money paid that counts: a receipt or paid invoice, not
-/// personal or ignored, with a total above nothing.
+/// Whether a row is money that counts, not personal or ignored: paid (a
+/// receipt or paid invoice, above nothing) or back (a refund from a
+/// statement, below nothing, as [`crate::transactions::payment_rows`]
+/// makes it).
 pub(crate) fn counts_as_paid(row: &Row) -> bool {
-    let positive = row
-        .total
-        .as_deref()
-        .and_then(amount)
-        .is_some_and(|total| total > Decimal::ZERO);
+    let total = row.total.as_deref().and_then(amount).unwrap_or_default();
 
-    row.is_receipt && !row.personal && !row.ignored && positive
+    let paid = total > Decimal::ZERO;
+    let back = row.kind == "refund" && total < Decimal::ZERO;
+
+    row.is_receipt && !row.personal && !row.ignored && (paid || back)
 }
 
 /// What one payment's documents share when it was saved twice: its vendor,
@@ -461,6 +462,33 @@ mod tests {
 
         assert_eq!(spent.len(), 1);
         assert_eq!(spent[0].payment.as_deref(), Some("90:4"));
+    }
+
+    #[test]
+    fn a_refund_lowers_spend() {
+        let mut refund = Row::from_stored(
+            StoredRow {
+                kind: "refund".into(),
+                ..row(90, "2026-11-06", "Figma", "-45.00", "USD")
+            },
+            &catalog(),
+        );
+
+        refund.payment = Some("90:2".into());
+
+        let mut rows = rows(vec![row(1, "2026-11-05", "Figma", "45.00", "USD")]);
+
+        rows.insert(0, refund);
+
+        let spent = spend(&rows);
+
+        let total: Decimal = spent
+            .iter()
+            .filter_map(|row| row.total.as_deref().and_then(amount))
+            .sum();
+
+        assert_eq!(spent.len(), 2);
+        assert_eq!(total, Decimal::ZERO);
     }
 
     #[test]

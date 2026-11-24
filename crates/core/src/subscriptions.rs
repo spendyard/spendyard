@@ -627,8 +627,16 @@ pub fn subscriptions(
         .map(|edit| (edit.id.as_str(), edit))
         .collect();
 
+    // Money back isn't a payment of the subscription: its last payment, rhythm and status go by
+    // what was paid.
+    let paid_for: Vec<Row> = rows
+        .iter()
+        .filter(|row| row.kind != "refund")
+        .cloned()
+        .collect();
+
     // Payments without receipts recur as their vendor's receipts do, or as their own rhythm says.
-    let rows = with_intervals(rows);
+    let rows = with_intervals(&paid_for);
 
     let mut list: Vec<Subscription> = groups(&rows)
         .iter()
@@ -1043,6 +1051,27 @@ mod tests {
         row.payment = Some(format!("100:{id}"));
 
         row
+    }
+
+    #[test]
+    fn a_refund_is_not_a_subscriptions_last_payment() {
+        let mut refund = paid(4, "2026-11-12", "Figma", "-45.00");
+
+        refund.kind = "refund".into();
+
+        let rows = vec![
+            refund,
+            paid(3, "2026-11-05", "Figma", "45.00"),
+            paid(2, "2026-10-05", "Figma", "45.00"),
+            paid(1, "2026-09-04", "Figma", "45.00"),
+        ];
+
+        let found = subscriptions(&rows, &options("2026-11-21"), &RateTable::default());
+
+        let figma = &found.subscriptions[0];
+
+        assert_eq!(figma.last_paid.as_deref(), Some("2026-11-05"));
+        assert_eq!(figma.status, "active");
     }
 
     #[test]
