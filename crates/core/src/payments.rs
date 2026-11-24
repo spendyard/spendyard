@@ -16,7 +16,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::pairing::{Paper, pair_invoices};
-use crate::spend::{Row, counts_as_paid, number_key, same_vendor_and_amount};
+use crate::spend::{
+    Row, amount, counts_as_paid, is_money_back, number_key, same_vendor_and_amount,
+};
 use crate::transactions::Matching;
 
 /// One piece of evidence: a document, by its ID, or a card line, by its
@@ -89,8 +91,10 @@ pub struct Regrouped {
 /// as [`crate::spend::ROWS_SQL`] gives them, and a statement's payment with
 /// no receipt standing in for one, as [`crate::transactions::payment_rows`]
 /// makes it) and the card lines matched to them. Rows count when they are
-/// money paid ([`counts_as_paid`]): receipts and paid invoices, not
-/// personal or ignored. A card line counts when it is a purchase or a
+/// money paid or back ([`counts_as_paid`]): receipts and paid invoices,
+/// refunds and credit notes paid back, not personal or ignored. Money back
+/// is grouped apart from money paid: a credit note with the refund on a
+/// statement for it, never with an invoice of the same amount. A card line counts when it is a purchase or a
 /// refund, with its receipt or with none; one matched to a document that
 /// doesn't count (personal) doesn't either.
 pub fn group(rows: &[Row], matching: &Matching) -> Vec<Evidence> {
@@ -104,7 +108,11 @@ pub fn group(rows: &[Row], matching: &Matching) -> Vec<Evidence> {
 
     let alone = join_by_number(&paid, &mut sets);
 
-    join_invoices_and_receipts(&alone, &mut sets);
+    let (back, forward): (Vec<&Row>, Vec<&Row>) =
+        alone.into_iter().partition(|row| is_money_back(row));
+
+    join_invoices_and_receipts(&forward, &mut sets);
+    join_credit_notes_and_refunds(&back, &mut sets);
 
     let counted: BTreeSet<i64> = paid
         .iter()
@@ -185,6 +193,37 @@ fn join_invoices_and_receipts(rows: &[&Row], sets: &mut Sets) {
         let receipt = piece_of(rows[receipt]);
 
         sets.join(&invoice, &receipt);
+    }
+}
+
+/// Joins each credit note paid back with the refund on a statement for the
+/// same money: the same vendor, currency and amount, whichever sign each
+/// was written with, a few days apart ([`pair_invoices`], the credit note
+/// in the invoice's place).
+fn join_credit_notes_and_refunds(rows: &[&Row], sets: &mut Sets) {
+    let papers: Vec<Paper> = rows
+        .iter()
+        .map(|row| Paper {
+            invoice: row.kind == "credit_note",
+            date: &row.date,
+        })
+        .collect();
+
+    let size = |row: &Row| {
+        row.total
+            .as_deref()
+            .and_then(amount)
+            .map(|total| total.abs())
+    };
+
+    let same = |a: usize, b: usize| {
+        let (a, b) = (rows[a], rows[b]);
+
+        a.vendor_key == b.vendor_key && a.currency == b.currency && size(a) == size(b)
+    };
+
+    for (credit_note, refund) in pair_invoices(&papers, same) {
+        sets.join(&piece_of(rows[credit_note]), &piece_of(rows[refund]));
     }
 }
 

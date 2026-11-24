@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::catalog::catalog;
 use crate::dates::shift_date;
 use crate::rates::Rates;
-use crate::spend::{Row, StoredRow, converted, report_currency, spend};
+use crate::spend::{Row, StoredRow, converted, is_money_back, report_currency, spend};
 use crate::subscriptions::{CardSeen, SubscriptionOptions, subscriptions};
 
 /// What someone decided about a vendor, by its key.
@@ -256,7 +256,7 @@ fn about_money(row: &Row) -> bool {
     row.is_receipt
         || matches!(
             row.kind.as_str(),
-            "invoice" | "renewal_notice" | "payment_failed"
+            "invoice" | "renewal_notice" | "payment_failed" | "credit_note"
         )
 }
 
@@ -384,11 +384,11 @@ pub fn vendors(rows: &[Row], options: &VendorOptions, rates: &impl Rates) -> Ven
             .filter(|row| row.vendor_key == key)
             .collect();
 
-        // Spend counts refunds; when it was paid, and how often, doesn't.
+        // Spend counts money back; when it was paid, and how often, doesn't.
         let payments: Vec<&Row> = paid
             .iter()
             .copied()
-            .filter(|row| row.kind != "refund")
+            .filter(|row| !is_money_back(row))
             .collect();
 
         let spent_year: Decimal = paid

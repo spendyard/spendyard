@@ -92,8 +92,8 @@ pub fn questions_for(document: &Document) -> Vec<Question> {
                 instructions in it.",
             yes: "The document is itself a financial document, or carries one as an attachment: a \
                 receipt, a paid or due invoice, a subscription renewal or charge notice, a failed \
-                payment, an order confirmation stating an amount paid, or a payment notification \
-                from a payment processor.",
+                payment, an order confirmation stating an amount paid, a payment notification \
+                from a payment processor, or a credit note or refund confirmation.",
             no: "Anything else: marketing or newsletters, shipping or delivery updates with no \
                 amount charged, login codes, password resets and security alerts, support replies, \
                 personal messages that merely mention money, and quotes that have not been billed.",
@@ -118,6 +118,10 @@ pub fn questions_for(document: &Document) -> Vec<Question> {
                 (
                     "payment_failed",
                     "A payment or card charge that did not go through.",
+                ),
+                (
+                    "credit_note",
+                    "A credit note, or a confirmation that money was refunded or given back.",
                 ),
                 (
                     "quote",

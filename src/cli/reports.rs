@@ -144,7 +144,7 @@ pub fn receipts(options: ReceiptsOptions) -> Result<()> {
                 || row.is_receipt
                 || matches!(
                     row.kind.as_str(),
-                    "invoice" | "renewal_notice" | "payment_failed"
+                    "invoice" | "renewal_notice" | "payment_failed" | "credit_note"
                 )
         })
         .filter(|row| {

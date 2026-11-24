@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::catalog::name_key;
 use crate::dates::{day_number, shift_date};
 use crate::rates::Rates;
-use crate::spend::{Row, converted, report_currency, spend};
+use crate::spend::{Row, converted, is_money_back, report_currency, spend};
 
 /// A card a subscription was paid with, and when last.
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -631,7 +631,7 @@ pub fn subscriptions(
     // what was paid.
     let paid_for: Vec<Row> = rows
         .iter()
-        .filter(|row| row.kind != "refund")
+        .filter(|row| !is_money_back(row))
         .cloned()
         .collect();
 

@@ -258,4 +258,10 @@ enum DocumentType {
   DOCUMENT_TYPE_CARD_STATEMENT = 5;
   // Anything else: a newsletter, a login code, a quote.
   DOCUMENT_TYPE_OTHER = 6;
+  // Money taken off what was billed or given back: a credit note, or a
+  // refund's receipt. Its total is the amount credited, positive; status
+  // paid when the money went back to a card or account, none when it is
+  // credit on account or lowers an unpaid invoice. Spend counts one paid
+  // back as money back, below nothing.
+  DOCUMENT_TYPE_CREDIT_NOTE = 7;
 }

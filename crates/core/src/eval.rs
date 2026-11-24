@@ -38,7 +38,13 @@ use crate::result::ReadResult;
 const META_KEYS: &[&str] = &["reviewed", "labelled_by", "notes"];
 
 /// Document types that are about money: worth extracting.
-const MONEY_TYPES: &[&str] = &["receipt", "invoice", "renewal_notice", "payment_failed"];
+const MONEY_TYPES: &[&str] = &[
+    "receipt",
+    "invoice",
+    "renewal_notice",
+    "payment_failed",
+    "credit_note",
+];
 
 /// The fields scored, in report order.
 pub const FIELDS: &[&str] = &[

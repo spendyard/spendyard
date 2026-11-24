@@ -68,6 +68,12 @@ pub enum DocumentType {
     /// A payment that didn't go through.
     PaymentFailed,
 
+    /// Money taken off what was billed or given back: a credit note, or a
+    /// refund's receipt. Its total is the amount credited, as a positive
+    /// number. Status paid when the money went back to a card or account;
+    /// none when it is credit on account or lowers an unpaid invoice.
+    CreditNote,
+
     /// A price offer.
     Quote,
 

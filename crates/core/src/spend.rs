@@ -209,11 +209,12 @@ pub fn amount(text: &str) -> Option<Decimal> {
     text.parse().ok()
 }
 
-/// Paid receipts that count as spend, refunds lowering it, each payment once
-/// ([`crate::payments`]): its receipt (else its first document) with what
-/// its other documents say and it doesn't, such as its invoice's interval,
-/// seats and next renewal; payments from statements with no receipt as
-/// they are. In the rows' order.
+/// Paid receipts that count as spend, money back lowering it, each payment
+/// once ([`crate::payments`]): its receipt (else its first document) with
+/// what its other documents say and it doesn't, such as its invoice's
+/// interval, seats and next renewal; payments from statements with no
+/// receipt as they are. Money back (a refund, a credit note paid back) is
+/// below nothing, however it was written. In the rows' order.
 pub fn spend(rows: &[Row]) -> Vec<Row> {
     let counted: Vec<&Row> = rows.iter().filter(|row| counts_as_paid(row)).collect();
 
@@ -240,18 +241,38 @@ pub fn spend(rows: &[Row]) -> Vec<Row> {
             let at = *payment_of.get(&piece_of(row))?;
             let chosen = chosen(&documents[at]);
 
-            std::ptr::eq(chosen, row).then(|| with_facts(chosen, &documents[at]))
+            std::ptr::eq(chosen, row).then(|| as_counted(with_facts(chosen, &documents[at])))
         })
         .collect()
 }
 
-/// The row that stands for a payment: its first receipt, else its first
-/// document (a paid invoice with no receipt).
+/// The row that stands for a payment: its first receipt (or credit note),
+/// else its first payment from a statement, else its first document (a
+/// paid invoice with neither).
 fn chosen<'a>(documents: &[&'a Row]) -> &'a Row {
-    documents
+    let not_invoice = |row: &&&Row| row.kind != "invoice";
+
+    let receipt = documents
         .iter()
-        .find(|row| row.kind != "invoice")
-        .unwrap_or(&documents[0])
+        .filter(not_invoice)
+        .find(|row| row.payment.is_none());
+
+    let from_statement = documents.iter().find(not_invoice);
+
+    receipt.or(from_statement).unwrap_or(&documents[0])
+}
+
+/// A payment's row as spend counts it: money back below nothing.
+fn as_counted(mut row: Row) -> Row {
+    if !is_money_back(&row) {
+        return row;
+    }
+
+    if let Some(total) = row.total.as_deref().and_then(amount) {
+        row.total = Some((-total.abs()).to_string());
+    }
+
+    row
 }
 
 /// `chosen` with what the payment's other documents say and it doesn't: a
@@ -288,17 +309,28 @@ pub(crate) fn same_vendor_and_amount(a: &Row, b: &Row) -> bool {
     a.vendor_key == b.vendor_key && a.currency == b.currency && total(a) == total(b)
 }
 
+/// Whether a row is money back: a refund from a statement (below nothing,
+/// as [`crate::transactions::payment_rows`] makes it), or a credit note
+/// that says the money went back to a card or account (status paid). A
+/// credit note that is credit on account, or lowers an unpaid invoice,
+/// isn't money that moved.
+pub(crate) fn is_money_back(row: &Row) -> bool {
+    let total = row.total.as_deref().and_then(amount).unwrap_or_default();
+
+    let refund = row.kind == "refund" && total < Decimal::ZERO;
+    let credited = row.kind == "credit_note" && row.status == "paid" && !total.is_zero();
+
+    refund || credited
+}
+
 /// Whether a row is money that counts, not personal or ignored: paid (a
-/// receipt or paid invoice, above nothing) or back (a refund from a
-/// statement, below nothing, as [`crate::transactions::payment_rows`]
-/// makes it).
+/// receipt or paid invoice, above nothing) or back ([`is_money_back`]).
 pub(crate) fn counts_as_paid(row: &Row) -> bool {
     let total = row.total.as_deref().and_then(amount).unwrap_or_default();
 
-    let paid = total > Decimal::ZERO;
-    let back = row.kind == "refund" && total < Decimal::ZERO;
+    let paid = row.is_receipt && total > Decimal::ZERO;
 
-    row.is_receipt && !row.personal && !row.ignored && (paid || back)
+    !row.personal && !row.ignored && (paid || is_money_back(row))
 }
 
 /// What one payment's documents share when it was saved twice: its vendor,
@@ -489,6 +521,76 @@ mod tests {
 
         assert_eq!(spent.len(), 2);
         assert_eq!(total, Decimal::ZERO);
+    }
+
+    fn credit_note(id: i64, date: &str, total: &str, status: &str) -> StoredRow {
+        StoredRow {
+            kind: "credit_note".into(),
+            status: status.into(),
+            is_receipt: 0,
+            ..row(id, date, "Figma", total, "USD")
+        }
+    }
+
+    fn sum(rows: &[Row]) -> Decimal {
+        rows.iter()
+            .filter_map(|row| row.total.as_deref().and_then(amount))
+            .sum()
+    }
+
+    #[test]
+    fn a_credit_note_paid_back_lowers_spend_and_credit_on_account_doesnt() {
+        let rows = rows(vec![
+            credit_note(3, "2026-11-20", "10.00", "none"),
+            credit_note(2, "2026-11-10", "15.00", "paid"),
+            row(1, "2026-11-05", "Figma", "45.00", "USD"),
+        ]);
+
+        let spent = spend(&rows);
+
+        assert_eq!(spent.len(), 2);
+        assert_eq!(spent[0].total.as_deref(), Some("-15.00"));
+        assert_eq!(sum(&spent), Decimal::new(3000, 2));
+    }
+
+    #[test]
+    fn a_credit_note_and_its_refund_on_the_card_are_money_back_once() {
+        let mut refund = Row::from_stored(
+            StoredRow {
+                kind: "refund".into(),
+                ..row(90, "2026-11-12", "Figma", "-45.00", "USD")
+            },
+            &catalog(),
+        );
+
+        refund.payment = Some("90:2".into());
+
+        let mut rows = rows(vec![
+            credit_note(2, "2026-11-10", "45.00", "paid"),
+            row(1, "2026-11-05", "Figma", "45.00", "USD"),
+        ]);
+
+        rows.insert(0, refund);
+
+        let spent = spend(&rows);
+
+        // The credit note stands for the money back, the refund its evidence.
+        assert_eq!(spent.len(), 2);
+        assert_eq!(spent[0].id, 2);
+        assert_eq!(sum(&spent), Decimal::ZERO);
+    }
+
+    #[test]
+    fn a_credit_note_is_never_an_invoices_receipt() {
+        let rows = rows(vec![
+            credit_note(2, "2026-11-02", "45.00", "paid"),
+            invoice(1, "2026-11-01", "Figma", "45.00"),
+        ]);
+
+        let spent = spend(&rows);
+
+        assert_eq!(spent.len(), 2);
+        assert_eq!(sum(&spent), Decimal::ZERO);
     }
 
     #[test]
