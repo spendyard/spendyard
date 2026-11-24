@@ -236,10 +236,6 @@ enum DocumentsAction {
         #[arg(long)]
         note: Option<String>,
     },
-
-    /// Browse them in the terminal: the list, the one picked whole, and
-    /// corrections a key each.
-    Ui,
 }
 
 #[derive(Subcommand)]
@@ -735,8 +731,6 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
 /// `spendyard documents …`: what the store holds, and corrections to it.
 async fn documents(action: DocumentsAction) -> anyhow::Result<ExitCode> {
     match action {
-        DocumentsAction::Ui => cli::documents_ui::run().await.map(|()| ExitCode::SUCCESS),
-
         DocumentsAction::Get { id, json } => {
             cli::documents::get(cli::documents::GetOptions { id, json })
                 .await

@@ -1,6 +1,6 @@
 //! `spendyard documents get`: one document in the store, whole: where it came
 //! from, how it was read and what was read, the corrections made to it by
-//! hand, and the payments it's evidence of. `documents ui` shows the same.
+//! hand, and the payments it's evidence of.
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{OptionalExtension, params};
@@ -153,7 +153,7 @@ pub async fn get(options: GetOptions) -> Result<()> {
     Ok(())
 }
 
-/// One stored document, as lines of text: what `get` prints and `documents ui` shows. Payments as they were last
+/// One stored document, as lines of text: what `get` prints. Payments as they were last
 /// worked out.
 pub fn describe(store: &Store, id: i64) -> Result<Vec<String>> {
     let Some(document) = document(store, id)? else {

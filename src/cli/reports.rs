@@ -513,7 +513,7 @@ pub fn edit(options: EditOptions) -> Result<()> {
     Ok(())
 }
 
-/// Corrects a stored document by hand, as `documents edit` and `documents ui` do.
+/// Corrects a stored document by hand, as `documents edit` does.
 pub(crate) fn apply_edit(store: &Store, options: &EditOptions) -> Result<()> {
     let exists: i64 = store.connection.query_row(
         "SELECT count(*) FROM documents WHERE id = ?1",

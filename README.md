@@ -110,7 +110,6 @@ spendyard report --by month --currency NOK # converted with ECB rates
 spendyard subscriptions                    # cost per month, seats, card, next renewal, status
 spendyard documents list --vendor slack    # the receipts behind a number
 spendyard documents get 412               # one whole: where it came from, what was read, its payments
-spendyard documents ui                    # browse them in the terminal, and correct them a key each
 spendyard documents edit 412 --personal    # leave one out of the spend
 spendyard vendors unknown                  # vendors on your receipts the catalog lacks
 ```

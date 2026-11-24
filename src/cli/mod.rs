@@ -7,7 +7,6 @@ pub mod config;
 pub mod config_command;
 pub mod decide;
 pub mod documents;
-pub mod documents_ui;
 pub mod env_files;
 pub mod eval;
 pub mod exec;

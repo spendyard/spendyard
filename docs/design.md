@@ -696,7 +696,6 @@ spendyard report --by month --currency NOK
 spendyard subscriptions                   # vendor, interval, cost per month, seats, card, next renewal, status
 spendyard documents list --vendor cursor  # the receipts behind a number, with their IDs
 spendyard documents get 412               # one whole: what was read, corrections, its payments
-spendyard documents ui                    # the list and the one picked side by side, corrected a key each
 spendyard documents edit 412 --personal   # leave it out of the company's spend
 spendyard documents edit 412 --vendor "Atlassian"  # group it under another name
 ```
