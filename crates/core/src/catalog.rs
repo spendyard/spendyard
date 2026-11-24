@@ -96,6 +96,8 @@ pub struct Catalog {
     pub processors: Vec<Processor>,
     by_domain: HashMap<String, usize>,
     by_name: HashMap<String, usize>,
+    /// Each vendor's position by its ID: the first with it.
+    by_id: HashMap<String, usize>,
 }
 
 /// `vendors` with `more` on top: one with an ID already there replaces it; others are added.
@@ -272,6 +274,11 @@ impl Catalog {
     fn new(vendors: Vec<Vendor>, processors: Vec<Processor>) -> Catalog {
         let mut by_domain = HashMap::new();
         let mut by_name = HashMap::new();
+        let mut by_id = HashMap::new();
+
+        for (index, vendor) in vendors.iter().enumerate() {
+            by_id.entry(vendor.id.clone()).or_insert(index);
+        }
 
         let built_in_first = vendors
             .iter()
@@ -303,6 +310,7 @@ impl Catalog {
             processors,
             by_domain,
             by_name,
+            by_id,
         }
     }
 
@@ -444,10 +452,9 @@ impl Catalog {
         }
 
         let lists = |from: &str, to: &str| {
-            self.vendors
-                .iter()
-                .find(|vendor| vendor.id == from)
-                .is_some_and(|vendor| vendor.related.iter().any(|id| id == to))
+            self.by_id
+                .get(from)
+                .is_some_and(|&index| self.vendors[index].related.iter().any(|id| id == to))
         };
 
         lists(a, b) || lists(b, a)

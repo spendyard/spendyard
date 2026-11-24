@@ -260,6 +260,13 @@ pub fn keep_ids(
         .map(|(id, evidence)| id.unwrap_or_else(|| new_id(evidence)))
         .collect();
 
+    // Each stored payment's group it shares the most with, as `shared` is sorted.
+    let mut most_shared: BTreeMap<usize, usize> = BTreeMap::new();
+
+    for &(_, group, old) in &shared {
+        most_shared.entry(old).or_insert(group);
+    }
+
     let mut regrouped = Regrouped::default();
 
     for (old, payment) in stored.iter().enumerate() {
@@ -267,11 +274,7 @@ pub fn keep_ids(
             continue;
         }
 
-        // The group it shares the most with, as `shared` is sorted.
-        let into = shared
-            .iter()
-            .find(|&&(_, _, other)| other == old)
-            .map(|&(_, group, _)| ids[group]);
+        let into = most_shared.get(&old).map(|&group| ids[group]);
 
         match into {
             Some(to) => regrouped.moved.push(Moved {

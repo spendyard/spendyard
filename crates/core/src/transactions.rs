@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::catalog::{catalog, name_key};
 use crate::dates::{date_of, day_number};
-use crate::pairing::{Paper, pair_invoices};
+use crate::pairing::{ByDay, Paper, pair_invoices};
 use crate::rates::{Rates, convert};
 use crate::spend::{Row, StoredRow, amount};
 
@@ -229,36 +229,72 @@ pub struct Matching {
     pub receipts_without_charge: Vec<i64>,
 }
 
+/// What scoring compares of a charge or a receipt, worked out once: its
+/// day, its vendor's catalog ID and name key, and its card.
+struct Seen<'a> {
+    day: Option<i64>,
+    vendor_id: Option<&'a str>,
+    name: Option<String>,
+    card: Option<&'a str>,
+}
+
+impl<'a> Seen<'a> {
+    fn of_charge(charge: &'a Charge) -> Seen<'a> {
+        Seen {
+            day: day_number(&charge.date),
+            vendor_id: charge.vendor_id.as_deref(),
+            name: charge.vendor_name.as_deref().map(name_key),
+            card: charge.card_last4.as_deref(),
+        }
+    }
+
+    fn of_receipt(receipt: &'a MatchReceipt) -> Seen<'a> {
+        Seen {
+            day: day_number(&receipt.date),
+            vendor_id: receipt.vendor_id.as_deref(),
+            name: receipt.vendor_name.as_deref().map(name_key),
+            card: receipt.card_last4.as_deref(),
+        }
+    }
+}
+
+/// A charge or a receipt, with what scoring compares of it.
+struct Scored<'a, T> {
+    item: &'a T,
+    seen: &'a Seen<'a>,
+}
+
 /// How well `receipt` fits `charge`: lower is better, `None` when it
 /// doesn't fit at all. An exact amount beats a converted one; then the
-/// closer date wins.
+/// closer date wins. The cheap checks first: the card, the date, then the
+/// vendor.
 fn score(
-    charge: &Charge,
-    receipt: &MatchReceipt,
+    charge: Scored<Charge>,
+    receipt: Scored<MatchReceipt>,
     rates: &impl Rates,
     before: i64,
     after_days: i64,
     need_vendor: bool,
 ) -> Option<f64> {
-    let vendor = same_vendor(charge, receipt);
-
-    if need_vendor && !vendor {
-        return None;
-    }
-
-    if let (Some(card), Some(receipt_card)) = (&charge.card_last4, &receipt.card_last4)
+    if let (Some(card), Some(receipt_card)) = (charge.seen.card, receipt.seen.card)
         && card != receipt_card
     {
         return None;
     }
 
-    let after = day_number(&charge.date)? - day_number(&receipt.date)?;
+    let after = charge.seen.day? - receipt.seen.day?;
 
     if !(-before..=after_days).contains(&after) {
         return None;
     }
 
-    let closeness = amount_closeness(charge, receipt, rates)?;
+    let vendor = same_vendor(charge.seen, receipt.seen);
+
+    if need_vendor && !vendor {
+        return None;
+    }
+
+    let closeness = amount_closeness(charge.item, receipt.item, rates)?;
 
     // Another vendor's receipt only fits when the amount is exact.
     if !vendor && closeness > 0.0 {
@@ -270,16 +306,14 @@ fn score(
     Some(unlike + closeness * 100.0 + after.abs() as f64)
 }
 
-fn same_vendor(charge: &Charge, receipt: &MatchReceipt) -> bool {
-    if let (Some(a), Some(b)) = (&charge.vendor_id, &receipt.vendor_id) {
+/// The catalog's vendor when both have one, related ones too; else the
+/// same name.
+fn same_vendor(charge: &Seen, receipt: &Seen) -> bool {
+    if let (Some(a), Some(b)) = (charge.vendor_id, receipt.vendor_id) {
         return catalog().same_or_related(a, b);
     }
 
-    let key = |name: &Option<String>| name.as_deref().map(name_key);
-
-    let charge_name = key(&charge.vendor_name);
-
-    charge_name.is_some() && charge_name == key(&receipt.vendor_name)
+    charge.name.is_some() && charge.name == receipt.name
 }
 
 /// 0 for the same amount in the same currency; the relative difference
@@ -332,21 +366,26 @@ fn amount_closeness(charge: &Charge, receipt: &MatchReceipt, rates: &impl Rates)
 /// receipt a vendor sends for it (Stripe sends both), or the same receipt
 /// read twice. Same vendor, amount and currency, and the same invoice or
 /// receipt number; or a paid invoice and a receipt a few days apart.
-fn same_payment(receipts: &[MatchReceipt]) -> HashMap<i64, Vec<i64>> {
+fn same_payment(receipts: &[MatchReceipt], seen: &[Seen]) -> HashMap<i64, Vec<i64>> {
+    let totals: Vec<Option<Decimal>> = receipts
+        .iter()
+        .map(|receipt| receipt.total().map(|total| total.abs()))
+        .collect();
+
     let mut groups: HashMap<(String, String, String), Vec<i64>> = HashMap::new();
 
-    for receipt in receipts {
-        let vendor = receipt
+    for (receipt, (seen, total)) in receipts.iter().zip(seen.iter().zip(&totals)) {
+        let vendor = seen
             .vendor_id
-            .clone()
-            .or_else(|| receipt.vendor_name.as_deref().map(name_key))
+            .map(str::to_string)
+            .or_else(|| seen.name.clone())
             .unwrap_or_default();
 
-        let Some(total) = receipt.total() else {
+        let Some(total) = total else {
             continue;
         };
 
-        let money = format!("{} {}", total.abs().normalize(), receipt.currency);
+        let money = format!("{} {}", total.normalize(), receipt.currency);
 
         for number in [&receipt.invoice_number, &receipt.receipt_number]
             .into_iter()
@@ -382,13 +421,12 @@ fn same_payment(receipts: &[MatchReceipt]) -> HashMap<i64, Vec<i64>> {
 
     // The catalog's vendor when both have one; else the same name, for
     // vendors the catalog doesn't know.
-    let same_vendor = |a: &MatchReceipt, b: &MatchReceipt| match (&a.vendor_id, &b.vendor_id) {
+    let same_vendor = |a: &Seen, b: &Seen| match (a.vendor_id, b.vendor_id) {
         (Some(a), Some(b)) => catalog().same_or_related(a, b),
-        _ => {
-            let key = |receipt: &MatchReceipt| receipt.vendor_name.as_deref().map(name_key);
-
-            key(a).is_some_and(|name| !name.is_empty() && Some(name) == key(b))
-        }
+        _ => a
+            .name
+            .as_ref()
+            .is_some_and(|name| !name.is_empty() && Some(name) == b.name.as_ref()),
     };
 
     let papers: Vec<Paper> = receipts
@@ -400,11 +438,9 @@ fn same_payment(receipts: &[MatchReceipt]) -> HashMap<i64, Vec<i64>> {
         .collect();
 
     let same = |a: usize, b: usize| {
-        let (a, b) = (&receipts[a], &receipts[b]);
-
-        a.total().map(|t| t.abs()) == b.total().map(|t| t.abs())
-            && a.currency == b.currency
-            && same_vendor(a, b)
+        totals[a] == totals[b]
+            && receipts[a].currency == receipts[b].currency
+            && same_vendor(&seen[a], &seen[b])
     };
 
     for (invoice, receipt) in pair_invoices(&papers, same) {
@@ -483,6 +519,64 @@ impl Taken {
     }
 }
 
+/// The charges or the receipts matching compares, with what it compares
+/// of each and whether it looks at each at all.
+struct Side<'a, T> {
+    items: &'a [T],
+    seen: &'a [Seen<'a>],
+    looked_for: &'a [bool],
+}
+
+/// Every receipt that fits a charge, as `(score, charge, receipt)` by
+/// position: the best fit first, equal ones in the charges' order, then
+/// the receipts'. Each charge looks only at the receipts dated from
+/// [`DAYS_AFTER`] before it to [`DAYS_BEFORE`] after, found by date: the
+/// others can't fit.
+fn fits(
+    charges: Side<Charge>,
+    receipts: Side<MatchReceipt>,
+    rates: &impl Rates,
+) -> Vec<(f64, usize, usize)> {
+    let days: Vec<Option<i64>> = receipts.seen.iter().map(|seen| seen.day).collect();
+    let free: Vec<usize> = (0..receipts.items.len())
+        .filter(|&at| receipts.looked_for[at])
+        .collect();
+
+    let by_day = ByDay::new(&free, &days);
+
+    let mut found = Vec::new();
+
+    for (charge_at, charge) in charges.items.iter().enumerate() {
+        let seen = &charges.seen[charge_at];
+
+        let (true, Some(day)) = (charges.looked_for[charge_at], seen.day) else {
+            continue;
+        };
+
+        for receipt_at in by_day.within(day - DAYS_AFTER, day + DAYS_BEFORE) {
+            let fit = score(
+                Scored { item: charge, seen },
+                Scored {
+                    item: &receipts.items[receipt_at],
+                    seen: &receipts.seen[receipt_at],
+                },
+                rates,
+                DAYS_BEFORE,
+                DAYS_AFTER,
+                true,
+            );
+
+            if let Some(fit) = fit {
+                found.push((fit, charge_at, receipt_at));
+            }
+        }
+    }
+
+    found.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
+
+    found
+}
+
 /// Every payment matched to its receipt: links by hand first, then the
 /// best fits, each receipt (with the others of the same payment) once.
 /// Charges come newest first, as [`CHARGES_SQL`] gives them.
@@ -500,7 +594,11 @@ pub fn match_transactions(
 
     let links: BTreeMap<&str, &ChargeLink> =
         links.iter().map(|link| (link.id.as_str(), link)).collect();
-    let partners = same_payment(&receipts);
+
+    let charges_seen: Vec<Seen> = charges.iter().map(Seen::of_charge).collect();
+    let receipts_seen: Vec<Seen> = receipts.iter().map(Seen::of_receipt).collect();
+
+    let partners = same_payment(&receipts, &receipts_seen);
     let known: BTreeSet<i64> = receipts.iter().map(|r| r.document_id).collect();
 
     let mut taken = Taken::default();
@@ -516,35 +614,48 @@ pub fn match_transactions(
         }
     }
 
-    let mut candidates = Vec::new();
+    // The charges matching looks for receipts for.
+    let wanted: Vec<bool> = charges
+        .iter()
+        .map(|charge| {
+            let no_receipt = links
+                .get(charge.key().as_str())
+                .is_some_and(|link| link.no_receipt);
 
-    for charge in &charges {
-        let no_receipt = links
-            .get(charge.key().as_str())
-            .is_some_and(|link| link.no_receipt);
+            // Money back is a refund's own: the store's receipts are what was paid, so a refund takes one
+            // only by hand, never a purchase's by its amount.
+            let refund = charge.kind == "refund";
 
-        // Money back is a refund's own: the store's receipts are what was paid, so a refund takes one
-        // only by hand, never a purchase's by its amount.
-        let refund = charge.kind == "refund";
+            charge.needs_receipt()
+                && !no_receipt
+                && !refund
+                && !taken.charges.contains(&charge.key())
+        })
+        .collect();
 
-        if !charge.needs_receipt() || no_receipt || refund || taken.charges.contains(&charge.key())
-        {
-            continue;
-        }
+    let free: Vec<bool> = receipts
+        .iter()
+        .map(|receipt| !taken.receipts.contains(&receipt.document_id))
+        .collect();
 
-        for receipt in receipts
-            .iter()
-            .filter(|receipt| !taken.receipts.contains(&receipt.document_id))
-        {
-            if let Some(score) = score(charge, receipt, rates, DAYS_BEFORE, DAYS_AFTER, true) {
-                candidates.push((score, charge.key(), receipt.document_id));
-            }
-        }
-    }
+    let candidates = fits(
+        Side {
+            items: &charges,
+            seen: &charges_seen,
+            looked_for: &wanted,
+        },
+        Side {
+            items: &receipts,
+            seen: &receipts_seen,
+            looked_for: &free,
+        },
+        rates,
+    );
 
-    candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (_, charge_at, receipt_at) in candidates {
+        let charge = charges[charge_at].key();
+        let receipt = receipts[receipt_at].document_id;
 
-    for (_, charge, receipt) in candidates {
         if taken.charges.contains(&charge) || taken.receipts.contains(&receipt) {
             continue;
         }
@@ -627,16 +738,41 @@ pub fn suggestions(
     limit: usize,
 ) -> Vec<i64> {
     let charge = charge.clone().with_vendor();
+    let charge_seen = Seen::of_charge(&charge);
 
-    let mut scored: Vec<(f64, i64)> = receipts
-        .iter()
-        .cloned()
-        .map(MatchReceipt::with_vendor)
-        .filter_map(|receipt| {
-            score(&charge, &receipt, rates, SUGGEST_DAYS, SUGGEST_DAYS, false)
-                .map(|score| (score, receipt.document_id))
-        })
-        .collect();
+    let Some(day) = charge_seen.day else {
+        return Vec::new();
+    };
+
+    // Only receipts within SUGGEST_DAYS can fit: the others aren't looked up.
+    let near = receipts.iter().filter(|receipt| {
+        day_number(&receipt.date).is_some_and(|other| (day - other).abs() <= SUGGEST_DAYS)
+    });
+
+    let mut scored: Vec<(f64, i64)> = Vec::new();
+
+    for receipt in near.cloned().map(MatchReceipt::with_vendor) {
+        let receipt_seen = Seen::of_receipt(&receipt);
+
+        let fit = score(
+            Scored {
+                item: &charge,
+                seen: &charge_seen,
+            },
+            Scored {
+                item: &receipt,
+                seen: &receipt_seen,
+            },
+            rates,
+            SUGGEST_DAYS,
+            SUGGEST_DAYS,
+            false,
+        );
+
+        if let Some(fit) = fit {
+            scored.push((fit, receipt.document_id));
+        }
+    }
 
     scored.sort_by(|a, b| a.0.total_cmp(&b.0));
 
@@ -1052,5 +1188,230 @@ mod tests {
 
         assert_eq!(currencies.into_iter().collect::<Vec<_>>(), ["NOK", "USD"]);
         assert_eq!(since, "2026-11-02");
+    }
+
+    /// A little generator of numbers, the same every run: tests need no
+    /// crate for random data.
+    struct Dice(u64);
+
+    impl Dice {
+        fn roll(&mut self, sides: usize) -> usize {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+
+            ((self.0 >> 33) % sides as u64) as usize
+        }
+
+        fn pick<'a>(&mut self, from: &[&'a str]) -> &'a str {
+            from[self.roll(from.len())]
+        }
+    }
+
+    /// `count` charges and receipts over `days` days, on a few cards, from a
+    /// few vendors, some in another currency: many near misses.
+    fn store(dice: &mut Dice, count: usize, days: usize) -> (Vec<Charge>, Vec<MatchReceipt>) {
+        let merchants = [
+            "VERCEL INC.",
+            "FIGMA MONTHLY",
+            "SOME SHOP",
+            "GITHUB, INC.",
+            "CAFE",
+        ];
+        let vendors = ["Vercel", "Figma, Inc.", "A shop", "GitHub", "Cafe"];
+        let totals = ["20.00", "20.01", "45.00", "189.28", "12.50"];
+        let cards = [Some("1111"), Some("2222"), None];
+        let kinds = ["purchase", "purchase", "purchase", "refund", "fee"];
+
+        let date =
+            |dice: &mut Dice| date_of(day_number("2026-01-01").unwrap() + dice.roll(days) as i64);
+
+        let charges = (0..count)
+            .map(|position| {
+                let mut charge = charge(
+                    position as i64,
+                    &date(dice),
+                    dice.pick(&merchants),
+                    dice.pick(&totals),
+                );
+
+                charge.card_last4 = cards[dice.roll(cards.len())].map(str::to_string);
+                charge.kind = dice.pick(&kinds).to_string();
+
+                if dice.roll(4) == 0 {
+                    charge.currency = Some("NOK".into());
+                    charge.original_amount = Some(charge.amount.clone());
+                    charge.original_currency = Some("USD".into());
+                    charge.amount = "210.00".into();
+                }
+
+                charge
+            })
+            .collect();
+
+        let receipts = (0..count)
+            .map(|at| {
+                let mut receipt = receipt(
+                    1000 + at as i64,
+                    &date(dice),
+                    dice.pick(&vendors),
+                    dice.pick(&totals),
+                );
+
+                receipt.card_last4 = cards[dice.roll(cards.len())].map(str::to_string);
+                receipt.kind = dice.pick(&["receipt", "invoice"]).to_string();
+                receipt.invoice_number = Some(format!("INV-{}", dice.roll(count)));
+
+                receipt
+            })
+            .collect();
+
+        (charges, receipts)
+    }
+
+    fn some_rates() -> RateTable {
+        RateTable::new([
+            Rate {
+                date: "2025-12-01".into(),
+                currency: "USD".into(),
+                per_eur: 1.0,
+            },
+            Rate {
+                date: "2025-12-01".into(),
+                currency: "NOK".into(),
+                per_eur: 10.5,
+            },
+        ])
+    }
+
+    /// What [`fits`] gives, worked out as it was before: every charge
+    /// against every receipt, sorted by score alone, keeping their order.
+    fn fits_all_pairs(
+        charges: Side<Charge>,
+        receipts: Side<MatchReceipt>,
+        rates: &impl Rates,
+    ) -> Vec<(f64, usize, usize)> {
+        let mut found = Vec::new();
+
+        for (charge_at, charge) in charges.items.iter().enumerate() {
+            if !charges.looked_for[charge_at] {
+                continue;
+            }
+
+            for (receipt_at, receipt) in receipts.items.iter().enumerate() {
+                if !receipts.looked_for[receipt_at] {
+                    continue;
+                }
+
+                let fit = score(
+                    Scored {
+                        item: charge,
+                        seen: &charges.seen[charge_at],
+                    },
+                    Scored {
+                        item: receipt,
+                        seen: &receipts.seen[receipt_at],
+                    },
+                    rates,
+                    DAYS_BEFORE,
+                    DAYS_AFTER,
+                    true,
+                );
+
+                if let Some(fit) = fit {
+                    found.push((fit, charge_at, receipt_at));
+                }
+            }
+        }
+
+        found.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+        found
+    }
+
+    #[test]
+    fn looking_only_near_each_charge_finds_what_looking_everywhere_does() {
+        let rates = some_rates();
+
+        for seed in 0..40 {
+            let mut dice = Dice(seed);
+            let (charges, receipts) = store(&mut dice, 60, 120);
+
+            let charges: Vec<Charge> = charges.into_iter().map(Charge::with_vendor).collect();
+            let receipts: Vec<MatchReceipt> = receipts
+                .into_iter()
+                .map(MatchReceipt::with_vendor)
+                .collect();
+
+            let charges_seen: Vec<Seen> = charges.iter().map(Seen::of_charge).collect();
+            let receipts_seen: Vec<Seen> = receipts.iter().map(Seen::of_receipt).collect();
+
+            let wanted: Vec<bool> = charges.iter().map(|_| dice.roll(5) > 0).collect();
+            let free: Vec<bool> = receipts.iter().map(|_| dice.roll(5) > 0).collect();
+
+            let near = fits(
+                Side {
+                    items: &charges,
+                    seen: &charges_seen,
+                    looked_for: &wanted,
+                },
+                Side {
+                    items: &receipts,
+                    seen: &receipts_seen,
+                    looked_for: &free,
+                },
+                &rates,
+            );
+
+            let everywhere = fits_all_pairs(
+                Side {
+                    items: &charges,
+                    seen: &charges_seen,
+                    looked_for: &wanted,
+                },
+                Side {
+                    items: &receipts,
+                    seen: &receipts_seen,
+                    looked_for: &free,
+                },
+                &rates,
+            );
+
+            assert!(!near.is_empty(), "seed {seed}: the store has fits");
+            assert_eq!(near, everywhere, "seed {seed}");
+        }
+    }
+
+    /// Matching time for the store `store` makes of `count` charges and
+    /// receipts over as many days: as a larger store has them.
+    fn time_matching(count: usize) -> std::time::Duration {
+        let (charges, receipts) = store(&mut Dice(7), count, count);
+        let rates = some_rates();
+
+        let started = web_time::Instant::now();
+
+        match_transactions(charges, receipts, &[], &rates);
+
+        started.elapsed()
+    }
+
+    /// Matching four times the store takes about four times as long, not
+    /// sixteen. Timing, so run by hand, in release:
+    /// `cargo test -p spendyard-core --release -- --ignored --nocapture matching_grows`.
+    #[test]
+    #[ignore = "timing: run by hand in release"]
+    fn matching_grows_with_the_store_not_its_square() {
+        let once = time_matching(2_000);
+        let four_times = time_matching(8_000);
+
+        let ratio = four_times.as_secs_f64() / once.as_secs_f64();
+
+        println!("matching 2,000: {once:?}; 8,000: {four_times:?}; {ratio:.1} times as long");
+
+        assert!(
+            ratio < 8.0,
+            "{ratio:.1} times as long for four times the store"
+        );
     }
 }
