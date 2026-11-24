@@ -1,5 +1,7 @@
 # Vendor catalog
 
+Every vendor it knows, by category: [VENDORS.md](VENDORS.md).
+
 One file per vendor, named by the vendor's ID: its main domain
 (`anthropic.com.toml`). `build.rs` compiles every file into the binary.
 
@@ -26,7 +28,8 @@ never identify a vendor.
 To add a vendor: `spendyard vendors unknown` lists vendors on your receipts
 that the catalog lacks. Add a file, run `cargo test catalog` (it checks
 that no name or domain points at two vendors and that the category is
-known), and open a pull request.
+known), run `scripts/vendors-md.py` to add it to [VENDORS.md](VENDORS.md),
+and open a pull request.
 
 ## Local vendors
 
