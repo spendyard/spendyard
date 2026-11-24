@@ -31,10 +31,10 @@ service PushService {
   rpc PushDocuments(PushDocumentsRequest) returns (PushDocumentsResponse) {
     option (spendyard.api.v1.permission) = "documents:write";
   }
-  // ConfirmOriginals takes in originals put where PushDocuments said: each
-  // one there, and the document's bytes (the upload is checked against its
-  // SHA-256), becomes its document's original.
-  rpc ConfirmOriginals(ConfirmOriginalsRequest) returns (ConfirmOriginalsResponse) {
+  // ConfirmPushedOriginals takes in originals put where PushDocuments said:
+  // each one there, and the document's bytes (the upload is checked against
+  // its SHA-256), becomes its document's original.
+  rpc ConfirmPushedOriginals(ConfirmPushedOriginalsRequest) returns (ConfirmPushedOriginalsResponse) {
     option (spendyard.api.v1.permission) = "documents:write";
   }
 }
@@ -118,7 +118,7 @@ message PushedDocumentResult {
   // cloud's is as new or newer.
   bool edit_kept = 5;
   // The cloud has no original for it: put it where `original_upload` says
-  // and ConfirmOriginals. On a dry run, said without where.
+  // and ConfirmPushedOriginals. On a dry run, said without where.
   bool original_wanted = 6;
   OriginalUpload original_upload = 7;
 }
@@ -142,7 +142,7 @@ message OriginalUpload {
   map<string, string> headers = 2;
 }
 
-message ConfirmOriginalsRequest {
+message ConfirmPushedOriginalsRequest {
   string org_id = 1 [(buf.validate.field).string = {
     min_len: 1
     max_len: 100
@@ -157,7 +157,7 @@ message ConfirmOriginalsRequest {
   }];
 }
 
-message ConfirmOriginalsResponse {
+message ConfirmPushedOriginalsResponse {
   // Now their documents' originals.
   repeated string kept = 1;
   // Not there, or not the bytes their SHA-256 says: put them again.
