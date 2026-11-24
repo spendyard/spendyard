@@ -1028,11 +1028,12 @@ spendyard cloud push                       # then send what's new or changed (§
 spendyard cloud pull                       # corrections made in the cloud
 ```
 
-Everything about the cloud itself is under `spendyard cloud` (`login`,
-`logout`, `status`, `switch`, `push`, `pull`), so what
-talks to Spendyard is easy to see: those, and two flags on commands that
-already exist, `--cloud` and `-e cloud`. Reading and scanning only fill the
-local store; pushing is a step of its own. The mailboxes the CLI reads are under
+Everything that talks to the cloud is under `spendyard cloud` (`login`,
+`logout`, `status`, `switch`, `push`, `pull`; `documents`, `payments`,
+`subscriptions` and `vendors` for what the company has; `documents upload` for the
+cloud's models), and nothing else does: no local command takes a flag that
+reaches it. Reading and scanning only fill the local store;
+pushing is a step of its own. The mailboxes the CLI reads are under
 `spendyard mailbox` (`login`, `list`, `scan`, `logout`).
 
 - What's sent is documents, their readings (results and the rows made from
@@ -1044,9 +1045,10 @@ local store; pushing is a step of its own. The mailboxes the CLI reads are under
   is rows going from one to the other, matched by document SHA-256 and
   message ID.
 - The cloud might also run some of the work for the CLI: its own model keys
-  (no need to bring your own), a vendor catalog newer than the binary's, or
-  receipts stored for search. These are services the CLI calls when you are
-  signed in to the cloud. The binary must keep working fully without them.
+  (no need to bring your own: `cloud documents upload` has it read there),
+  a vendor catalog newer than the binary's, or receipts stored for search.
+  These are `spendyard cloud` commands, when you are signed in to the
+  cloud. The binary must keep working fully without them.
 
 Not part of v1; the API for it is designed with Cloud C1.
 
@@ -1069,7 +1071,7 @@ document before launch.
 | **M6b: Charges** | `card_statement` in the decision; `read` reads PDF and CSV statements into the `charges` table, checked; `descriptors` and `by_merchant` in the catalog; matching against receipts; `charges list` and `charges match`. Done and run on a real 11-page DNB statement (91 charges, every check held). Still to do: CSV mappings per issuer, personal charges, balances. |
 | **M7: Public release** | Docs, Homebrew, crates.io, announcement. |
 | **Cloud C1** | Forwarding address, storage, subscriptions, renewals, AI spend, weekly email. |
-| **Cloud C2** | `spendyard cloud login`, `cloud push` and `cloud pull` against the shared store; cloud services the CLI can call (models, catalog, storage); a verified Google app for the cloud. |
+| **Cloud C2** | `spendyard cloud login`, `cloud push` and `cloud pull` against the shared store (built); `cloud documents` (list, get, upload, for the cloud's models), `cloud payments`, `cloud subscriptions`, `cloud vendors`; a verified Google app for the cloud. |
 
 ## 13. Open questions
 
