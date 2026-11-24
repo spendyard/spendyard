@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "buf/validate/validate.proto";
+import "spendyard/api/v1/documents.proto";
+import "spendyard/api/v1/options.proto";
+import "spendyard/api/v1/payments.proto";
+import "spendyard/api/v1/subscriptions.proto";
+import "spendyard/api/v1/transactions.proto";
+import "spendyard/api/v1/vendors.proto";
+
+// SyncService is an organisation's changes, in order: what a client that
+// keeps the organisation's records follows instead of listing them again
+// (the platform's docs/sync.md). Each change has a sync id, one more than
+// the last; a client keeps the newest it applied and asks for what came
+// after it. A change is an entity whole, as its List method gives it, or
+// that it's gone: applying one twice, or one older than what's held, does
+// no harm.
+//
+// Each request names its organisation, whichever is the caller's active
+// one; the caller has to be in it. What each sees is what its List methods
+// would give them: a member, their own documents, the payments with
+// evidence of theirs (and only that evidence), and the organisation's own
+// vendors; the owner, admins and an accountant, everything.
+//
+// A payment's vendor is its id only when the vendor has its name, domain
+// and category: those are the vendor's, from its own changes, so renaming a
+// vendor isn't a change to every payment of theirs.
+service SyncService {
+  // SyncChanges gives the changes after `since`, a page at a time. When the
+  // caller can't catch up from there (too old, another epoch, or nothing
+  // held yet), it says to start over with SyncBootstrap.
+  rpc SyncChanges(SyncChangesRequest) returns (SyncChangesResponse) {
+    option (spendyard.api.v1.permission) = "sync:read";
+  }
+  // SyncBootstrap gives everything of one kind the caller may see, as it is
+  // now, a page at a time; the first page says the sync id it's as of.
+  rpc SyncBootstrap(SyncBootstrapRequest) returns (SyncBootstrapResponse) {
+    option (spendyard.api.v1.permission) = "sync:read";
+  }
+}
+
+// What a change is of.
+enum EntityKind {
+  ENTITY_KIND_UNSPECIFIED = 0;
+  ENTITY_KIND_PAYMENT = 1;
+  ENTITY_KIND_DOCUMENT = 2;
+  ENTITY_KIND_VENDOR = 3;
+  ENTITY_KIND_SUBSCRIPTION = 4;
+  ENTITY_KIND_OWN_VENDOR = 5;
+  // A statement's line, as Transactions has it.
+  ENTITY_KIND_TRANSACTION = 6;
+}
+
+// One change: an entity whole, or that one is gone.
+message Change {
+  // Its sync id.
+  int64 id = 1;
+  oneof entity {
+    Payment payment = 10;
+    Document document = 11;
+    Vendor vendor = 12;
+    Subscription subscription = 13;
+    OwnVendor own_vendor = 14;
+    Transaction transaction = 15;
+    Deleted deleted = 30;
+  }
+}
+
+// An entity gone.
+message Deleted {
+  EntityKind kind = 1;
+  // Its id as its message has it, written out: a payment's number, a
+  // vendor's key, `<statement>:<line>`.
+  string id = 2;
+}
+
+message SyncChangesRequest {
+  string org_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+  }];
+  // The newest sync id the caller applied; 0 when it holds nothing.
+  int64 since = 2 [(buf.validate.field).int64.gte = 0];
+  // The epoch it was of, from the answer that gave it; 0 when it holds
+  // nothing.
+  int64 epoch = 3;
+}
+
+message SyncChangesResponse {
+  int64 epoch = 1;
+  // Those after `since` the caller may see, oldest first.
+  repeated Change changes = 2;
+  // How far these reach, the caller's to keep: past the last change in
+  // `changes` when those after it weren't theirs to see.
+  int64 last_sync_id = 3;
+  // There's another page: ask again from `last_sync_id`.
+  bool more = 4;
+  // Start over with SyncBootstrap; nothing else is set.
+  bool bootstrap = 5;
+  // Payments, vendors and subscriptions haven't caught up with the newest
+  // writes yet: they're worked out a few seconds after a document is read.
+  bool matching_behind = 6;
+}
+
+message SyncBootstrapRequest {
+  string org_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+  }];
+  EntityKind kind = 2 [(buf.validate.field).enum = {
+    defined_only: true
+    not_in: [0]
+  }];
+  // From the page before; empty for the first.
+  string page_token = 3 [(buf.validate.field).string.max_len = 20];
+}
+
+message SyncBootstrapResponse {
+  int64 epoch = 1;
+  // On the first page: the sync id these are as of. SyncChanges from there
+  // gives what came after, some of it perhaps in these pages already.
+  int64 sync_id = 2;
+  // Each as a change: its id is 0.
+  repeated Change changes = 3;
+  string next_page_token = 4;
+}
