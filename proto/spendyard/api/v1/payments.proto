@@ -111,6 +111,9 @@ message ListPaymentsRequest {
   // Only those from and to these days, YYYY-MM-DD, both included.
   string from = 6 [(buf.validate.field).string.pattern = "^(\\d{4}-\\d{2}-\\d{2})?$"];
   string to = 7 [(buf.validate.field).string.pattern = "^(\\d{4}-\\d{2}-\\d{2})?$"];
+  // Only this subscription's (Subscription.id): those its receipts and
+  // invoices are evidence of.
+  string subscription_id = 8 [(buf.validate.field).string.max_len = 300];
 }
 
 message ListPaymentsResponse {
