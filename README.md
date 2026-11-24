@@ -136,6 +136,17 @@ spendyard cloud vendors                    # the company's vendors and what each
 spendyard cloud logout
 ```
 
+The cloud's whole API by its contract, compiled in, for what no command
+covers yet, for scripts and coding agents:
+
+```bash
+spendyard api list --service sync          # the methods, with the permission each takes
+spendyard api describe SyncChanges         # what it does, its request and answer field by field
+spendyard api call DocumentService/ListDocuments '{"pageSize": 5}'
+echo '{"since": "0", "epoch": "1"}' | spendyard api call SyncChanges -   # orgId is this machine's
+spendyard api call WatchChanges            # a stream: each message until Ctrl-C
+```
+
 ### Coming later
 
 Gmail through its own API, for workspaces where IMAP is turned off.
@@ -155,6 +166,11 @@ release, `SPENDYARD_INSTALL_DIR` for another folder):
 ```bash
 curl -fsSL https://spendyard.com/install.sh | bash
 ```
+
+On Windows (amd64), download `spendyard_windows_amd64.zip` from the
+[latest release](https://github.com/spendyard/spendyard/releases/latest),
+check it against `checksums.txt`, and put `spendyard.exe` somewhere on your
+`PATH`.
 
 ### Releasing
 

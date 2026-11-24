@@ -48,4 +48,8 @@ scripts/build-wasm.sh && node crates/wasm/tests/compare.mjs   # the core as WebA
 node crates/wasm/tests/understand.mjs                          # the pipeline as WebAssembly, the host posting
 ```
 
+When `proto/` changes, run `scripts/api-contract.sh`: `spendyard api` has the
+contract compiled in (`src/cli/api/contract.binpb`), and a test fails until
+it's rebuilt.
+
 Commit straight to `main`.

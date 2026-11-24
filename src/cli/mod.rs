@@ -1,6 +1,7 @@
 //! The command-line side: files, config and terminal output. None of this
 //! belongs in the library.
 
+pub mod api;
 pub mod cloud;
 pub mod cloud_documents;
 pub mod cloud_lists;

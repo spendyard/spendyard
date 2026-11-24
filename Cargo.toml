@@ -56,6 +56,7 @@ futures-util.workspace = true
 gethostname = "1"
 keyring = "4"
 mail-parser.workspace = true
+prost-reflect = { version = "0.16", features = ["serde"] }
 reqwest.workspace = true
 rmcp = { version = "3", features = ["server", "macros", "transport-io"] }
 rpassword = "7"

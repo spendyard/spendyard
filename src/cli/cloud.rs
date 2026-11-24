@@ -286,6 +286,84 @@ impl Cloud {
     }
 }
 
+impl Cloud {
+    /// A method that answers with a stream (Connect's streaming protocol,
+    /// JSON): `each` is given each message as it comes, until the stream
+    /// ends, the server ends it, or Ctrl-C. Its error, when it ends with one.
+    pub async fn stream(
+        &self,
+        method: &str,
+        request: Value,
+        mut each: impl FnMut(Value) -> Result<()>,
+    ) -> Result<()> {
+        let url = format!("{}/spendyard.api.v1.{method}", self.signed_in.server);
+
+        let body = enveloped(0, &serde_json::to_vec(&request)?);
+
+        let mut response = self
+            .client
+            .post(url)
+            .bearer_auth(&self.token)
+            .header("content-type", "application/connect+json")
+            .header("connect-protocol-version", "1")
+            .body(body)
+            .send()
+            .await
+            .with_context(|| format!("reaching {}", self.signed_in.server))?;
+
+        if !response.status().is_success() {
+            let error: Value = response.json().await.unwrap_or_default();
+            let message = error["message"].as_str().unwrap_or("no reason given");
+
+            bail!("{method}: {message}");
+        }
+
+        let mut buffered: Vec<u8> = Vec::new();
+
+        while let Some(chunk) = response.chunk().await? {
+            buffered.extend_from_slice(&chunk);
+
+            // Each whole frame there: a flags byte, its length (four bytes, big-endian), the message.
+            while buffered.len() >= 5 {
+                let length =
+                    u32::from_be_bytes([buffered[1], buffered[2], buffered[3], buffered[4]])
+                        as usize;
+
+                if buffered.len() < 5 + length {
+                    break;
+                }
+
+                let flags = buffered[0];
+                let frame: Vec<u8> = buffered.drain(..5 + length).skip(5).collect();
+                let message: Value = serde_json::from_slice(&frame)?;
+
+                // The end of the stream: its error, when it has one.
+                if flags & 0x02 != 0 {
+                    if let Some(message) = message["error"]["message"].as_str() {
+                        bail!("{method}: {message}");
+                    }
+
+                    return Ok(());
+                }
+
+                each(message)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// One message in a Connect stream's frame: its flags, its length, it.
+fn enveloped(flags: u8, message: &[u8]) -> Vec<u8> {
+    let mut frame = vec![flags];
+
+    frame.extend_from_slice(&(message.len() as u32).to_be_bytes());
+    frame.extend_from_slice(message);
+
+    frame
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ListOrgs {

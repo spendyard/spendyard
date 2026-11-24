@@ -91,6 +91,14 @@ enum Command {
         action: CloudAction,
     },
 
+    /// Spendyard Cloud's API by its contract: list its methods, describe
+    /// one, call any of them with a JSON request. For what no command covers
+    /// yet, scripts and coding agents.
+    Api {
+        #[command(subcommand)]
+        action: ApiAction,
+    },
+
     /// Mailboxes the CLI reads itself: sign in, list them, scan them,
     /// sign out.
     Mailbox {
@@ -303,6 +311,50 @@ enum EvalAction {
 
         #[arg(long, default_value_t = 8)]
         concurrency: usize,
+    },
+}
+
+#[derive(Subcommand)]
+enum ApiAction {
+    /// The methods, with the permission each takes. Needs no sign-in.
+    List {
+        /// Only those whose Service/Method holds this.
+        text: Option<String>,
+
+        /// Only a service whose name holds this: DocumentService, sync, …
+        #[arg(long)]
+        service: Option<String>,
+
+        /// Only those taking a :read permission.
+        #[arg(long)]
+        reads: bool,
+
+        /// Only those taking any other.
+        #[arg(long)]
+        writes: bool,
+
+        /// Only those that answer with a stream.
+        #[arg(long)]
+        streams: bool,
+    },
+
+    /// What a method does, the permission it takes, and its request and
+    /// answer field by field. Needs no sign-in.
+    Describe {
+        /// DocumentService/ListDocuments, or ListDocuments when only one
+        /// service has it.
+        method: String,
+    },
+
+    /// Call a method as this machine, in the organisation it acts in: the
+    /// request as JSON, checked against the contract before it's sent; an
+    /// orgId it takes and isn't given is that organisation's.
+    Call {
+        method: String,
+
+        /// The request as JSON; `-` reads it from standard input; {} when
+        /// none.
+        request: Option<String>,
     },
 }
 
@@ -650,6 +702,8 @@ enum ConfigAction {
 }
 
 fn main() -> ExitCode {
+    stop_quietly_when_the_reader_goes();
+
     // Before the async runtime starts any threads: this sets variables.
     let env_files = cli::env_files::load();
 
@@ -705,6 +759,8 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
         }
 
         Command::Cloud { action } => cloud(action).await,
+
+        Command::Api { action } => api(action).await,
 
         Command::Mailbox { action } => mailbox(action).await,
 
@@ -1079,6 +1135,32 @@ async fn cloud_documents(action: CloudDocumentsAction) -> anyhow::Result<ExitCod
     }
 }
 
+/// `spendyard api …`: the cloud's API by its contract.
+async fn api(action: ApiAction) -> anyhow::Result<ExitCode> {
+    match action {
+        ApiAction::List {
+            text,
+            service,
+            reads,
+            writes,
+            streams,
+        } => cli::api::list(cli::api::ListOptions {
+            text,
+            service,
+            reads,
+            writes,
+            streams,
+        })
+        .map(|()| ExitCode::SUCCESS),
+
+        ApiAction::Describe { method } => cli::api::describe(&method).map(|()| ExitCode::SUCCESS),
+
+        ApiAction::Call { method, request } => cli::api::call(&method, request)
+            .await
+            .map(|()| ExitCode::SUCCESS),
+    }
+}
+
 /// `spendyard mailbox …`: sign-ins and scans of the mailboxes the CLI reads.
 async fn mailbox(action: MailboxAction) -> anyhow::Result<ExitCode> {
     match action {
@@ -1170,6 +1252,24 @@ fn parse_arguments() -> Cli {
     let matches = Cli::command().version(version).get_matches();
 
     Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit())
+}
+
+/// `spendyard … | head`: once the reader has what it wants and goes, end
+/// quietly, as other command-line tools do, with the status a shell gives a
+/// program stopped that way (141). Rust carries on writing, and printing
+/// panics with "Broken pipe"; any other panic is told as always.
+fn stop_quietly_when_the_reader_goes() {
+    let told_as_always = std::panic::take_hook();
+
+    std::panic::set_hook(Box::new(move |info| {
+        let message = info.payload_as_str().unwrap_or_default();
+
+        if message.contains("Broken pipe") {
+            std::process::exit(141);
+        }
+
+        told_as_always(info);
+    }));
 }
 
 #[cfg(test)]
