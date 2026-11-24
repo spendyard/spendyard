@@ -18,7 +18,7 @@ use spendyard_core::{Document, ReadResult};
 use super::config;
 
 /// Bump with every change to the tables, and add a step to `migrate`.
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
@@ -143,6 +143,25 @@ CREATE TABLE IF NOT EXISTS charges (
 );
 
 CREATE INDEX IF NOT EXISTS charges_card_date ON charges (card_last4, date);
+
+-- Payments (spendyard_core::payments): which payment each piece of evidence
+-- is, a document (document_id) or a statement's line (statement_id and
+-- position). The grouping is worked out again from the store; what's kept is
+-- each payment's ID, so links to one hold when its evidence changes.
+CREATE TABLE IF NOT EXISTS payment_evidence (
+    payment_id    TEXT NOT NULL,
+    document_id   INTEGER REFERENCES documents (id) ON DELETE CASCADE,
+    statement_id  INTEGER REFERENCES documents (id) ON DELETE CASCADE,
+    position      INTEGER
+);
+
+CREATE INDEX IF NOT EXISTS payment_evidence_payment ON payment_evidence (payment_id);
+
+-- A payment that became part of another: links to from_id go to to_id.
+CREATE TABLE IF NOT EXISTS payment_moves (
+    from_id  TEXT PRIMARY KEY,
+    to_id    TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS scans (
     key             TEXT PRIMARY KEY,

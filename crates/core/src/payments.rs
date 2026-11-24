@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::pairing::{Paper, pair_invoices};
 use crate::spend::{
-    Row, amount, counts_as_paid, is_money_back, number_key, same_vendor_and_amount,
+    Row, amount, counts_as_paid, is_money_back, number_key, payment_row, same_vendor_and_amount,
 };
 use crate::transactions::Matching;
 
@@ -71,7 +71,7 @@ pub struct Payment {
 }
 
 /// A payment that became part of another: links to `from` go to `to`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Moved {
     pub from: String,
     pub to: String,
@@ -228,14 +228,15 @@ fn join_credit_notes_and_refunds(rows: &[&Row], sets: &mut Sets) {
 }
 
 /// Gives each group the ID of the stored payment it shares the most
-/// evidence with, and a new one (`new_id`) when it shares none. The most
+/// evidence with, and a new one (`new_id`, given the group's evidence) when
+/// it shares none. The most
 /// shared is decided first, so when a payment splits the larger part keeps
 /// its ID; when two merge, one keeps its ID and the other is [`Moved`] to
 /// it. Ties go to the stored payment listed first.
 pub fn keep_ids(
     groups: Vec<Evidence>,
     stored: &[Payment],
-    mut new_id: impl FnMut() -> String,
+    mut new_id: impl FnMut(&Evidence) -> String,
 ) -> Regrouped {
     let shared = shared_evidence(&groups, stored);
 
@@ -253,7 +254,8 @@ pub fn keep_ids(
 
     let ids: Vec<String> = ids
         .into_iter()
-        .map(|id| id.unwrap_or_else(&mut new_id))
+        .zip(&groups)
+        .map(|(id, evidence)| id.unwrap_or_else(|| new_id(evidence)))
         .collect();
 
     let mut regrouped = Regrouped::default();
@@ -317,6 +319,133 @@ fn shared_evidence(groups: &[Evidence], stored: &[Payment]) -> Vec<(usize, usize
     shared.sort_by(|a, b| b.0.cmp(&a.0).then(a.2.cmp(&b.2)).then(a.1.cmp(&b.1)));
 
     shared
+}
+
+/// One payment as it is shown: its ID, what it is, the row spend counts for
+/// it ([`crate::spend::spend`]: its vendor, day, amount, card and what its
+/// documents say of it) and its evidence.
+#[derive(Debug, Clone, Serialize)]
+pub struct Record {
+    pub id: String,
+    /// `payment`, money paid; `refund`, money back on a statement; or
+    /// `credit`, a credit note paid back.
+    pub kind: String,
+    pub row: Row,
+    pub evidence: Evidence,
+}
+
+/// Every payment, newest first, and what became of those stored before:
+/// [`Regrouped`]'s `payments` as the store keeps them, with their records.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Records {
+    pub records: Vec<Record>,
+    pub payments: Vec<Payment>,
+    pub moved: Vec<Moved>,
+    pub gone: Vec<String>,
+}
+
+/// Every payment in `rows` (with the statements' payments that stand in
+/// for a receipt, as [`crate::transactions::payment_rows`] makes them) and
+/// `matching`, keeping the IDs of those `stored` ([`keep_ids`]). A new one
+/// gets [`fresh_id`], never one `stored` or `moved_before` (moved earlier,
+/// whose links still arrive) has.
+pub fn records(
+    rows: &[Row],
+    matching: &Matching,
+    stored: &[Payment],
+    moved_before: &[Moved],
+) -> Records {
+    let mut taken: BTreeSet<String> = stored.iter().map(|payment| payment.id.clone()).collect();
+
+    taken.extend(moved_before.iter().map(|moved| moved.from.clone()));
+
+    let new_id = |evidence: &Evidence| {
+        let id = fresh_id(evidence, &taken);
+
+        taken.insert(id.clone());
+
+        id
+    };
+
+    let regrouped = keep_ids(group(rows, matching), stored, new_id);
+
+    let mut rows_of: BTreeMap<Piece, Vec<&Row>> = BTreeMap::new();
+
+    for row in rows.iter().filter(|row| counts_as_paid(row)) {
+        rows_of.entry(piece_of(row)).or_default().push(row);
+    }
+
+    let mut records: Vec<Record> = regrouped
+        .payments
+        .iter()
+        .filter_map(|payment| record_of(payment, &rows_of))
+        .collect();
+
+    records.sort_by(|a, b| b.row.date.cmp(&a.row.date).then(a.id.cmp(&b.id)));
+
+    Records {
+        records,
+        payments: regrouped.payments,
+        moved: regrouped.moved,
+        gone: regrouped.gone,
+    }
+}
+
+/// One payment's record, from its rows; none when no row of it counts (a
+/// card line matched by hand to a receipt that's personal).
+fn record_of(payment: &Payment, rows_of: &BTreeMap<Piece, Vec<&Row>>) -> Option<Record> {
+    let mut rows: Vec<&Row> = payment
+        .evidence
+        .pieces()
+        .filter_map(|piece| rows_of.get(&piece))
+        .flatten()
+        .copied()
+        .collect();
+
+    if rows.is_empty() {
+        return None;
+    }
+
+    // Newest first, as the store gives them, so the receipt chosen is as spend's.
+    rows.sort_by(|a, b| b.date.cmp(&a.date).then(b.id.cmp(&a.id)));
+
+    let row = payment_row(&rows);
+
+    let kind = match (is_money_back(&row), row.kind.as_str()) {
+        (false, _) => "payment",
+        (true, "credit_note") => "credit",
+        (true, _) => "refund",
+    };
+
+    Some(Record {
+        id: payment.id.clone(),
+        kind: kind.into(),
+        row,
+        evidence: payment.evidence.clone(),
+    })
+}
+
+/// A new payment's ID, from its first piece of evidence: `p-d7` for
+/// document 7, `p-c90-4` for line 4 of statement 90; `-2`, `-3`, … after it
+/// when that is `taken`. Stored, it stays the payment's whatever its
+/// evidence becomes.
+pub fn fresh_id(evidence: &Evidence, taken: &BTreeSet<String>) -> String {
+    let first = match evidence.pieces().next() {
+        Some(Piece::Document(id)) => format!("d{id}"),
+        Some(Piece::Charge(key)) => format!("c{}", key.replace(':', "-")),
+        None => "none".to_string(),
+    };
+
+    let base = format!("p-{first}");
+
+    if !taken.contains(&base) {
+        return base;
+    }
+
+    (2..)
+        .map(|n| format!("{base}-{n}"))
+        .find(|id| !taken.contains(id))
+        .unwrap_or(base)
 }
 
 /// Pieces joined into groups: a union-find over the pieces added.
@@ -470,10 +599,10 @@ mod tests {
     }
 
     /// New IDs `new 1`, `new 2`, … in the order asked for.
-    fn counter() -> impl FnMut() -> String {
+    fn counter() -> impl FnMut(&Evidence) -> String {
         let mut next = 0;
 
-        move || {
+        move |_| {
             next += 1;
 
             format!("new {next}")
@@ -547,6 +676,89 @@ mod tests {
                 evidence(&[1], &[])
             ]
         );
+    }
+
+    /// A statement's line standing in for a receipt, as `payment_rows` makes it.
+    fn stand_in(position: i64, date: &str, kind: &str, total: &str) -> Row {
+        let mut row = Row::from_stored(
+            StoredRow {
+                kind: kind.into(),
+                ..row(90, date, "Figma", total)
+            },
+            &catalog(),
+        );
+
+        row.payment = Some(format!("90:{position}"));
+
+        row
+    }
+
+    #[test]
+    fn records_each_payment_with_its_kind_row_and_evidence() {
+        let mut rows = rows(vec![
+            StoredRow {
+                kind: "credit_note".into(),
+                is_receipt: 0,
+                ..row(3, "2026-11-20", "Vercel", "5.00")
+            },
+            row(2, "2026-11-03", "Vercel", "20.00"),
+            invoice(1, "2026-11-01", "Vercel", "20.00"),
+        ]);
+
+        rows.insert(0, stand_in(6, "2026-11-25", "refund", "-45.00"));
+
+        let matching = matching(vec![line(4, "purchase", Some(2))]);
+
+        let found = records(&rows, &matching, &[], &[]);
+
+        let summary: Vec<(&str, &str, &str)> = found
+            .records
+            .iter()
+            .map(|record| {
+                (
+                    record.id.as_str(),
+                    record.kind.as_str(),
+                    record.row.total.as_deref().unwrap_or(""),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            summary,
+            [
+                ("p-c90-6", "refund", "-45.00"),
+                ("p-d3", "credit", "-5.00"),
+                ("p-d1", "payment", "20.00")
+            ]
+        );
+
+        // The receipt stands for the payment; the invoice and the card line are its evidence too.
+        assert_eq!(found.records[2].row.id, 2);
+        assert_eq!(found.records[2].evidence, evidence(&[1, 2], &["90:4"]));
+    }
+
+    #[test]
+    fn records_keep_stored_ids_and_never_reuse_one_that_moved() {
+        let rows = rows(vec![
+            row(2, "2026-11-03", "Vercel", "20.00"),
+            row(1, "2026-10-03", "Vercel", "20.00"),
+        ]);
+
+        let stored = [payment("mine", &[2], &[])];
+        let moved = [Moved {
+            from: "p-d1".into(),
+            to: "mine".into(),
+        }];
+
+        let found = records(&rows, &Matching::default(), &stored, &moved);
+
+        let ids: Vec<&str> = found
+            .records
+            .iter()
+            .map(|record| record.id.as_str())
+            .collect();
+
+        assert_eq!(ids, ["mine", "p-d1-2"]);
     }
 
     #[test]

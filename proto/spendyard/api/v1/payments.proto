@@ -1,0 +1,134 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "buf/validate/validate.proto";
+import "spendyard/api/v1/model.proto";
+import "spendyard/api/v1/options.proto";
+import "spendyard/api/v1/receipts.proto";
+import "spendyard/api/v1/transactions.proto";
+
+// PaymentService is the active organisation's payments: what Spendyard
+// counts, money paid or back, each once, with its evidence. A payment
+// collects its documents (an invoice, its receipt, a credit note) and its
+// transactions (a statement's lines) into one; any of them may be missing,
+// and one is enough. Spend, subscriptions and vendors count payments.
+//
+// The grouping is the CLI's own (spendyard_core::payments), worked out again
+// whenever its evidence changes; a payment's ID is given once and kept, so a
+// link to one holds when an invoice arrives after its card line. A payment
+// that became part of another answers with that one.
+//
+// A member sees the payments whose evidence they added; the owner, admins
+// and an accountant see them all.
+service PaymentService {
+  // ListPayments lists the payments, newest first, a page at a time, with
+  // how many there are in all.
+  rpc ListPayments(ListPaymentsRequest) returns (ListPaymentsResponse) {
+    option (spendyard.api.v1.permission) = "payments:read";
+  }
+  // GetPayment gives one payment with its documents and its transactions.
+  // An ID of one that became part of another gives that one. NOT_FOUND
+  // when it isn't the caller's to see.
+  rpc GetPayment(GetPaymentRequest) returns (GetPaymentResponse) {
+    option (spendyard.api.v1.permission) = "payments:read";
+  }
+}
+
+// What a payment is.
+enum PaymentKind {
+  PAYMENT_KIND_UNSPECIFIED = 0;
+  // Money paid.
+  PAYMENT_KIND_PAYMENT = 1;
+  // Money back on a statement: a refund.
+  PAYMENT_KIND_REFUND = 2;
+  // A credit note paid back to a card or account.
+  PAYMENT_KIND_CREDIT = 3;
+}
+
+// Which payments ListPayments lists.
+enum PaymentFilter {
+  // All of them.
+  PAYMENT_FILTER_UNSPECIFIED = 0;
+  // Those with no document: a statement's line alone, a receipt to find.
+  PAYMENT_FILTER_NO_DOCUMENT = 1;
+  // Money back: refunds and credits.
+  PAYMENT_FILTER_MONEY_BACK = 2;
+}
+
+// Payment is one payment: what moved, when, to or from whom, and the
+// evidence for it.
+message Payment {
+  // Given once and kept: `p-d7` when it began as document 7, `p-c90-4` as
+  // line 4 of statement 90. Never reused.
+  string id = 1;
+  PaymentKind kind = 2;
+  // Its vendor; unset when nothing says who.
+  VendorRef vendor = 3;
+  // The vendor's category, when the catalog knows it.
+  string category = 4;
+  // When it was paid or given back: YYYY-MM-DD.
+  string date = 5;
+  // What moved, a plain decimal (`20.00`), below nothing for money back
+  // (`-45.00`); and its currency.
+  string amount = 6;
+  string currency = 7;
+  // The amount in the organisation's currency, at its day's rate, when it
+  // was in another; empty otherwise.
+  string converted_amount = 8;
+  string converted_currency = 9;
+  // The card it was paid with, as the evidence names it: "visa 4417".
+  string card = 10;
+  // What its documents say of it: how it's billed (`subscription`,
+  // `usage`, `mixed`, `one_time`) and how often (`month`, `year`), seats,
+  // and the product of its largest line; empty when none says.
+  string billing_model = 11;
+  string interval = 12;
+  double seats = 13;
+  string product = 14;
+  // Its evidence: documents by ID, transactions by ID
+  // (`<statement>:<line>`).
+  repeated int64 document_ids = 15;
+  repeated string transaction_ids = 16;
+}
+
+message ListPaymentsRequest {
+  // At most this many; 50 when unset.
+  int32 page_size = 1 [(buf.validate.field).int32 = {
+    gte: 0
+    lte: 500
+  }];
+  // The page after another: the last one's next_page_token.
+  string page_token = 2 [(buf.validate.field).string.max_len = 20];
+  PaymentFilter filter = 3;
+  // Only those whose vendor holds this, whatever its case.
+  string query = 4 [(buf.validate.field).string.max_len = 200];
+  // Only this vendor's: Vendor.id.
+  string vendor_id = 5 [(buf.validate.field).string.max_len = 200];
+  // Only those from and to these days, YYYY-MM-DD, both included.
+  string from = 6 [(buf.validate.field).string.pattern = "^(\\d{4}-\\d{2}-\\d{2})?$"];
+  string to = 7 [(buf.validate.field).string.pattern = "^(\\d{4}-\\d{2}-\\d{2})?$"];
+}
+
+message ListPaymentsResponse {
+  repeated Payment payments = 1;
+  // For the page after this one; empty when this is the last.
+  string next_page_token = 2;
+  // How many the request picks in all, every page together.
+  int64 total = 3;
+}
+
+message GetPaymentRequest {
+  string id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+  }];
+}
+
+message GetPaymentResponse {
+  Payment payment = 1;
+  // Its documents' readings, newest first.
+  repeated Receipt documents = 2;
+  // Its lines on statements.
+  repeated Transaction transactions = 3;
+}

@@ -241,9 +241,18 @@ pub fn spend(rows: &[Row]) -> Vec<Row> {
             let at = *payment_of.get(&piece_of(row))?;
             let chosen = chosen(&documents[at]);
 
-            std::ptr::eq(chosen, row).then(|| as_counted(with_facts(chosen, &documents[at])))
+            std::ptr::eq(chosen, row).then(|| payment_row(&documents[at]))
         })
         .collect()
+}
+
+/// The row spend counts for one payment, from its rows (newest first): the
+/// chosen one with what the others say and it doesn't, money back below
+/// nothing.
+pub(crate) fn payment_row(documents: &[&Row]) -> Row {
+    let chosen = chosen(documents);
+
+    as_counted(with_facts(chosen, documents))
 }
 
 /// The row that stands for a payment: its first receipt (or credit note),

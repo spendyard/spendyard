@@ -115,6 +115,72 @@ struct VendorsOptions {
     links: Vec<spendyard_core::transactions::ChargeLink>,
 }
 
+/// What [`payments`] works with: the rates matching converts with, what
+/// people decided about vendors, the statements' payments with the
+/// receipts they're matched to and links by hand, and the payments the
+/// store keeps: their IDs, and those that moved.
+#[derive(Debug, Default, Deserialize)]
+struct PaymentsOptions {
+    #[serde(default)]
+    rates: Vec<spendyard_core::rates::Rate>,
+
+    #[serde(default)]
+    vendor_edits: Vec<spendyard_core::vendors::VendorEdit>,
+
+    #[serde(default)]
+    charges: Vec<spendyard_core::transactions::Charge>,
+    #[serde(default)]
+    match_receipts: Vec<spendyard_core::transactions::MatchReceipt>,
+    #[serde(default)]
+    links: Vec<spendyard_core::transactions::ChargeLink>,
+
+    #[serde(default)]
+    stored: Vec<spendyard_core::payments::Payment>,
+    #[serde(default)]
+    moved: Vec<spendyard_core::payments::Moved>,
+}
+
+/// Every payment in a store's rows and statements, newest first, as
+/// `spendyard_core::payments::records` has them: `{"records", "payments",
+/// "moved", "gone"}`, `payments` being what the store keeps from now on;
+/// or `{"error": "…"}`. `options` is `{"rates"?, "vendor_edits"?,
+/// "charges"?, "match_receipts"?, "links"?, "stored"?, "moved"?}`.
+fn payments_json_here(rows: &str, options: &str) -> String {
+    let answer = (|| -> Result<Value, String> {
+        let mut rows = report_rows(rows)?;
+        let asked: PaymentsOptions =
+            serde_json::from_str(options).map_err(|error| error.to_string())?;
+
+        let rates = spendyard_core::rates::RateTable::new(asked.rates);
+
+        let matched = spendyard_core::transactions::match_transactions(
+            asked.charges,
+            asked.match_receipts,
+            &asked.links,
+            &rates,
+        );
+
+        rows.extend(spendyard_core::transactions::payment_rows(&matched));
+        rows.sort_by(|a, b| b.date.cmp(&a.date).then(b.id.cmp(&a.id)));
+
+        let rows = spendyard_core::vendors::apply_vendor_edits(rows, &asked.vendor_edits);
+
+        let found = spendyard_core::payments::records(&rows, &matched, &asked.stored, &asked.moved);
+
+        serde_json::to_value(found).map_err(|error| error.to_string())
+    })();
+
+    answer
+        .unwrap_or_else(|error| json!({ "error": error }))
+        .to_string()
+}
+
+/// [`payments_json`], for JavaScript.
+#[wasm_bindgen]
+pub fn payments(rows: &str, options: &str) -> String {
+    payments_json(rows, options)
+}
+
 /// The rows with the statements' payments that have no receipt standing in
 /// for theirs (matched as [`transactions`] matches them, links by hand
 /// first), newest first.
@@ -679,6 +745,50 @@ mod tests {
     }
 
     #[test]
+    fn works_out_payments_keeping_the_stored_ids() {
+        let rows = json!([
+            {
+                "id": 2, "date": "2026-11-03", "kind": "receipt", "status": "paid", "is_receipt": 1,
+                "vendor_id": "vercel.com", "vendor_name": "Vercel", "total": "20.00", "currency": "USD",
+                "flags": 0, "personal": 0, "ignored": 0
+            },
+            {
+                "id": 1, "date": "2026-11-01", "kind": "invoice", "status": "paid", "is_receipt": 1,
+                "vendor_id": "vercel.com", "vendor_name": "Vercel", "total": "20.00", "currency": "USD",
+                "interval": "month", "flags": 0, "personal": 0, "ignored": 0
+            }
+        ]);
+
+        let options = json!({
+            "charges": [{
+                "id": 1, "document_id": 90, "position": 4, "date": "2026-11-03",
+                "merchant": "VERCEL INC.", "amount": "20.00", "currency": "USD", "kind": "purchase"
+            }],
+            "match_receipts": [{
+                "document_id": 2, "vendor_name": "Vercel", "date": "2026-11-03",
+                "total": "20.00", "currency": "USD", "kind": "receipt"
+            }],
+            "stored": [{ "id": "p-c90-4", "evidence": { "documents": [], "charges": ["90:4"] } }]
+        });
+
+        let answer: Value =
+            serde_json::from_str(&payments_json(&rows.to_string(), &options.to_string())).unwrap();
+
+        let record = &answer["records"][0];
+
+        assert_eq!(answer["records"].as_array().unwrap().len(), 1);
+        assert_eq!(record["id"], "p-c90-4");
+        assert_eq!(record["kind"], "payment");
+        assert_eq!(record["row"]["id"], 2);
+        assert_eq!(record["row"]["interval"], "month");
+        assert_eq!(
+            record["evidence"],
+            json!({ "documents": [1, 2], "charges": ["90:4"] })
+        );
+        assert_eq!(answer["payments"][0]["id"], "p-c90-4");
+    }
+
+    #[test]
     fn takes_the_organisations_own_vendors() {
         // The same firm, one receipt by its domain and one by its legal name.
         let rows = json!([
@@ -821,6 +931,11 @@ mod tests {
 /// [`subscriptions_json_here`] with the organisation's own vendors (`options.vendors`) on top of the catalog.
 pub fn subscriptions_json(rows: &str, options: &str) -> String {
     with_own_vendors(options, || subscriptions_json_here(rows, options))
+}
+
+/// [`payments_json_here`] with the organisation's own vendors (`options.vendors`) on top of the catalog.
+pub fn payments_json(rows: &str, options: &str) -> String {
+    with_own_vendors(options, || payments_json_here(rows, options))
 }
 
 /// [`vendors_json_here`] with the organisation's own vendors (`options.vendors`) on top of the catalog.
