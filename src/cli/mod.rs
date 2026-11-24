@@ -3,6 +3,7 @@
 
 pub mod cloud;
 pub mod cloud_documents;
+pub mod cloud_lists;
 pub mod config;
 pub mod config_command;
 pub mod decide;

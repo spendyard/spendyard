@@ -358,6 +358,67 @@ enum CloudAction {
         #[command(subcommand)]
         action: CloudDocumentsAction,
     },
+
+    /// The company's payments, each once, newest first, with what shows for
+    /// it: as the cloud works them out from everything the company has.
+    Payments {
+        /// Only those with no receipt or invoice: a statement's line alone.
+        #[arg(long)]
+        missing: bool,
+
+        /// Only money back: refunds and credits.
+        #[arg(long)]
+        money_back: bool,
+
+        /// Only this vendor's (part of its name).
+        #[arg(long)]
+        vendor: Option<String>,
+
+        /// From this day, YYYY-MM-DD.
+        #[arg(long)]
+        from: Option<String>,
+
+        /// To this day, YYYY-MM-DD, included.
+        #[arg(long)]
+        to: Option<String>,
+
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+
+        /// One JSON object per line, as the API gives them.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// The company's subscriptions: what each costs a month, seats, card,
+    /// next renewal, and how it stands.
+    Subscriptions {
+        /// Also those lapsed for more than a year.
+        #[arg(long)]
+        all: bool,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// The company's vendors and what each costs, as Vendors shows them
+    /// (the local `vendors` is the catalog).
+    Vendors {
+        /// Only those whose name holds this.
+        #[arg(long)]
+        search: Option<String>,
+
+        /// Only this category: ai, dev-tools, infrastructure, …
+        #[arg(long)]
+        category: Option<String>,
+
+        /// Also those set aside as personal or not spend.
+        #[arg(long)]
+        all: bool,
+
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -946,6 +1007,44 @@ async fn cloud(action: CloudAction) -> anyhow::Result<ExitCode> {
         CloudAction::Logout => cli::cloud::logout().await.map(|()| ExitCode::SUCCESS),
 
         CloudAction::Documents { action } => cloud_documents(action).await,
+
+        CloudAction::Payments {
+            missing,
+            money_back,
+            vendor,
+            from,
+            to,
+            limit,
+            json,
+        } => cli::cloud_lists::payments(cli::cloud_lists::PaymentsOptions {
+            missing,
+            money_back,
+            vendor,
+            from,
+            to,
+            limit,
+            json,
+        })
+        .await
+        .map(|()| ExitCode::SUCCESS),
+
+        CloudAction::Subscriptions { all, json } => cli::cloud_lists::subscriptions(all, json)
+            .await
+            .map(|()| ExitCode::SUCCESS),
+
+        CloudAction::Vendors {
+            search,
+            category,
+            all,
+            json,
+        } => cli::cloud_lists::vendors(cli::cloud_lists::VendorsOptions {
+            search,
+            category,
+            all,
+            json,
+        })
+        .await
+        .map(|()| ExitCode::SUCCESS),
     }
 }
 

@@ -130,6 +130,9 @@ spendyard cloud pull                       # bring them to the documents this ma
 spendyard cloud documents list --search slack   # the company's documents, as the cloud has them
 spendyard cloud documents get 1887              # one whole, as `documents get` shows one here
 spendyard cloud documents upload invoice.pdf --wait   # read in the cloud, with its models: no keys here
+spendyard cloud payments --missing         # the company's payments with no receipt
+spendyard cloud subscriptions              # the company's subscriptions, as `subscriptions` shows yours
+spendyard cloud vendors                    # the company's vendors and what each costs
 spendyard cloud logout
 ```
 
