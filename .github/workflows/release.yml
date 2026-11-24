@@ -1,3 +1,13 @@
+# A release, on a v* tag that matches Cargo.toml's version: spendyard for
+# macOS and Linux (amd64, arm64) as spendyard_<os>_<arch>.tar.gz, with
+# install.sh and checksums.txt, attached to the tag's GitHub release; then
+# the Homebrew cask in spendyard/homebrew-tap (scripts/homebrew.sh), and the
+# release installed on Linux and macOS as users do.
+# curl -fsSL https://spendyard.com/install.sh | bash and
+# brew install spendyard/tap/spendyard both install from here.
+#
+# Needs secrets.HOMEBREW_TAP_TOKEN, a fine-grained token with Contents:
+# write on spendyard/homebrew-tap; without it, the cask isn't updated.
 name: Release
 
 on:
@@ -7,12 +17,32 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # The tag names the version the binary prints: v0.1.0 needs version = "0.1.0".
+  version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The tag matches Cargo.toml
+        run: |
+          cargo_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "spendyard") | .version')"
+
+          if [ "v$cargo_version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::the tag is $GITHUB_REF_NAME, but Cargo.toml says $cargo_version"
+            exit 1
+          fi
+
   build:
     name: Build ${{ matrix.target }}
+    needs: version
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -21,12 +51,16 @@ jobs:
         include:
           - target: aarch64-apple-darwin
             os: macos-latest
+            asset: darwin_arm64
           - target: x86_64-apple-darwin
             os: macos-latest
+            asset: darwin_amd64
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
+            asset: linux_amd64
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
+            asset: linux_arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -48,33 +82,92 @@ jobs:
         if: runner.os == 'macOS'
         run: cargo build --release --locked --target ${{ matrix.target }}
 
+      # The same name in every release, so releases/latest/download/… always
+      # finds it; the binary at the archive's top, as install.sh and the cask expect.
       - name: Package
         run: |
-          name="spendyard-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          name="spendyard_${{ matrix.asset }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/spendyard" README.md LICENSE "dist/$name/"
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
-          shasum -a 256 "dist/$name.tar.gz" > "dist/$name.tar.gz.sha256"
+          tar -C "dist/$name" -czf "dist/$name.tar.gz" spendyard README.md LICENSE
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.target }}
-          path: |
-            dist/*.tar.gz
-            dist/*.sha256
+          name: ${{ matrix.asset }}
+          path: dist/*.tar.gz
 
   release:
-    name: Publish GitHub release
+    name: Publish the GitHub release and the Homebrew cask
     needs: build
     runs-on: ubuntu-latest
 
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
-      - name: Create release
+      - name: Checksums and install.sh
+        run: |
+          cp install.sh dist/
+          (cd dist && sha256sum *.tar.gz install.sh > checksums.txt)
+          cat dist/checksums.txt
+
+      - name: The GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
+          fi
+
+      - name: The Homebrew cask
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "::warning::no HOMEBREW_TAP_TOKEN: the cask in spendyard/homebrew-tap stays as it was"
+            exit 0
+          fi
+
+          git clone "https://x-access-token:$TAP_TOKEN@github.com/spendyard/homebrew-tap.git" tap
+          mkdir -p tap/Casks
+          scripts/homebrew.sh "$GITHUB_REF_NAME" dist/checksums.txt > tap/Casks/spendyard.rb
+
+          cd tap
+          git config user.name "spendyard release"
+          git config user.email "release@spendyard.com"
+
+          git add Casks/spendyard.rb
+          git commit -m "spendyard $GITHUB_REF_NAME"
+          git push
+
+  # The release just made, installed the way users do: install.sh on Linux
+  # and macOS, and Homebrew on macOS.
+  verify:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: install.sh
+        env:
+          SPENDYARD_VERSION: ${{ github.ref_name }}
+        run: |
+          curl -fsSL https://spendyard.com/install.sh | bash
+          "$HOME/.local/bin/spendyard" --version | grep -F "spendyard ${SPENDYARD_VERSION#v}"
+
+      - name: Homebrew
+        if: runner.os == 'macOS'
+        env:
+          SPENDYARD_VERSION: ${{ github.ref_name }}
+        run: |
+          brew install spendyard/tap/spendyard
+          "$(brew --prefix)/bin/spendyard" --version | grep -F "spendyard ${SPENDYARD_VERSION#v}"

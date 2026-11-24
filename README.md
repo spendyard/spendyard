@@ -116,6 +116,38 @@ spendyard vendors unknown                  # vendors on your receipts the catalo
 
 Gmail through its own API, for workspaces where IMAP is turned off.
 
+## Installing
+
+On macOS or Linux (amd64 and arm64), with Homebrew:
+
+```bash
+brew install spendyard/tap/spendyard
+```
+
+or the install script, which puts it in `~/.local/bin` after checking it
+against the release's checksums (`SPENDYARD_VERSION=v0.1.0` for a given
+release, `SPENDYARD_INSTALL_DIR` for another folder):
+
+```bash
+curl -fsSL https://spendyard.com/install.sh | bash
+```
+
+### Releasing
+
+Set `version` in `Cargo.toml` (`[workspace.package]`), commit, and push a tag
+that matches it:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+`.github/workflows/release.yml` builds the four binaries, attaches them with
+`install.sh` and `checksums.txt` to the tag's GitHub release, updates the
+cask in [spendyard/homebrew-tap](https://github.com/spendyard/homebrew-tap)
+(`scripts/homebrew.sh`, with the `HOMEBREW_TAP_TOKEN` secret), then installs
+the release both ways to check it. spendyard.com/install.sh serves the latest
+release's `install.sh`.
+
 ## Building
 
 ```bash
