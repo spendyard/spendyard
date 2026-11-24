@@ -70,6 +70,7 @@ pub fn print_result(name: &str, result: &ReadResult) {
     let numbers: Vec<String> = [
         ("invoice", &result.invoice_number),
         ("receipt", &result.receipt_number),
+        ("credits invoice", &result.credited_invoice),
     ]
     .iter()
     .filter_map(|(label, number)| number.as_ref().map(|number| format!("{label} {number}")))

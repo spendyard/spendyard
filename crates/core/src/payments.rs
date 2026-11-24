@@ -17,7 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::pairing::{Paper, pair_invoices};
 use crate::spend::{
-    Row, amount, counts_as_paid, is_money_back, number_key, payment_row, same_vendor_and_amount,
+    Row, amount, counts_as_paid, is_money_back, number_key, payment_row, plain_number,
+    same_vendor_and_amount,
 };
 use crate::transactions::Matching;
 
@@ -333,6 +334,10 @@ pub struct Record {
     pub kind: String,
     pub row: Row,
     pub evidence: Evidence,
+    /// A credit: the payment whose invoice it credits, found by the
+    /// invoice's number for the same vendor ([`link_credits`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub corrects: Option<i64>,
 }
 
 /// Every payment, newest first, and what became of those stored before:
@@ -386,6 +391,8 @@ pub fn records(rows: &[Row], matching: &Matching, stored: &[Payment], retired: &
         .filter_map(|payment| record_of(payment, &rows_of))
         .collect();
 
+    link_credits(&mut records, &rows_of);
+
     records.sort_by(|a, b| b.row.date.cmp(&a.row.date).then(b.id.cmp(&a.id)));
 
     Records {
@@ -427,7 +434,45 @@ fn record_of(payment: &Payment, rows_of: &BTreeMap<Piece, Vec<&Row>>) -> Option<
         kind: kind.into(),
         row,
         evidence: payment.evidence.clone(),
+        corrects: None,
     })
+}
+
+/// Each payment's rows: those its evidence is.
+fn rows_in<'a>(evidence: &Evidence, rows_of: &BTreeMap<Piece, Vec<&'a Row>>) -> Vec<&'a Row> {
+    evidence
+        .pieces()
+        .filter_map(|piece| rows_of.get(&piece))
+        .flatten()
+        .copied()
+        .collect()
+}
+
+/// Says which payment each credit corrects: the one with an invoice (or a
+/// receipt) of the number its credit note names, for the same vendor.
+/// None when no payment has it: the invoice not in the store, or not paid.
+fn link_credits(records: &mut [Record], rows_of: &BTreeMap<Piece, Vec<&Row>>) {
+    let mut by_number: BTreeMap<(String, String), i64> = BTreeMap::new();
+
+    for record in records.iter().filter(|record| record.kind == "payment") {
+        for row in rows_in(&record.evidence, rows_of) {
+            if let Some(plain) = row.number.as_deref().and_then(plain_number) {
+                by_number.insert((row.vendor_key.clone(), plain), record.id);
+            }
+        }
+    }
+
+    for record in records.iter_mut().filter(|record| record.kind == "credit") {
+        let credited = rows_in(&record.evidence, rows_of)
+            .into_iter()
+            .find_map(|row| {
+                let plain = row.credited_invoice.as_deref().and_then(plain_number)?;
+
+                by_number.get(&(row.vendor_key.clone(), plain)).copied()
+            });
+
+        record.corrects = credited;
+    }
 }
 
 /// Pieces joined into groups: a union-find over the pieces added.
@@ -717,6 +762,47 @@ mod tests {
         // The receipt stands for the payment; the invoice and the card line are its evidence too.
         assert_eq!(found.records[2].row.id, 2);
         assert_eq!(found.records[2].evidence, evidence(&[1, 2], &["90:4"]));
+    }
+
+    #[test]
+    fn a_credit_says_which_payment_its_invoice_was() {
+        let mut paid_invoice = invoice(1, "2026-10-01", "Vercel", "20.00");
+
+        paid_invoice.number = Some("INV-1042".into());
+
+        let credit = StoredRow {
+            kind: "credit_note".into(),
+            is_receipt: 0,
+            credited_invoice: Some("inv 1042".into()),
+            ..row(2, "2026-10-09", "Vercel", "20.00")
+        };
+
+        // Another vendor's credit note naming the same number corrects nothing here.
+        let elsewhere = StoredRow {
+            kind: "credit_note".into(),
+            is_receipt: 0,
+            credited_invoice: Some("INV-1042".into()),
+            ..row(3, "2026-10-10", "Figma", "5.00")
+        };
+
+        let rows = rows(vec![elsewhere, credit, paid_invoice]);
+
+        let found = records(&rows, &Matching::default(), &[], &[]);
+
+        let corrects: Vec<(i64, &str, Option<i64>)> = found
+            .records
+            .iter()
+            .map(|record| (record.id, record.kind.as_str(), record.corrects))
+            .collect();
+
+        assert_eq!(
+            corrects,
+            [
+                (3, "credit", None),
+                (2, "credit", Some(1)),
+                (1, "payment", None)
+            ]
+        );
     }
 
     #[test]

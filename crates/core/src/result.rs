@@ -37,6 +37,10 @@ pub struct ReadResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub receipt_number: Option<String>,
 
+    /// On a credit note: the number of the invoice it credits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credited_invoice: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
     pub issued: Option<String>,
 
@@ -235,6 +239,7 @@ pub fn not_about_money(kind: DocumentType, certainty: f64) -> ReadResult {
         lines: Vec::new(),
         invoice_number: None,
         receipt_number: None,
+        credited_invoice: None,
         issued: None,
         evidence: BTreeMap::new(),
         flags: Vec::new(),
@@ -301,6 +306,7 @@ pub fn assemble(
         lines,
         invoice_number: present(output.invoice_number),
         receipt_number: present(output.receipt_number),
+        credited_invoice: present(output.credited_invoice),
         issued: present(output.issued),
         evidence,
         flags: Vec::new(),

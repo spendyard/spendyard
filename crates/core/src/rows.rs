@@ -40,6 +40,8 @@ pub struct ReceiptRow {
     pub next_renewal: Option<String>,
     pub invoice_number: Option<String>,
     pub receipt_number: Option<String>,
+    /// On a credit note: the number of the invoice it credits.
+    pub credited_invoice: Option<String>,
 
     /// The first payment that names a card.
     pub card_brand: Option<String>,
@@ -185,6 +187,7 @@ pub fn receipt_row(result: &ReadResult, fallback_date: Option<&str>) -> ReceiptR
         next_renewal: billing.and_then(|billing| billing.next_renewal.clone()),
         invoice_number: result.invoice_number.clone(),
         receipt_number: result.receipt_number.clone(),
+        credited_invoice: result.credited_invoice.clone(),
         card_brand: card.and_then(|payment| payment.brand.clone()),
         card_last4: card.and_then(|payment| payment.last4.clone()),
         seats,

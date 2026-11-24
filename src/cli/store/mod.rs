@@ -20,7 +20,7 @@ use spendyard_core::{Document, ReadResult};
 use super::config;
 
 /// Bump with every change to the tables, and add a step to `migrate`.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
@@ -76,7 +76,9 @@ CREATE TABLE IF NOT EXISTS receipts (
     card_brand         TEXT,
     card_last4         TEXT,
     seats              REAL,
-    flags              INTEGER
+    flags              INTEGER,
+    -- Last, as ALTER TABLE adds it to stores made before version 6.
+    credited_invoice   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS lines (
@@ -240,6 +242,12 @@ impl Store {
             if version == 4 {
                 self.connection
                     .execute_batch("DROP TABLE payment_evidence; DROP TABLE payment_moves;")?;
+            }
+
+            // From 6 a credit note says which invoice it credits. A new table has it already.
+            if (1..6).contains(&version) {
+                self.connection
+                    .execute_batch("ALTER TABLE receipts ADD COLUMN credited_invoice TEXT;")?;
             }
 
             self.connection.execute_batch(SCHEMA)?;
@@ -606,8 +614,8 @@ fn write_receipt(
             document_id, result_id, type, status, is_receipt, is_invoice,
             vendor_id, vendor_name, processor, account_email, account_workspace,
             date, total, tax, currency, billing_model, interval, period_start, period_end, next_renewal,
-            invoice_number, receipt_number, card_brand, card_last4, seats, flags
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+            invoice_number, receipt_number, credited_invoice, card_brand, card_last4, seats, flags
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
         params![
             document_id,
             result_id,
@@ -631,6 +639,7 @@ fn write_receipt(
             receipt.next_renewal,
             receipt.invoice_number,
             receipt.receipt_number,
+            receipt.credited_invoice,
             receipt.card_brand,
             receipt.card_last4,
             receipt.seats,

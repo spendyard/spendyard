@@ -166,5 +166,9 @@ fn evidence_of(record: &Record) -> String {
         n => words.push(format!("{n} lines on statements")),
     }
 
+    if let Some(payment) = record.corrects {
+        words.push(format!("credits payment {payment}"));
+    }
+
     words.join(", ")
 }

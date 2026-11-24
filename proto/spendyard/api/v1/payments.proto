@@ -90,6 +90,9 @@ message Payment {
   // (`<statement>:<line>`).
   repeated int32 document_ids = 15;
   repeated string transaction_ids = 16;
+  // A credit: the payment whose invoice it credits, found by the invoice's
+  // number its credit note names, for the same vendor; 0 when none is.
+  int32 corrects_payment_id = 17;
 }
 
 message ListPaymentsRequest {

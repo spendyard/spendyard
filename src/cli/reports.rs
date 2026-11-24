@@ -42,6 +42,7 @@ pub(crate) fn rows(store: &Store) -> Result<Vec<Row>> {
             interval: row.get("interval")?,
             next_renewal: row.get("next_renewal")?,
             number: row.get("number")?,
+            credited_invoice: row.get("credited_invoice")?,
             card: row.get("card")?,
             seats: row.get("seats")?,
             flags: row.get("flags")?,

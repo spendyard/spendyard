@@ -35,6 +35,7 @@ pub const ROWS_SQL: &str = "SELECT d.id AS id,
        r.interval AS interval,
        r.next_renewal AS next_renewal,
        coalesce(r.invoice_number, r.receipt_number) AS number,
+       r.credited_invoice AS credited_invoice,
        CASE WHEN r.card_last4 IS NOT NULL THEN coalesce(r.card_brand, 'card') || ' ' || r.card_last4 END AS card,
        r.seats AS seats,
        coalesce(r.flags, 0) AS flags,
@@ -70,6 +71,9 @@ pub struct StoredRow {
     pub interval: Option<String>,
     pub next_renewal: Option<String>,
     pub number: Option<String>,
+    /// On a credit note: the number of the invoice it credits.
+    #[serde(default)]
+    pub credited_invoice: Option<String>,
     pub card: Option<String>,
     pub seats: Option<f64>,
     pub flags: i64,
@@ -111,6 +115,9 @@ pub struct Row {
     pub interval: Option<String>,
     pub next_renewal: Option<String>,
     pub number: Option<String>,
+    /// On a credit note: the number of the invoice it credits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credited_invoice: Option<String>,
     pub card: Option<String>,
     pub seats: Option<f64>,
     pub flags: i64,
@@ -178,6 +185,7 @@ impl Row {
             interval: stored.interval,
             next_renewal: stored.next_renewal,
             number: stored.number,
+            credited_invoice: stored.credited_invoice,
             card: stored.card,
             seats: stored.seats,
             flags: stored.flags,
@@ -346,21 +354,24 @@ pub(crate) fn counts_as_paid(row: &Row) -> bool {
 /// its number in letters and digits only (`B085EFDD-0038` on the email is
 /// `B085EFDD 0038` on its PDF) and its total. `None` with no number.
 pub(crate) fn number_key(row: &Row) -> Option<String> {
-    let plain: String = row
-        .number
-        .as_deref()?
+    let plain = plain_number(row.number.as_deref()?)?;
+
+    let total = row.total.as_deref().unwrap_or("");
+
+    Some(format!("{}|{plain}|{total}", row.vendor_key))
+}
+
+/// A document's number in letters and digits only, upper case: the same
+/// number as an email (`B085EFDD-0038`) and as its PDF (`B085EFDD 0038`).
+/// `None` when nothing is left.
+pub(crate) fn plain_number(number: &str) -> Option<String> {
+    let plain: String = number
         .chars()
         .filter(char::is_ascii_alphanumeric)
         .collect::<String>()
         .to_uppercase();
 
-    if plain.is_empty() {
-        return None;
-    }
-
-    let total = row.total.as_deref().unwrap_or("");
-
-    Some(format!("{}|{plain}|{total}", row.vendor_key))
+    (!plain.is_empty()).then_some(plain)
 }
 
 /// The currency to report in: the one asked for, or the most common one

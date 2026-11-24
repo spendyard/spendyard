@@ -46,6 +46,11 @@ pub struct ModelOutput {
     /// receipt number and an invoice number; record each in its own field.
     pub receipt_number: Option<String>,
 
+    /// On a credit note: the number of the invoice it credits or corrects,
+    /// as written ("Credit for invoice INV-1042"). Null on anything else,
+    /// and when the credit note doesn't name one.
+    pub credited_invoice: Option<String>,
+
     /// The date the document was issued, as YYYY-MM-DD.
     pub issued: Option<String>,
 

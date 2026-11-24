@@ -210,6 +210,9 @@ message Reading {
   repeated ReadPayment payments = 10;
   string invoice_number = 11;
   string receipt_number = 12;
+  // On a credit note: the number of the invoice it credits, as written;
+  // empty when it names none.
+  string credited_invoice = 21;
   string issued = 13;
   // The quote behind each value, keyed by field path: `vendor.name`,
   // `amount.total`, `lines[0].amount`.

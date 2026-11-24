@@ -18,7 +18,8 @@ with status paid. A notice that a subscription will renew or a card will be char
 renewal_notice with status upcoming, even when it shows an amount. A failed or declined payment is \
 payment_failed. A credit note, or a confirmation that money was refunded, is credit_note: its total \
 is the amount credited as a positive number, with status paid when the money went back to a card \
-or account and none when it is credit on account or lowers an unpaid invoice. A card issuer's \
+or account and none when it is credit on account or lowers an unpaid invoice; credited_invoice is \
+the number of the invoice it credits, when it names one. A card issuer's \
 statement listing many card purchases from different merchants is card_statement, even when it is \
 titled invoice; leave its lines empty. Newsletters, login codes, shipping notices and marketing \
 are other.
