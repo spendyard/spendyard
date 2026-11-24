@@ -1,6 +1,6 @@
 //! `spendyard documents get`: one document in the store, whole: where it came
 //! from, how it was read and what was read, the corrections made to it by
-//! hand, and the payments it's evidence of.
+//! hand, and the payments it's evidence of. `documents ui` shows the same.
 
 use anyhow::{Context, Result, bail};
 use rusqlite::{OptionalExtension, params};
@@ -90,7 +90,7 @@ impl Edits {
             }
         }
 
-        if let Some(note) = &self.note {
+        if let Some(note) = self.note.as_ref().filter(|note| !note.is_empty()) {
             said.push(format!("note \"{note}\""));
         }
 
@@ -146,23 +146,49 @@ pub async fn get(options: GetOptions) -> Result<()> {
         return Ok(());
     }
 
-    print_document(&document, reading.as_ref(), edits.as_ref(), &payments);
+    for line in describe(&store, options.id)? {
+        println!("{line}");
+    }
+
+    Ok(())
+}
+
+/// One stored document, as lines of text: what `get` prints and `documents ui` shows. Payments as they were last
+/// worked out.
+pub fn describe(store: &Store, id: i64) -> Result<Vec<String>> {
+    let Some(document) = document(store, id)? else {
+        bail!("no document {id} in the store");
+    };
+
+    let reading = last_reading(store, id)?;
+    let edits = edits(store, id)?;
+    let payments = payments_of(store, id)?;
+
+    let mut out = Vec::new();
+
+    describe_document(
+        &document,
+        reading.as_ref(),
+        edits.as_ref(),
+        &payments,
+        &mut out,
+    );
 
     let Some(reading) = reading else {
-        println!();
-        println!("Not read yet: `spendyard read` reads it again from the original");
+        out.push(String::new());
+        out.push("Not read yet: `spendyard read` reads it again from the original".to_string());
 
-        return Ok(());
+        return Ok(out);
     };
 
     let result: Value = serde_json::from_str(&reading.json)
-        .with_context(|| format!("reading document {}'s stored result", options.id))?;
+        .with_context(|| format!("reading document {id}'s stored result"))?;
 
-    println!();
+    out.push(String::new());
 
-    print_reading(&result);
+    describe_reading(&result, &mut out);
 
-    Ok(())
+    Ok(out)
 }
 
 /// A field of the stored result as text, by its path: `amount.total`. None when it's missing or null.
@@ -191,7 +217,7 @@ fn joined(words: &[Option<String>], separator: &str) -> String {
 }
 
 /// What was read, from the stored result as it was written: older results read as well as new ones.
-fn print_reading(result: &Value) {
+fn describe_reading(result: &Value, out: &mut Vec<String>) {
     let vendor = match (text(result, "vendor.name"), text(result, "vendor.id")) {
         (Some(name), Some(id)) => format!("{name} ({id})"),
         (Some(name), None) => name,
@@ -206,24 +232,24 @@ fn print_reading(result: &Value) {
         ", ",
     );
 
-    println!("{vendor} — {kind}");
+    out.push(format!("{vendor} — {kind}"));
 
     if let Some(statement) = result
         .get("statement")
         .filter(|statement| !statement.is_null())
     {
-        print_statement(statement);
+        describe_statement(statement, out);
     } else {
-        print_bill(result);
+        describe_bill(result, out);
     }
 
-    print_flags(result);
+    describe_flags(result, out);
 }
 
 /// A receipt's, invoice's or other bill's fields.
-fn print_bill(result: &Value) {
+fn describe_bill(result: &Value, out: &mut Vec<String>) {
     if let Some(issued) = text(result, "issued") {
-        println!("  Issued    {issued}");
+        out.push(format!("  Issued    {issued}"));
     }
 
     let total = joined(
@@ -239,7 +265,7 @@ fn print_bill(result: &Value) {
             .map(|tax| format!(", tax {tax}"))
             .unwrap_or_default();
 
-        println!("  Total     {total}{tax}");
+        out.push(format!("  Total     {total}{tax}"));
     }
 
     let period = match (
@@ -260,7 +286,7 @@ fn print_bill(result: &Value) {
     );
 
     if !billing.is_empty() {
-        println!("  Billing   {billing}");
+        out.push(format!("  Billing   {billing}"));
     }
 
     let numbers = joined(
@@ -272,7 +298,7 @@ fn print_bill(result: &Value) {
     );
 
     if !numbers.is_empty() {
-        println!("  Numbers   {numbers}");
+        out.push(format!("  Numbers   {numbers}"));
     }
 
     for payment in list(result, "payments") {
@@ -288,13 +314,13 @@ fn print_bill(result: &Value) {
             " ",
         );
 
-        println!("  Paid      {paid}");
+        out.push(format!("  Paid      {paid}"));
     }
 
     let lines = list(result, "lines");
 
     if !lines.is_empty() {
-        println!("  Lines");
+        out.push("  Lines".to_string());
     }
 
     for line in lines {
@@ -309,46 +335,46 @@ fn print_bill(result: &Value) {
         let kind = joined(&[text(line, "kind"), text(line, "interval")], ", ");
         let amount = text(line, "amount").unwrap_or_default();
 
-        println!("    {quantity}{what}  {amount}  ({kind})");
+        out.push(format!("    {quantity}{what}  {amount}  ({kind})"));
     }
 }
 
 /// A card statement's own summary: its lines are `spendyard transactions list`'s.
-fn print_statement(statement: &Value) {
+fn describe_statement(statement: &Value, out: &mut Vec<String>) {
     let issuer = joined(&[text(statement, "issuer"), text(statement, "number")], " ");
     let total = joined(
         &[text(statement, "total"), text(statement, "currency")],
         " ",
     );
 
-    println!("  Statement {issuer}");
+    out.push(format!("  Statement {issuer}"));
 
     if let Some(issued) = text(statement, "issued") {
-        println!("  Issued    {issued}");
+        out.push(format!("  Issued    {issued}"));
     }
 
-    println!("  Total     {total}");
+    out.push(format!("  Total     {total}"));
 
     for card in list(statement, "cards") {
         let charges = text(card, "charges").unwrap_or_default();
         let name = text(card, "name").unwrap_or_default();
 
-        println!(
+        out.push(format!(
             "  Card      ••{} {name}: {charges} charges",
             text(card, "last4").unwrap_or_default()
-        );
+        ));
     }
 
-    println!("  Its lines: `spendyard transactions list`");
+    out.push("  Its lines: `spendyard transactions list`".to_string());
 }
 
-fn print_flags(result: &Value) {
+fn describe_flags(result: &Value, out: &mut Vec<String>) {
     for flag in list(result, "flags") {
         let message = text(flag, "message")
             .or_else(|| text(flag, "code"))
             .unwrap_or_default();
 
-        println!("  ! {message}");
+        out.push(format!("  ! {message}"));
     }
 }
 
@@ -361,15 +387,16 @@ fn list<'a>(result: &'a Value, key: &str) -> &'a [Value] {
         .unwrap_or_default()
 }
 
-fn print_document(
+fn describe_document(
     document: &Document,
     reading: Option<&Reading>,
     edits: Option<&Edits>,
     payments: &[i64],
+    out: &mut Vec<String>,
 ) {
     let name = document.name.as_deref().unwrap_or("(no name)");
 
-    println!("Document {}  {name}", document.id);
+    out.push(format!("Document {}  {name}", document.id));
 
     let from = [Some(document.source.as_str()), document.sender.as_deref()]
         .into_iter()
@@ -377,10 +404,10 @@ fn print_document(
         .collect::<Vec<_>>()
         .join(", ");
 
-    println!("  From      {from}");
+    out.push(format!("  From      {from}"));
 
     if let Some(received) = &document.received {
-        println!("  Received  {received}");
+        out.push(format!("  Received  {received}"));
     }
 
     if let Some(reading) = reading {
@@ -400,14 +427,14 @@ fn print_document(
             .map(|decider| format!(", first {decider}"))
             .unwrap_or_default();
 
-        println!("  Read      {} by {by}{decider}", reading.created);
+        out.push(format!("  Read      {} by {by}{decider}", reading.created));
     }
 
     if let Some(edits) = edits {
         let described = edits.described();
 
         if !described.is_empty() {
-            println!("  Edited    {}", described.join(" · "));
+            out.push(format!("  Edited    {}", described.join(" · ")));
         }
     }
 
@@ -418,7 +445,7 @@ fn print_document(
             .collect::<Vec<_>>()
             .join(", ");
 
-        println!("  Payments  {numbers}");
+        out.push(format!("  Payments  {numbers}"));
     }
 }
 

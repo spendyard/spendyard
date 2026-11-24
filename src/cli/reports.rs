@@ -121,6 +121,16 @@ pub(crate) fn clip(text: &str, width: usize) -> String {
     format!("{cut}…")
 }
 
+/// Whether `documents list` shows a row without `--all`: receipts, invoices,
+/// renewal notices, failed payments and credit notes.
+pub(crate) fn listed_by_default(row: &Row) -> bool {
+    row.is_receipt
+        || matches!(
+            row.kind.as_str(),
+            "invoice" | "renewal_notice" | "payment_failed" | "credit_note"
+        )
+}
+
 pub struct ReceiptsOptions {
     pub vendor: Option<String>,
     pub since: Option<String>,
@@ -140,14 +150,7 @@ pub fn receipts(options: ReceiptsOptions) -> Result<()> {
 
     let shown: Vec<&Row> = rows
         .iter()
-        .filter(|row| {
-            options.all
-                || row.is_receipt
-                || matches!(
-                    row.kind.as_str(),
-                    "invoice" | "renewal_notice" | "payment_failed" | "credit_note"
-                )
-        })
+        .filter(|row| options.all || listed_by_default(row))
         .filter(|row| {
             vendor.as_ref().is_none_or(|vendor| {
                 row.vendor_key.contains(vendor) || row.vendor_name.to_lowercase().contains(vendor)
@@ -503,6 +506,15 @@ pub struct EditOptions {
 pub fn edit(options: EditOptions) -> Result<()> {
     let store = Store::open()?;
 
+    apply_edit(&store, &options)?;
+
+    println!("edited {}", options.id);
+
+    Ok(())
+}
+
+/// Corrects a stored document by hand, as `documents edit` and `documents ui` do.
+pub(crate) fn apply_edit(store: &Store, options: &EditOptions) -> Result<()> {
     let exists: i64 = store.connection.query_row(
         "SELECT count(*) FROM documents WHERE id = ?1",
         params![options.id],
@@ -553,8 +565,6 @@ pub fn edit(options: EditOptions) -> Result<()> {
         "UPDATE edits SET updated = ?2 WHERE document_id = ?1",
         params![options.id, now()],
     )?;
-
-    println!("edited {}", options.id);
 
     Ok(())
 }
