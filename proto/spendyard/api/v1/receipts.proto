@@ -93,11 +93,15 @@ message Receipt {
   // so comes first, then a card payment, then a mark by hand.
   PaidBy paid_by = 19;
   // The card payment from a statement that is its, when one is (matched, or
-  // linked by hand): its id in TransactionService, its day, YYYY-MM-DD, and
-  // the card as statements name it ("Mastercard 3776"). Empty when none is.
-  string payment_id = 20;
+  // linked by hand): its line's id in TransactionService, its day,
+  // YYYY-MM-DD, and the card as statements name it ("Mastercard 3776").
+  // Empty when none is.
+  string transaction_id = 20;
   string payment_date = 21;
   string payment_card = 22;
+  // The payment it's evidence of (PaymentService); 0 when it's no payment's:
+  // an invoice not paid, a notice, one set aside.
+  int32 payment_id = 23;
 }
 
 // How a receipt is known to have been paid.

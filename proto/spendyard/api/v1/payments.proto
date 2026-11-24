@@ -131,4 +131,7 @@ message GetPaymentResponse {
   repeated Receipt documents = 2;
   // Its lines on statements.
   repeated Transaction transactions = 3;
+  // When it has no document and is on a statement: receipts that could be
+  // its, the likeliest first, to link to its line (UpdateTransaction).
+  repeated Receipt suggestions = 4;
 }

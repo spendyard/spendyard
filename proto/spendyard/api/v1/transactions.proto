@@ -95,6 +95,9 @@ message Transaction {
   // Its receipt was linked by hand, not found by matching.
   bool by_hand = 17;
   string note = 18;
+  // The payment it's evidence of (PaymentService); 0 when it's no payment's:
+  // a card fee, interest, a payment to the card.
+  int32 payment_id = 20;
 }
 
 // An amount and its currency.

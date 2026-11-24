@@ -115,6 +115,8 @@ message Document {
   string converted_currency = 17;
   // When it was last read, RFC 3339; empty when it hasn't been.
   string read_at = 18;
+  // The payment it's evidence of (PaymentService); 0 when it's no payment's.
+  int32 payment_id = 19;
 }
 
 // Which documents ListDocuments lists.
