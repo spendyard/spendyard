@@ -14,7 +14,8 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::{Catalog, name_key};
-use crate::dates::{SAME_PAYMENT_DAYS, days_apart, shift_date};
+use crate::dates::shift_date;
+use crate::pairing::{Paper, pair_invoices};
 use crate::rates::{Rates, convert};
 
 /// The query for the rows, newest first, over the store's documents,
@@ -215,30 +216,28 @@ pub fn spend(rows: &[Row]) -> Vec<Row> {
 }
 
 /// Drops a paid invoice when a receipt for the same payment is kept: same
-/// vendor, amount and currency, a few days apart. Plain's invoice PDFs
-/// carry only the invoice number and its receipt emails only the receipt
-/// number, so numbers can't link them. Each receipt pairs once.
+/// vendor, amount and currency, paired by [`pair_invoices`].
 fn without_invoice_copies(rows: Vec<Row>) -> Vec<Row> {
-    let mut paired = BTreeSet::new();
-    let mut dropped = BTreeSet::new();
+    let papers: Vec<Paper> = rows
+        .iter()
+        .map(|row| Paper {
+            invoice: row.kind == "invoice",
+            date: &row.date,
+        })
+        .collect();
 
-    for invoice in rows.iter().filter(|row| row.kind == "invoice") {
-        let partner = rows.iter().find(|row| {
-            row.kind == "receipt"
-                && !paired.contains(&row.id)
-                && row.vendor_key == invoice.vendor_key
-                && row.currency == invoice.currency
-                && row.total.as_deref().and_then(amount)
-                    == invoice.total.as_deref().and_then(amount)
-                && days_apart(&row.date, &invoice.date)
-                    .is_some_and(|apart| apart <= SAME_PAYMENT_DAYS)
-        });
+    let same = |a: usize, b: usize| {
+        let (a, b) = (&rows[a], &rows[b]);
 
-        if let Some(partner) = partner {
-            paired.insert(partner.id);
-            dropped.insert(invoice.id);
-        }
-    }
+        a.vendor_key == b.vendor_key
+            && a.currency == b.currency
+            && a.total.as_deref().and_then(amount) == b.total.as_deref().and_then(amount)
+    };
+
+    let dropped: BTreeSet<i64> = pair_invoices(&papers, same)
+        .into_iter()
+        .map(|(invoice, _)| rows[invoice].id)
+        .collect();
 
     rows.into_iter()
         .filter(|row| !dropped.contains(&row.id))
@@ -365,6 +364,39 @@ mod tests {
             .into_iter()
             .map(|row| Row::from_stored(row, catalog()))
             .collect()
+    }
+
+    fn invoice(id: i64, date: &str, vendor: &str, total: &str) -> StoredRow {
+        StoredRow {
+            kind: "invoice".into(),
+            ..row(id, date, vendor, total, "USD")
+        }
+    }
+
+    #[test]
+    fn counts_a_paid_invoice_and_its_later_receipt_once() {
+        // No numbers link them, and the receipt came nine days later.
+        let rows = rows(vec![
+            row(2, "2026-11-10", "Fjordbyrå AS", "300.00", "USD"),
+            invoice(1, "2026-11-01", "Fjordbyrå AS", "300.00"),
+        ]);
+
+        let spent = spend(&rows);
+
+        assert_eq!(spent.len(), 1);
+        assert_eq!(spent[0].kind, "receipt");
+    }
+
+    #[test]
+    fn keeps_each_month_of_a_subscription() {
+        // October's receipt is missing: its invoice is still October's payment.
+        let rows = rows(vec![
+            row(3, "2026-11-01", "Vercel", "20.00", "USD"),
+            invoice(2, "2026-11-01", "Vercel", "20.00"),
+            invoice(1, "2026-10-01", "Vercel", "20.00"),
+        ]);
+
+        assert_eq!(spend(&rows).len(), 2);
     }
 
     #[test]

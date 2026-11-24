@@ -20,7 +20,8 @@ use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::{catalog, name_key};
-use crate::dates::{SAME_PAYMENT_DAYS, date_of, day_number, days_apart};
+use crate::dates::{date_of, day_number};
+use crate::pairing::{Paper, pair_invoices};
 use crate::rates::{Rates, convert};
 use crate::spend::{Row, StoredRow, amount};
 
@@ -381,35 +382,38 @@ fn same_payment(receipts: &[MatchReceipt]) -> HashMap<i64, Vec<i64>> {
         }
     }
 
-    let same_vendor_id = |a: &MatchReceipt, b: &MatchReceipt| match (&a.vendor_id, &b.vendor_id) {
+    // The catalog's vendor when both have one; else the same name, for
+    // vendors the catalog doesn't know.
+    let same_vendor = |a: &MatchReceipt, b: &MatchReceipt| match (&a.vendor_id, &b.vendor_id) {
         (Some(a), Some(b)) => catalog().same_or_related(a, b),
-        _ => false,
+        _ => {
+            let key = |receipt: &MatchReceipt| receipt.vendor_name.as_deref().map(name_key);
+
+            key(a).is_some_and(|name| !name.is_empty() && Some(name) == key(b))
+        }
     };
 
-    let mut paired = HashSet::new();
+    let papers: Vec<Paper> = receipts
+        .iter()
+        .map(|receipt| Paper {
+            invoice: receipt.kind == "invoice",
+            date: &receipt.date,
+        })
+        .collect();
 
-    for invoice in receipts.iter().filter(|r| r.kind == "invoice") {
-        let partner = receipts.iter().find(|receipt| {
-            receipt.kind == "receipt"
-                && !paired.contains(&receipt.document_id)
-                && receipt.total().map(|t| t.abs()) == invoice.total().map(|t| t.abs())
-                && receipt.currency == invoice.currency
-                && same_vendor_id(receipt, invoice)
-                && days_apart(&receipt.date, &invoice.date)
-                    .is_some_and(|apart| apart <= SAME_PAYMENT_DAYS)
-        });
+    let same = |a: usize, b: usize| {
+        let (a, b) = (&receipts[a], &receipts[b]);
 
-        if let Some(partner) = partner {
-            paired.insert(partner.document_id);
-            partners
-                .entry(invoice.document_id)
-                .or_default()
-                .push(partner.document_id);
-            partners
-                .entry(partner.document_id)
-                .or_default()
-                .push(invoice.document_id);
-        }
+        a.total().map(|t| t.abs()) == b.total().map(|t| t.abs())
+            && a.currency == b.currency
+            && same_vendor(a, b)
+    };
+
+    for (invoice, receipt) in pair_invoices(&papers, same) {
+        let (invoice, receipt) = (receipts[invoice].document_id, receipts[receipt].document_id);
+
+        partners.entry(invoice).or_default().push(receipt);
+        partners.entry(receipt).or_default().push(invoice);
     }
 
     partners
@@ -866,6 +870,65 @@ mod tests {
         // One of them matched; the other is the same payment, not a second.
         assert_eq!(matched.matched, 1);
         assert_eq!(matched.missing, 1);
+    }
+
+    #[test]
+    fn takes_an_unknown_vendors_receipt_with_its_invoice() {
+        // Not in the catalog: the same name makes them the same vendor.
+        let mut invoice = receipt(7, "2026-11-18", "Acme Widgets", "20.00");
+
+        invoice.kind = "invoice".into();
+        invoice.card_last4 = Some("3776".into());
+
+        let mut paid = receipt(8, "2026-11-19", "Acme Widgets", "20.00");
+
+        paid.card_last4 = Some("3776".into());
+
+        // The statement runs from November 10 to December 5.
+        let charges = vec![
+            charge(3, "2026-12-05", "FIGMA MONTHLY", "45.00"),
+            charge(2, "2026-11-20", "ACME WIDGETS", "20.00"),
+            charge(1, "2026-11-10", "FIGMA MONTHLY", "45.00"),
+        ];
+
+        // Its charge linked to the invoice by hand.
+        let links = [ChargeLink {
+            id: key_of(100, 2),
+            receipt_id: Some(7),
+            no_receipt: false,
+        }];
+
+        let matched =
+            match_transactions(charges, vec![invoice, paid], &links, &RateTable::default());
+
+        // The receipt is the same payment, not one without a charge.
+        assert_eq!(matched.matched, 1);
+        assert!(matched.receipts_without_charge.is_empty());
+    }
+
+    #[test]
+    fn takes_a_paid_invoice_with_its_later_receipt() {
+        let mut invoice = receipt(7, "2026-11-01", "Vercel", "20.00");
+
+        invoice.kind = "invoice".into();
+        invoice.card_last4 = Some("3776".into());
+
+        let mut paid = receipt(8, "2026-11-10", "Vercel", "20.00");
+
+        paid.card_last4 = Some("3776".into());
+
+        // The statement runs from October 25 to December 5.
+        let charges = vec![
+            charge(3, "2026-12-05", "FIGMA MONTHLY", "45.00"),
+            charge(2, "2026-11-10", "VERCEL INC.", "20.00"),
+            charge(1, "2026-10-25", "FIGMA MONTHLY", "45.00"),
+        ];
+
+        let matched = match_transactions(charges, vec![invoice, paid], &[], &RateTable::default());
+
+        // The receipt took the charge; the invoice is the same payment, not one without a charge.
+        assert_eq!(matched.matched, 1);
+        assert!(matched.receipts_without_charge.is_empty());
     }
 
     #[test]
