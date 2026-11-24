@@ -17,6 +17,7 @@ pub mod extract;
 pub mod format;
 pub mod money;
 pub mod pairing;
+pub mod payments;
 pub mod rates;
 pub mod read;
 pub mod result;

@@ -226,13 +226,7 @@ fn without_invoice_copies(rows: Vec<Row>) -> Vec<Row> {
         })
         .collect();
 
-    let same = |a: usize, b: usize| {
-        let (a, b) = (&rows[a], &rows[b]);
-
-        a.vendor_key == b.vendor_key
-            && a.currency == b.currency
-            && a.total.as_deref().and_then(amount) == b.total.as_deref().and_then(amount)
-    };
+    let same = |a: usize, b: usize| same_vendor_and_amount(&rows[a], &rows[b]);
 
     let dropped: BTreeSet<i64> = pair_invoices(&papers, same)
         .into_iter()
@@ -244,35 +238,56 @@ fn without_invoice_copies(rows: Vec<Row>) -> Vec<Row> {
         .collect()
 }
 
+/// Whether two rows are for the same vendor, amount and currency: what a
+/// paid invoice and its receipt share.
+pub(crate) fn same_vendor_and_amount(a: &Row, b: &Row) -> bool {
+    let total = |row: &Row| row.total.as_deref().and_then(amount);
+
+    a.vendor_key == b.vendor_key && a.currency == b.currency && total(a) == total(b)
+}
+
+/// Whether a row is money paid that counts: a receipt or paid invoice, not
+/// personal or ignored, with a total above nothing.
+pub(crate) fn counts_as_paid(row: &Row) -> bool {
+    let positive = row
+        .total
+        .as_deref()
+        .and_then(amount)
+        .is_some_and(|total| total > Decimal::ZERO);
+
+    row.is_receipt && !row.personal && !row.ignored && positive
+}
+
+/// What one payment's documents share when it was saved twice: its vendor,
+/// its number in letters and digits only (`B085EFDD-0038` on the email is
+/// `B085EFDD 0038` on its PDF) and its total. `None` with no number.
+pub(crate) fn number_key(row: &Row) -> Option<String> {
+    let plain: String = row
+        .number
+        .as_deref()?
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .collect::<String>()
+        .to_uppercase();
+
+    if plain.is_empty() {
+        return None;
+    }
+
+    let total = row.total.as_deref().unwrap_or("");
+
+    Some(format!("{}|{plain}|{total}", row.vendor_key))
+}
+
 /// Each payment once by its number: the same receipt saved twice.
 fn once_by_number(rows: &[Row]) -> Vec<Row> {
     let mut seen = BTreeSet::new();
 
     rows.iter()
-        .filter(|row| row.is_receipt && !row.personal && !row.ignored)
+        .filter(|row| counts_as_paid(row))
         .filter(|row| {
-            row.total
-                .as_deref()
-                .and_then(amount)
-                .is_some_and(|total| total > Decimal::ZERO)
-        })
-        .filter(|row| {
-            // Letters and digits only: the same receipt as an email
-            // (`B085EFDD-0038`) and as its PDF (`B085EFDD 0038`).
-            let plain = row.number.as_deref().map(|number| {
-                number
-                    .chars()
-                    .filter(char::is_ascii_alphanumeric)
-                    .collect::<String>()
-                    .to_uppercase()
-            });
-
-            let key = match plain.filter(|number| !number.is_empty()) {
-                Some(number) => format!(
-                    "{}|{number}|{}",
-                    row.vendor_key,
-                    row.total.as_deref().unwrap_or("")
-                ),
+            let key = match number_key(row) {
+                Some(key) => key,
                 // A payment from a statement is its own: many share the statement's document.
                 None => match &row.payment {
                     Some(payment) => format!("payment {payment}"),
