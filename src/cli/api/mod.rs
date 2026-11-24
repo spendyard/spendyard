@@ -437,6 +437,7 @@ mod tests {
 
     /// The contract's files, in the order `scripts/api-contract.sh` reads
     /// them, as one digest: what `contract.sha256` says was compiled in.
+    /// Line endings aside, so it's the same on every system.
     fn digest_of(proto: &Path) -> String {
         fn walk(dir: &Path, found: &mut Vec<std::path::PathBuf>) {
             for entry in std::fs::read_dir(dir).unwrap() {
@@ -460,8 +461,15 @@ mod tests {
 
         let mut hasher = Sha256::new();
 
+        // Without carriage returns: Git on Windows checks the files out with them.
         for file in files {
-            hasher.update(std::fs::read(file).unwrap());
+            let text: Vec<u8> = std::fs::read(file)
+                .unwrap()
+                .into_iter()
+                .filter(|byte| *byte != b'\r')
+                .collect();
+
+            hasher.update(text);
         }
 
         hasher

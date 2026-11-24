@@ -12,7 +12,8 @@ cd "$(dirname "$0")/.."
 
 buf build proto -o src/cli/api/contract.binpb
 
-# The .proto files in byte order of their paths, as the test reads them.
-find proto -name '*.proto' | LC_ALL=C sort | xargs cat | shasum -a 256 | awk '{ print $1 }' > src/cli/api/contract.sha256
+# The .proto files in byte order of their paths, without carriage returns, as
+# the test reads them.
+find proto -name '*.proto' | LC_ALL=C sort | xargs cat | tr -d '\r' | shasum -a 256 | awk '{ print $1 }' > src/cli/api/contract.sha256
 
 echo "compiled proto/ into src/cli/api/contract.binpb ($(wc -c < src/cli/api/contract.binpb | tr -d ' ') bytes)"
