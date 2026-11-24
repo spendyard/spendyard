@@ -81,10 +81,11 @@ message SyncChangesRequest {
     min_len: 1
     max_len: 100
   }];
-  // The newest sync id the caller applied; 0 when it holds nothing.
+  // The newest sync id the caller applied. 0 is a place like any other: a
+  // bootstrap of a log with nothing in it yet is as of 0.
   int64 since = 2 [(buf.validate.field).int64.gte = 0];
   // The epoch it was of, from the answer that gave it; 0 when it holds
-  // nothing.
+  // nothing, which is always told to start over.
   int64 epoch = 3;
 }
 
