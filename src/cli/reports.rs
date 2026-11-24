@@ -374,7 +374,7 @@ fn status_of(subscription: &spendyard_core::subscriptions::Subscription) -> Stri
 }
 
 /// The statements' payments with no receipt, as rows standing in for their
-/// receipts: matched as `spendyard charges match` matches them.
+/// receipts: matched as `spendyard transactions match` matches them.
 fn payments_without_receipts(store: &Store) -> Result<Vec<Row>> {
     use spendyard_core::transactions::{
         CHARGES_SQL, MATCH_RECEIPTS_SQL, match_transactions, payment_rows,

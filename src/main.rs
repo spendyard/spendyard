@@ -333,11 +333,13 @@ enum Command {
         json: bool,
     },
 
-    /// Card charges read from statements (`read` reads them), matched to
-    /// receipts: what's missing a receipt, and receipts with no charge.
-    Charges {
+    /// Card payments read from statements (`read` reads them), matched to
+    /// receipts: what's missing a receipt, and receipts with no payment.
+    /// `charges`, its name before, still works.
+    #[command(alias = "charges")]
+    Transactions {
         #[command(subcommand)]
-        action: Option<ChargesAction>,
+        action: Option<TransactionsAction>,
     },
 
     /// The vendor catalog: lookups, lists, and vendors in your store it
@@ -359,8 +361,8 @@ enum Command {
 }
 
 #[derive(Subcommand)]
-enum ChargesAction {
-    /// List charges, newest last, with the receipt each one matched.
+enum TransactionsAction {
+    /// List them, newest last, with the receipt each one matched.
     List {
         /// Only purchases with no receipt.
         #[arg(long)]
@@ -378,7 +380,7 @@ enum ChargesAction {
         json: bool,
     },
 
-    /// Match every charge to receipts again, after new receipts came in.
+    /// Match every payment on a statement to receipts again, after new receipts came in.
     Match {
         #[arg(long)]
         json: bool,
@@ -722,10 +724,10 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
         .await
         .map(|()| ExitCode::SUCCESS),
 
-        Command::Charges { action } => {
+        Command::Transactions { action } => {
             let done = async {
                 match action {
-                    Some(ChargesAction::List {
+                    Some(TransactionsAction::List {
                         missing,
                         card,
                         month,
@@ -737,7 +739,9 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
                         json,
                     }),
 
-                    Some(ChargesAction::Match { json }) => cli::charges::match_command(json).await,
+                    Some(TransactionsAction::Match { json }) => {
+                        cli::charges::match_command(json).await
+                    }
 
                     None => cli::charges::match_command(false).await,
                 }

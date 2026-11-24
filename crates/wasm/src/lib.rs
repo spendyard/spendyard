@@ -15,7 +15,7 @@
 //! - [`catalog_domain`]: whether the vendor catalog knows a domain.
 //! - [`transactions`], [`transaction_suggestions`], [`transaction_sql`]
 //!   and [`transaction_rates_needed`]: payments from card statements, each
-//!   matched to its receipt, as `spendyard charges match` does.
+//!   matched to its receipt, as `spendyard transactions match` does.
 //! - [`rows_sql`]: the query for those rows, which the host's store runs.
 //! - [`rates_needed`], [`rates_url`] and [`parse_rates`]: which exchange
 //!   rates converting needs, where to ask the ECB for them, and its answer
@@ -334,7 +334,7 @@ fn transaction_rows(
     Ok((charges, receipts))
 }
 
-/// Every payment matched to its receipt, as the CLI's `spendyard charges
+/// Every payment matched to its receipt, as the CLI's `spendyard transactions
 /// match` does: `{"transactions", "matched", "missing", …}`, or
 /// `{"error": "…"}`. `options` is `{"links"?, "rates"?}`.
 fn transactions_json_here(charges: &str, receipts: &str, options: &str) -> String {

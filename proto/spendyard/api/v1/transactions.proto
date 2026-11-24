@@ -10,7 +10,7 @@ import "spendyard/api/v1/receipts.proto";
 
 // TransactionService is the active organisation's transactions: every
 // payment read from its card statements, each matched to the receipt or
-// paid invoice for it by the CLI's own matching (`spendyard charges
+// paid invoice for it by the CLI's own matching (`spendyard transactions
 // match`), or missing one. Later, payments from card platforms and banks
 // too.
 //

@@ -530,7 +530,7 @@ fn remove_copied_charges(connection: &Connection) -> Result<usize> {
 
 /// A statement's charges, replacing any read from the same document
 /// before, and leaving out those another document already has (the same
-/// statement sent twice). Matches to receipts are made by `charges match`.
+/// statement sent twice). Matches to receipts are made by `transactions match`.
 fn write_charges(
     transaction: &rusqlite::Transaction<'_>,
     document_id: i64,

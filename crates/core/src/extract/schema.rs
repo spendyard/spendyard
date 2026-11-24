@@ -81,7 +81,8 @@ pub enum DocumentType {
     TrialEnding,
 
     /// A card issuer's statement listing many card charges, even when it
-    /// is titled invoice. Read with `spendyard charges read`.
+    /// is titled invoice. Read with `spendyard read`, its payments listed by
+    /// `spendyard transactions`.
     CardStatement,
 
     /// Anything else, such as a newsletter or a login code.

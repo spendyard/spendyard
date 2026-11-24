@@ -1,4 +1,5 @@
-//! `spendyard charges`: card charges from statements, matched to receipts.
+//! `spendyard transactions` (`charges` before): card payments from
+//! statements, matched to receipts.
 //!
 //! `read` fills the `charges` table from card statements. Matching pairs
 //! each purchase with the receipt or paid invoice for it: the same vendor,
@@ -17,7 +18,7 @@ use spendyard_core::transactions::{
 
 use super::store::Store;
 
-/// What `charges list` shows.
+/// What `transactions list` shows.
 pub struct ListOptions {
     pub missing: bool,
     pub card: Option<String>,
@@ -76,7 +77,7 @@ pub struct MatchSummary {
     pub receipts_without_charge: Vec<(i64, String, String, String, String)>,
 }
 
-/// `spendyard charges list`.
+/// `spendyard transactions list`.
 pub fn list(options: ListOptions) -> Result<()> {
     let store = Store::open()?;
 
@@ -109,7 +110,7 @@ pub fn list(options: ListOptions) -> Result<()> {
 
     if shown.is_empty() {
         println!(
-            "No charges. `spendyard read statement.pdf` reads a card statement into the store."
+            "No transactions. `spendyard read statement.pdf` reads a card statement into the store."
         );
 
         return Ok(());
@@ -125,12 +126,15 @@ pub fn list(options: ListOptions) -> Result<()> {
         .count();
 
     println!();
-    println!("{} charges, {unmatched} without a receipt", shown.len());
+    println!(
+        "{} transactions, {unmatched} without a receipt",
+        shown.len()
+    );
 
     Ok(())
 }
 
-/// `spendyard charges match`.
+/// `spendyard transactions match`.
 pub async fn match_command(json: bool) -> Result<()> {
     let store = Store::open()?;
 
@@ -215,7 +219,7 @@ pub(crate) fn query<T: serde::de::DeserializeOwned>(store: &Store, sql: &str) ->
     Ok(out)
 }
 
-/// The summary `charges match` prints, from the core's matching.
+/// The summary `transactions match` prints, from the core's matching.
 fn summary_of(matched: &Matching, receipts: &[MatchReceipt]) -> MatchSummary {
     let receipts_without_charge = matched
         .receipts_without_charge
@@ -330,11 +334,11 @@ fn print_charge(charge: &StoredCharge) {
 /// How many receipts without a charge the summary lists.
 const SHOWN: usize = 10;
 
-/// The summary as `charges match` prints it.
+/// The summary as `transactions match` prints it.
 pub fn print_summary(summary: &MatchSummary) {
     if summary.charges == 0 {
         println!(
-            "No charges. `spendyard read statement.pdf` reads a card statement into the store."
+            "No transactions. `spendyard read statement.pdf` reads a card statement into the store."
         );
 
         return;
@@ -346,7 +350,7 @@ pub fn print_summary(summary: &MatchSummary) {
         .map(|(currency, value)| format!("{value} {currency}"))
         .collect();
 
-    println!("{} charges", summary.charges);
+    println!("{} transactions", summary.charges);
     println!("  {:>4} matched to a receipt", summary.matched);
 
     if summary.missing > 0 {
@@ -379,13 +383,15 @@ pub fn print_summary(summary: &MatchSummary) {
         let more = summary.receipts_without_charge.len().saturating_sub(SHOWN);
 
         if more > 0 {
-            println!("         … and {more} more (`spendyard charges match --json` has them all)");
+            println!(
+                "         … and {more} more (`spendyard transactions match --json` has them all)"
+            );
         }
     }
 
     if summary.missing > 0 {
         println!();
-        println!("`spendyard charges list --missing` lists them.");
+        println!("`spendyard transactions list --missing` lists them.");
     }
 }
 

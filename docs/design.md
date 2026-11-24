@@ -466,7 +466,7 @@ spendyard decide message.eml             # first model only
 spendyard parts message.eml              # list what's in the document, no model calls
 spendyard eval ./testdata                # §10
 spendyard vendors lookup stripe.com      # vendor catalog (§9)
-spendyard charges list --missing         # card charges with no receipt (§8)
+spendyard transactions list --missing    # card payments with no receipt (§8)
 ```
 
 Exit codes: 0 receipt or invoice found, 1 none found, 2 error.
@@ -661,7 +661,8 @@ Everything Spendyard finds is kept in one place, with no setup:
 |---|---|
 | `spendyard scan …` | Always. That's the point of scanning. |
 | `spendyard read file…` | Yes. `--no-store` for a one-off look. |
-| `spendyard charges` | Only the matches: `match` sets each charge's receipt. |
+| `spendyard transactions` | Only the matches: `match` sets each charge's receipt. |
+| `spendyard payments` | The payments' numbers and evidence, worked out again each time. |
 | `spendyard parts`, `decide` | No. They only look. |
 | `spendyard mcp` | No, unless the config says `store = true`. It answers agents, which shouldn't fill your store by surprise. |
 | `spendyard eval` | No. It uses a temporary store. |
@@ -735,9 +736,9 @@ group for what works on the stored ones:
 
 ```bash
 spendyard read dnb-2026-05.pdf --pretty   # a statement: every line becomes a charge, then matching runs
-spendyard charges                         # match again and summarize, after new receipts came in
-spendyard charges list --missing          # purchases with no receipt
-spendyard charges list --card 3776 --month 2026-05 --json
+spendyard transactions                    # match again and summarize, after new receipts came in
+spendyard transactions list --missing     # purchases with no receipt
+spendyard transactions list --card 3776 --month 2026-05 --json
 ```
 
 ```text
@@ -752,15 +753,18 @@ spendyard charges list --card 3776 --month 2026-05 --json
   Check      ✓ cards: every purchase is on a card: •••• 3776
   Read by    claude-haiku-5-5 · 3 calls, 0 reread · 35252 in, 16321 out · 21.8 s
   …
-91 charges
+91 transactions
     49 matched to a receipt
     42 missing a receipt: 78362.46 NOK
 ```
 
-The group is `charges`, not `statements`: what is stored, listed and
-matched is a charge, and the statement is only one source of them. The
-cloud fills the same table from card platforms (Pleo, Ramp, Brex) and
-banks through open banking, so the matching is written once.
+The group is `transactions`, not `statements`: what is stored, listed and
+matched is a payment on a card or an account, and the statement is only
+one source of them. The cloud fills the same table from card platforms
+(Pleo, Ramp, Brex) and banks through open banking, so the matching is
+written once. It's the dashboard's word for them too. The table is still
+`charges`, as stores already have it, and `spendyard charges`, the
+command's name in 0.1, still works.
 
 1. **Recognise.** `document_type` has a `card_statement` option, also in
    the extractor's schema: a card issuer's list of many purchases, even
