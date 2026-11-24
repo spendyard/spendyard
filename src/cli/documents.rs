@@ -224,7 +224,7 @@ fn joined(words: &[Option<String>], separator: &str) -> String {
 }
 
 /// What was read, from the stored result as it was written: older results read as well as new ones.
-fn describe_reading(result: &Value, out: &mut Vec<String>) {
+pub(crate) fn describe_reading(result: &Value, out: &mut Vec<String>) {
     let vendor = match (text(result, "vendor.name"), text(result, "vendor.id")) {
         (Some(name), Some(id)) => format!("{name} ({id})"),
         (Some(name), None) => name,
@@ -375,13 +375,19 @@ fn describe_statement(statement: &Value, out: &mut Vec<String>) {
     out.push("  Its lines: `spendyard transactions list`".to_string());
 }
 
+/// What the checks flagged, each by the field it's about when it says:
+/// `! amount.total: no quote for this value`.
 fn describe_flags(result: &Value, out: &mut Vec<String>) {
     for flag in list(result, "flags") {
         let message = text(flag, "message")
             .or_else(|| text(flag, "code"))
             .unwrap_or_default();
 
-        out.push(format!("  ! {message}"));
+        let about = text(flag, "field")
+            .map(|field| format!("{field}: "))
+            .unwrap_or_default();
+
+        out.push(format!("  ! {about}{message}"));
     }
 }
 

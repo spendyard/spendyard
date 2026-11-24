@@ -2,6 +2,7 @@
 //! belongs in the library.
 
 pub mod cloud;
+pub mod cloud_documents;
 pub mod config;
 pub mod config_command;
 pub mod decide;

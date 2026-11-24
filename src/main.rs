@@ -351,6 +351,60 @@ enum CloudAction {
 
     /// Sign this machine out, here and on the server.
     Logout,
+
+    /// The documents of the organisation this machine acts in, as the cloud
+    /// has them: list them, show one, send files to be read there.
+    Documents {
+        #[command(subcommand)]
+        action: CloudDocumentsAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum CloudDocumentsAction {
+    /// List them, newest first: a member's own, everyone else's all.
+    List {
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+
+        /// Only those whose name or sender holds this.
+        #[arg(long)]
+        search: Option<String>,
+
+        /// read, reading or failed.
+        #[arg(long)]
+        state: Option<String>,
+
+        /// Only those from this kind of source: upload, forward or cli.
+        #[arg(long)]
+        source: Option<String>,
+
+        /// One JSON object per line, as the API gives them.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show one: where it came from, where it is in being read, what was
+    /// read, its corrections and its payment.
+    Get {
+        /// Its number in the cloud, as `cloud documents list` shows it.
+        id: i64,
+
+        /// Print it as JSON, as the API gives it.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Send files to the cloud to be read there, as a drop in the browser
+    /// is: with the cloud's models, no keys needed here.
+    Upload {
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+
+        /// Wait until each is read, and show what was read.
+        #[arg(long)]
+        wait: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -890,6 +944,39 @@ async fn cloud(action: CloudAction) -> anyhow::Result<ExitCode> {
             .map(|()| ExitCode::SUCCESS),
 
         CloudAction::Logout => cli::cloud::logout().await.map(|()| ExitCode::SUCCESS),
+
+        CloudAction::Documents { action } => cloud_documents(action).await,
+    }
+}
+
+/// `spendyard cloud documents …`: the organisation's documents, as the cloud has them.
+async fn cloud_documents(action: CloudDocumentsAction) -> anyhow::Result<ExitCode> {
+    match action {
+        CloudDocumentsAction::List {
+            limit,
+            search,
+            state,
+            source,
+            json,
+        } => cli::cloud_documents::list(cli::cloud_documents::ListOptions {
+            limit,
+            search,
+            state,
+            source,
+            json,
+        })
+        .await
+        .map(|()| ExitCode::SUCCESS),
+
+        CloudDocumentsAction::Get { id, json } => cli::cloud_documents::get(id, json)
+            .await
+            .map(|()| ExitCode::SUCCESS),
+
+        CloudDocumentsAction::Upload { files, wait } => {
+            cli::cloud_documents::upload(cli::cloud_documents::UploadOptions { files, wait })
+                .await
+                .map(|()| ExitCode::SUCCESS)
+        }
     }
 }
 

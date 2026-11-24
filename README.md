@@ -127,6 +127,9 @@ spendyard cloud push --dry-run             # what the cloud would take, keeping 
 spendyard cloud push                       # what's new or changed since the last push, originals included
 spendyard cloud pull --dry-run             # corrections made in the cloud, field by field, changing nothing
 spendyard cloud pull                       # bring them to the documents this machine has
+spendyard cloud documents list --search slack   # the company's documents, as the cloud has them
+spendyard cloud documents get 1887              # one whole, as `documents get` shows one here
+spendyard cloud documents upload invoice.pdf --wait   # read in the cloud, with its models: no keys here
 spendyard cloud logout
 ```
 
