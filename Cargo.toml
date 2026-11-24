@@ -53,6 +53,7 @@ base64.workspace = true
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
 futures-util.workspace = true
+gethostname = "1"
 keyring = "4"
 mail-parser.workspace = true
 reqwest.workspace = true

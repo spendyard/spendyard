@@ -1,5 +1,5 @@
 //! Building the models from the config and command-line flags, in one
-//! place for every command: `read`, `decide`, `label`, `eval`, `serve` and
+//! place for every command: `read`, `eval decide`, `eval label`, `eval run`, `serve` and
 //! `mcp`.
 
 use std::sync::Arc;

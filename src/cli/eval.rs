@@ -1,4 +1,4 @@
-//! `spendyard label` and `spendyard eval`: expected answers, and scoring
+//! `spendyard eval label` and `spendyard eval run`: expected answers, and scoring
 //! model combinations against them.
 
 use std::path::{Path, PathBuf};
@@ -12,7 +12,7 @@ use spendyard_core::{Decider, Extractor, Pipeline, ReadResult};
 use super::config;
 use super::input::for_each;
 
-/// The model `label` drafts expected answers with, unless told otherwise:
+/// The model `eval label` drafts expected answers with, unless told otherwise:
 /// the most careful one, since its answers become the yardstick.
 const LABEL_MODEL: &str = "anthropic/claude-opus-5-5";
 
@@ -215,7 +215,7 @@ pub async fn run(options: EvalOptions) -> Result<()> {
 
     if documents.is_empty() {
         bail!(
-            "no expected answers in {}; `spendyard label {}` drafts them",
+            "no expected answers in {}; `spendyard eval label {}` drafts them",
             options.dir.display(),
             options.dir.display()
         );

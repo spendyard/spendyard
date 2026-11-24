@@ -35,7 +35,7 @@ pub fn server_for(address: &str) -> Result<String> {
         "fastmail.com" | "fastmail.fm" => "imap.fastmail.com:993",
         "outlook.com" | "hotmail.com" | "live.com" | "msn.com" => {
             bail!(
-                "Outlook and Microsoft 365 don't accept passwords over IMAP; use `spendyard login outlook`"
+                "Outlook and Microsoft 365 don't accept passwords over IMAP; use `spendyard mailbox login outlook`"
             )
         }
         "" => bail!("{address:?} isn't an email address"),

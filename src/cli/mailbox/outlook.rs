@@ -165,7 +165,7 @@ impl Session {
             let body: Value = response.json().await.unwrap_or_default();
 
             bail!(
-                "{} needs to sign in again ({}); run `spendyard login outlook`",
+                "{} needs to sign in again ({}); run `spendyard mailbox login outlook`",
                 account.address,
                 body["error_description"]
                     .as_str()

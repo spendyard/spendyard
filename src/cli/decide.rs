@@ -1,4 +1,4 @@
-//! `spendyard decide`: only the cheap first model's answers.
+//! `spendyard eval decide`: only the cheap first model's answers.
 
 use std::path::PathBuf;
 use std::sync::Arc;

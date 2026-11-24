@@ -51,7 +51,7 @@ their company.
   items (seats, usage, add-ons), with evidence for each value.
 - Pluggable models; the user brings their own keys. Nothing phones home.
 - One self-contained binary per platform.
-- A built-in way to compare models on labelled data (`spendyard eval`).
+- A built-in way to compare models on labelled data (`spendyard eval run`).
 - A local store that is simply there: results are kept in `~/.spendyard`
   without any setup, and `spendyard report` turns them into spending per
   vendor and month and a list of subscriptions (§8).
@@ -214,7 +214,7 @@ Routing (as built in M3):
   model) raises a `models_disagree` flag.
 
 The answers, with their probabilities, are in the result as `decisions`;
-`spendyard decide` runs the first model alone. The state sent is the
+`spendyard eval decide` runs the first model alone. The state sent is the
 headers plus each part's text (8,000 characters per part, 30,000 in all;
 Clef has a 24K-token context). Clef also gets up to four images when a
 document has no text; JEV is text only.
@@ -462,9 +462,9 @@ spendyard read invoice.pdf               # JSON result to stdout
 spendyard read message.eml --pretty      # readable summary
 cat receipt.txt | spendyard read -
 spendyard read ./inbox/*.eml --jsonl     # one result per line, run in parallel
-spendyard decide message.eml             # first model only
+spendyard eval decide message.eml        # first model only
 spendyard parts message.eml              # list what's in the document, no model calls
-spendyard eval ./testdata                # §10
+spendyard eval run ./testdata            # §10
 spendyard vendors lookup stripe.com      # vendor catalog (§9)
 spendyard transactions list --missing    # card payments with no receipt (§8)
 ```
@@ -524,14 +524,14 @@ The CLI can read receipts straight from a mailbox, so nobody has to export
 emails first.
 
 ```bash
-spendyard login gmail                    # opens the browser; token goes to the OS keychain
-spendyard login outlook                  # device code: open a URL, type the code
-spendyard accounts                       # signed-in mailboxes
+spendyard mailbox login gmail                    # opens the browser; token goes to the OS keychain
+spendyard mailbox login outlook                  # device code: open a URL, type the code
+spendyard mailbox list                           # signed-in mailboxes
 
-spendyard scan gmail --since 2026-01-01   # results go to the store
-spendyard scan outlook --folder Receipts
-spendyard scan gmail --new               # only messages since the last scan
-spendyard scan imap://mail.example.com   # anything else, over IMAP
+spendyard mailbox scan gmail --since 2026-01-01   # results go to the store
+spendyard mailbox scan outlook --folder Receipts
+spendyard mailbox scan gmail --new               # only messages since the last scan
+spendyard mailbox scan imap://mail.example.com   # anything else, over IMAP
 ```
 
 How a scan works:
@@ -549,11 +549,11 @@ How a scan works:
    link) go to the store (§8), so `--new` reads only new mail and a message
    is never read twice.
 
-**As built for Outlook (M5b).** `spendyard login outlook` signs in with a
+**As built for Outlook (M5b).** `spendyard mailbox login outlook` signs in with a
 device code (`--client-id`, `--tenant`, or `[mailboxes.outlook]` in the
 config); the address and app go in `~/.spendyard/accounts.json`, the
 refresh token in the OS keychain (or `~/.spendyard/tokens.json`, mode 0600,
-when there is no keychain), rotated on every use. `spendyard scan outlook`:
+when there is no keychain), rotated on every use. `spendyard mailbox scan outlook`:
 
 1. lists messages newest first since the last scan (default 30 days ago;
    `--since`, `--folder`, `--limit`) with subject, sender, preview and
@@ -578,7 +578,7 @@ read 7 failed payments and unpaid invoices. 19 seconds in all.
 
 **IMAP (built after Outlook).** For Gmail without an OAuth app, and for
 iCloud, Fastmail, Yahoo, Proton (through Proton Bridge) and self-hosted
-mail: `spendyard login imap you@gmail.com` asks for the password without
+mail: `spendyard mailbox login imap you@gmail.com` asks for the password without
 echoing it (or reads it from standard input), checks it by signing in, and
 keeps it in the keychain. The server is known for common providers and
 `imap.<domain>:993` otherwise (`--server` overrides); Outlook and Microsoft
@@ -587,7 +587,7 @@ iCloud, Yahoo and Fastmail need an **app password** (Gmail: 2-Step
 Verification on, then myaccount.google.com/apppasswords; some Workspace
 admins turn app passwords off).
 
-`spendyard scan imap` scans Gmail's "All Mail" (found by its special-use
+`spendyard mailbox scan imap` scans Gmail's "All Mail" (found by its special-use
 flag, since the name is translated) or INBOX elsewhere (`--folder`
 overrides). It searches `SINCE` the date, or after the last UID seen when
 the folder's UIDVALIDITY hasn't changed; fetches only headers for the
@@ -600,7 +600,7 @@ Tested against a local IMAP server (GreenMail) with receipts, a forwarded
 receipt, a renewal notice, a failed payment and non-receipts: all read as
 expected, and a second scan found nothing new.
 
-`spendyard accounts` and `spendyard logout` manage sign-ins, and MCP has a
+`spendyard mailbox list` and `spendyard mailbox logout` manage sign-ins, and MCP has a
 `scan_mailbox` tool for both. Until Spendyard registers its own Entra app, Outlook
 needs an app ID of the user's own (delegated `Mail.Read`, public client
 flows allowed).
@@ -624,7 +624,7 @@ Manager, Secret Service on Linux), never in a file.
   way out is the same as for model keys: **users bring their own OAuth
   client.** They create one in their own Google Cloud project (an internal
   app for a Workspace domain needs no verification), and
-  `spendyard login gmail --client-id …` uses it. A guide walks through the
+  `spendyard mailbox login gmail --client-id …` uses it. A guide walks through the
   setup. Spendyard Cloud gets its own verified app later; that cost belongs
   to the cloud.
 - **Outlook.** We register one multi-tenant Microsoft Entra app with
@@ -659,13 +659,13 @@ Everything Spendyard finds is kept in one place, with no setup:
 
 | Command | Stores? |
 |---|---|
-| `spendyard scan …` | Always. That's the point of scanning. |
+| `spendyard mailbox scan …` | Always. That's the point of scanning. |
 | `spendyard read file…` | Yes. `--no-store` for a one-off look. |
 | `spendyard transactions` | Only the matches: `match` sets each charge's receipt. |
 | `spendyard payments` | The payments' numbers and evidence, worked out again each time. |
-| `spendyard parts`, `decide` | No. They only look. |
+| `spendyard parts`, `eval decide` | No. They only look. |
 | `spendyard mcp` | No, unless the config says `store = true`. It answers agents, which shouldn't fill your store by surprise. |
-| `spendyard eval` | No. It uses a temporary store. |
+| `spendyard eval run` | No. It uses a temporary store. |
 
 ### What's in it
 
@@ -694,9 +694,10 @@ by ID.
 spendyard report                          # the last 12 months, per vendor
 spendyard report --by month --currency NOK
 spendyard subscriptions                   # vendor, interval, cost per month, seats, card, next renewal, status
-spendyard receipts --vendor cursor        # the receipts behind a number, with their IDs
-spendyard edit 412 --personal             # leave it out of the company's spend
-spendyard edit 412 --vendor "Atlassian"   # group it under another name
+spendyard documents list --vendor cursor  # the receipts behind a number, with their IDs
+spendyard documents get 412               # one whole: what was read, corrections, its payments
+spendyard documents edit 412 --personal   # leave it out of the company's spend
+spendyard documents edit 412 --vendor "Atlassian"  # group it under another name
 ```
 
 Each command prints a table, or JSON with `--json`, and
@@ -763,8 +764,7 @@ matched is a payment on a card or an account, and the statement is only
 one source of them. The cloud fills the same table from card platforms
 (Pleo, Ramp, Brex) and banks through open banking, so the matching is
 written once. It's the dashboard's word for them too. The table is still
-`charges`, as stores already have it, and `spendyard charges`, the
-command's name in 0.1, still works.
+`charges`, as stores already have it.
 
 1. **Recognise.** `document_type` has a `card_statement` option, also in
    the extractor's schema: a card issuer's list of many purchases, even
@@ -911,7 +911,7 @@ don't tell Google which vendors a company uses.
 ## 10. Evaluation
 
 ```bash
-spendyard eval ./testdata \
+spendyard eval run ./testdata \
   --decider clef-flash,jev \
   --extractor anthropic/claude-haiku-5-5,openai-compatible/qwen3
 ```
@@ -926,7 +926,7 @@ spendyard eval ./testdata \
   and processor vs vendor.
 - Any change to prompts, the schema or defaults comes with an `eval` run.
 
-**As built (M4).** `spendyard label <dir>` drafts `<file>.expected.json`
+**As built (M4).** `spendyard eval label <dir>` drafts `<file>.expected.json`
 for every document without one, with `claude-opus-5-5` by default, marked
 `"reviewed": false` until a person has checked it. Expected answers are
 flat and easy to edit:
@@ -941,7 +941,7 @@ flat and easy to edit:
 A field left out isn't scored; `null` or `[]` means the document has none.
 Amounts compare as decimals, names and numbers by letters and digits,
 vendor names by containment ("Slack" matches "Slack Technologies
-Limited"), card digits as sets. `spendyard eval <dir> -d none,clef-flash
+Limited"), card digits as sets. `spendyard eval run <dir> -d none,clef-flash
 -e anthropic/claude-haiku-5-5,…` runs every combination and reports
 accuracy per field, routing (skipped, and receipts missed), flags, and
 cost and time per document; `--wrong` lists every miss, `--json` gives one
@@ -1021,18 +1021,18 @@ A company can also run `spendyard` itself, on a laptop or a server of its
 own, and send results to the cloud:
 
 ```bash
-spendyard cloud login                    # device code: open a URL, type the code
-spendyard scan gmail --new --push        # scan into the local store, then push
-spendyard cloud push                     # new and changed rows from the store (§8)
-spendyard cloud push --with-files        # originals too
-spendyard cloud pull                     # edits made in the cloud
+spendyard cloud login                      # device code: open a URL, check the code
+spendyard mailbox scan gmail --new --push  # scan into the local store, then push
+spendyard cloud push                       # new and changed rows from the store (§8)
+spendyard cloud push --with-files          # originals too
+spendyard cloud pull                       # edits made in the cloud
 ```
 
 Everything about the cloud itself is under `spendyard cloud` (`login`,
-`logout`, `status`, `orgs`, `push`, `pull`), so what talks to Spendyard is
-easy to see: those, and three flags on commands that already exist,
-`--push`, `--cloud` and `-e cloud`. `spendyard login`, `logout` and
-`accounts` stay about mailboxes.
+`logout`, `status`, `switch`, `push`, `pull`), so what
+talks to Spendyard is easy to see: those, and three flags on commands that already exist,
+`--push`, `--cloud` and `-e cloud`. The mailboxes the CLI reads are under
+`spendyard mailbox` (`login`, `list`, `scan`, `logout`).
 
 - By default only **rows** are sent: results, receipts, lines and edits.
   Documents stay where they are, which suits companies that won't hand
@@ -1058,11 +1058,11 @@ document before launch.
 | **M0: Repo** | One Cargo package (library plus CLI), CI, release builds for macOS and Linux (arm64 and x86_64), Apache 2.0 licence, README. |
 | **M1: Read** | `Document` from eml, msg, PDF (text layer), images, HTML and text; `spendyard parts`. Pick the PDF crates and the HEIC approach. |
 | **M2: Extract** | `Extractor` trait; `anthropic`, `openai`, `gemini` and `openai-compatible`; output schema; validation and evidence checks; `spendyard read`. Done: run end to end with a local model; the hosted providers still need a first real run. |
-| **M3: Decide** | `Decider` trait; `clef-flash`, `clef`, `jev`, `systemone`; routing and thresholds; LLM fallback. Built, with the extractor as the fallback; `spendyard decide`, `spendyard config`. Not yet run against a real decision model (no key). |
-| **M4: Eval** | `spendyard eval`, first 200 labelled documents, defaults chosen from the results. Built: `spendyard label` and `spendyard eval`; a first private set of 26. Still to do: grow it to 200 with real non-receipts from an inbox, review the drafts, then set the threshold and default models from it. |
+| **M3: Decide** | `Decider` trait; `clef-flash`, `clef`, `jev`, `systemone`; routing and thresholds; LLM fallback. Built, with the extractor as the fallback; `spendyard eval decide`, `spendyard config`. Not yet run against a real decision model (no key). |
+| **M4: Eval** | `spendyard eval`, first 200 labelled documents, defaults chosen from the results. Built: `spendyard eval label` and `spendyard eval run`; a first private set of 26. Still to do: grow it to 200 with real non-receipts from an inbox, review the drafts, then set the threshold and default models from it. |
 | **M5: MCP and exec** | `spendyard mcp`; `exec` provider. Done; `serve` was dropped (the HTTP API is the cloud's). |
 | **M5b: Mailboxes** | `login` and `scan` for Outlook (Graph, our Entra app) and Gmail (own OAuth client), IMAP; keychain; `scan_mailbox` MCP tool; Gmail setup guide. Outlook done and run on a real mailbox; IMAP done (Gmail with an app password, iCloud, Fastmail, Yahoo, others), tested on a local server; still to do: Gmail through its API, registering Spendyard's own Entra app. |
-| **M5c: Store and reports** | `~/.spendyard` with SQLite (`rusqlite`, SQLite compiled in); `read` and `scan` store results; `report`, `subscriptions`, `receipts`, `edit`; exchange rates. Done; still to do: grouping by account, price changes. |
+| **M5c: Store and reports** | `~/.spendyard` with SQLite (`rusqlite`, SQLite compiled in); `read` and `mailbox scan` store results; `report`, `subscriptions`, `documents list`, `documents edit`; exchange rates. Done; still to do: grouping by account, price changes. |
 | **M6: Vendor catalog** | First 200 vendors, AI tools first; processor rules. Done: 248 vendors, 18 processors, `spendyard vendors`. |
 | **M6b: Charges** | `card_statement` in the decision; `read` reads PDF and CSV statements into the `charges` table, checked; `descriptors` and `by_merchant` in the catalog; matching against receipts; `charges list` and `charges match`. Done and run on a real 11-page DNB statement (91 charges, every check held). Still to do: CSV mappings per issuer, personal charges, balances. |
 | **M7: Public release** | Docs, Homebrew, crates.io, announcement. |

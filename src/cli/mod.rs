@@ -2,9 +2,11 @@
 //! belongs in the library.
 
 pub mod charges;
+pub mod cloud;
 pub mod config;
 pub mod config_command;
 pub mod decide;
+pub mod documents;
 pub mod env_files;
 pub mod eval;
 pub mod exec;
@@ -18,5 +20,6 @@ pub mod payments;
 pub mod pretty;
 pub mod read;
 pub mod reports;
+pub mod secrets;
 pub mod store;
 pub mod vendors;

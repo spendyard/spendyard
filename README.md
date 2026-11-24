@@ -9,9 +9,10 @@ It is one binary. It runs as a CLI and as MCP tools for agents, with your
 own model API keys. Nothing is sent anywhere except to the
 model providers you configure.
 
-> **Status:** early development. `parts`, `read`, `decide`, `config`, `label`,
-> `eval`, `mcp`, `login`/`scan` for Outlook and IMAP (Gmail with an app password),
-> and the store with its reports work; the cloud comes next. The design is in
+> **Status:** early development. `parts`, `read`, `config`, `eval`,
+> `mcp`, `mailbox login`/`mailbox scan` for Outlook and IMAP (Gmail with an app password),
+> the store with its reports, and signing in to the cloud (`cloud login`) work;
+> pushing to the cloud comes next. The design is in
 > [docs/design.md](docs/design.md).
 
 ## How it works
@@ -43,12 +44,12 @@ spendyard read *.eml                       # one JSON line per document
 spendyard read receipt.png -e gemini/<model>
 spendyard read receipt.eml -e openai-compatible/qwen3:4b   # Ollama, locally
 spendyard read *.eml -d clef-flash         # a cheap first model before the extractor
-spendyard decide *.eml -d jev              # only the first model's answers
+spendyard eval decide *.eml -d jev         # only the first model's answers
 spendyard parts message.eml --text         # what's inside, no model
 spendyard config                           # settings in effect, and which keys are set
 spendyard config init                      # write a commented ~/.spendyard/config.toml
-spendyard label ./eval                     # draft expected answers with a careful model
-spendyard eval ./eval -d none,clef-flash   # score model combinations against them
+spendyard eval label ./eval                # draft expected answers with a careful model
+spendyard eval run ./eval -d none,clef-flash # score model combinations against them
 spendyard mcp                              # MCP tools over stdio, for agents
 ```
 
@@ -83,11 +84,11 @@ base_url = "http://localhost:11434/v1"
 Outlook and Microsoft 365, straight from the mailbox:
 
 ```bash
-spendyard login outlook --client-id <app> --tenant <tenant>   # a code to enter in the browser
-spendyard scan outlook --dry-run          # what it would read
-spendyard scan outlook -d clef-flash      # read new mail since the last scan
-spendyard scan outlook --folder Receipts --since 2026-01-01 --save ./receipts
-spendyard accounts
+spendyard mailbox login outlook --client-id <app> --tenant <tenant>   # a code to enter in the browser
+spendyard mailbox scan outlook --dry-run          # what it would read
+spendyard mailbox scan outlook -d clef-flash      # read new mail since the last scan
+spendyard mailbox scan outlook --folder Receipts --since 2026-01-01 --save ./receipts
+spendyard mailbox list
 ```
 
 Gmail, iCloud, Fastmail, Yahoo and most other mail over IMAP, with an app
@@ -95,9 +96,9 @@ password (Gmail: turn on 2-Step Verification, then create one at
 myaccount.google.com/apppasswords):
 
 ```bash
-spendyard login imap you@gmail.com        # asks for the app password, keeps it in the keychain
-spendyard scan imap --dry-run
-spendyard scan imap -d clef-flash
+spendyard mailbox login imap you@gmail.com        # asks for the app password, keeps it in the keychain
+spendyard mailbox scan imap --dry-run
+spendyard mailbox scan imap -d clef-flash
 ```
 
 Everything read or scanned is kept in `~/.spendyard/spendyard.db`
@@ -107,9 +108,21 @@ Everything read or scanned is kept in `~/.spendyard/spendyard.db`
 spendyard report                           # spend per vendor, last 12 months
 spendyard report --by month --currency NOK # converted with ECB rates
 spendyard subscriptions                    # cost per month, seats, card, next renewal, status
-spendyard receipts --vendor slack          # the receipts behind a number
-spendyard edit 412 --personal              # leave one out of the spend
+spendyard documents list --vendor slack    # the receipts behind a number
+spendyard documents get 412               # one whole: where it came from, what was read, its payments
+spendyard documents edit 412 --personal    # leave one out of the spend
 spendyard vendors unknown                  # vendors on your receipts the catalog lacks
+```
+
+Spendyard Cloud, for the whole company's spend, is optional. Signing this
+machine in is the first step; pushing what it reads comes next:
+
+```bash
+spendyard cloud login                      # opens the browser: check the code, pick the organisation
+spendyard cloud status                     # who it's signed in as, and where it acts
+spendyard cloud switch                     # where it acts, and your other organisations
+spendyard cloud switch nordlys             # act in another
+spendyard cloud logout
 ```
 
 ### Coming later

@@ -40,7 +40,7 @@ pub struct DocumentInput {
 /// Which mailbox to scan.
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct ScanInput {
-    /// `outlook` or `imap`. The account must be signed in with `spendyard login`.
+    /// `outlook` or `imap`. The account must be signed in with `spendyard mailbox login`.
     pub mailbox: String,
 
     /// The account address, when several are signed in.

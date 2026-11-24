@@ -1,4 +1,4 @@
-//! `spendyard login`, `logout`, `accounts` and `scan`.
+//! `spendyard mailbox login`, `logout`, `list` and `scan`.
 
 use std::sync::Arc;
 
@@ -81,14 +81,14 @@ pub async fn login(options: LoginOptions) -> Result<()> {
 
         "imap" => {
             let Some(address) = address else {
-                bail!("which mailbox? `spendyard login imap you@example.com`");
+                bail!("which mailbox? `spendyard mailbox login imap you@example.com`");
             };
 
             login_imap(&address.to_lowercase(), server, username).await
         }
 
         "gmail" => bail!(
-            "Gmail goes through IMAP with an app password: `spendyard login imap you@gmail.com`. Create the app password at myaccount.google.com/apppasswords (2-Step Verification must be on)"
+            "Gmail goes through IMAP with an app password: `spendyard mailbox login imap you@gmail.com`. Create the app password at myaccount.google.com/apppasswords (2-Step Verification must be on)"
         ),
 
         other => bail!("unknown mailbox {other:?}; use outlook or imap"),
@@ -133,7 +133,7 @@ async fn login_imap(address: &str, server: Option<String>, username: Option<Stri
 }
 
 /// A password from the terminal without echoing it, or from standard input
-/// when it's piped (`echo $APP_PASSWORD | spendyard login imap …`).
+/// when it's piped (`echo $APP_PASSWORD | spendyard mailbox login imap …`).
 fn read_password(prompt: &str) -> Result<String> {
     use std::io::IsTerminal;
 
@@ -176,7 +176,7 @@ pub fn list_accounts() -> Result<()> {
     let accounts = accounts::load()?;
 
     if accounts.is_empty() {
-        println!("no accounts; `spendyard login outlook` signs in");
+        println!("no accounts; `spendyard mailbox login outlook` signs in");
 
         return Ok(());
     }

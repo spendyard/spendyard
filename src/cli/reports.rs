@@ -1,4 +1,4 @@
-//! `spendyard receipts`, `report`, `subscriptions` and `edit`: what the
+//! `spendyard documents list`, `documents edit`, `report` and `subscriptions`: what the
 //! store says about spending.
 //!
 //! Spend counts money paid: receipts and paid invoices, not failed or due
@@ -171,7 +171,9 @@ pub fn receipts(options: ReceiptsOptions) -> Result<()> {
     }
 
     if shown.is_empty() {
-        println!("nothing stored yet; `spendyard read` and `spendyard scan` fill the store");
+        println!(
+            "nothing stored yet; `spendyard read` and `spendyard mailbox scan` fill the store"
+        );
 
         return Ok(());
     }
@@ -345,7 +347,7 @@ pub async fn report(options: ReportOptions) -> Result<()> {
     if no_currency > 0 {
         println!();
         println!(
-            "  {no_currency} receipts left out: no currency was read from them (`spendyard receipts --all` shows them)"
+            "  {no_currency} receipts left out: no currency was read from them (`spendyard documents list --all` shows them)"
         );
     }
 
@@ -509,7 +511,7 @@ pub fn edit(options: EditOptions) -> Result<()> {
 
     if exists == 0 {
         bail!(
-            "no document {} in the store; `spendyard receipts` lists them",
+            "no document {} in the store; `spendyard documents list` lists them",
             options.id
         );
     }

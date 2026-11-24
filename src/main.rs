@@ -3,7 +3,7 @@ mod cli;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 /// Reads receipts and invoices and works out what you're paying for.
 #[derive(Parser)]
@@ -51,69 +51,11 @@ enum Command {
         no_store: bool,
     },
 
-    /// Ask only the cheap first model what documents are: receipt or not,
-    /// paid or due, seats, usage, card. Exits 2 on errors.
-    Decide {
-        #[arg(required = true)]
-        inputs: Vec<PathBuf>,
-
-        /// jev, clef, clef-flash or systemone, optionally with /model.
-        #[arg(long, short)]
-        decider: Option<String>,
-
-        /// One JSON object per line.
-        #[arg(long)]
-        json: bool,
-
-        #[arg(long, default_value_t = 8)]
-        concurrency: usize,
-    },
-
-    /// Draft an expected answer for each document in a folder that has
-    /// none, with a careful model, for a person to review.
-    Label {
-        dir: PathBuf,
-
-        /// The model to draft with. Default: anthropic/claude-opus-5-5.
-        #[arg(long, short)]
-        extractor: Option<String>,
-
-        /// Draft at most this many.
-        #[arg(long)]
-        limit: Option<usize>,
-
-        #[arg(long, default_value_t = 4)]
-        concurrency: usize,
-    },
-
-    /// Score model combinations against the expected answers in a folder:
-    /// accuracy per field, routing, flags, cost and time.
+    /// Measure models: draft expected answers for a folder of documents,
+    /// score model combinations against them, or ask the first model alone.
     Eval {
-        dir: PathBuf,
-
-        /// First models to compare, comma-separated; `none` for no first
-        /// model. Default: the config.
-        #[arg(long, short)]
-        decider: Option<String>,
-
-        /// Extractors to compare, comma-separated. Default: the config.
-        #[arg(long, short)]
-        extractor: Option<String>,
-
-        /// Only the first this many documents.
-        #[arg(long)]
-        limit: Option<usize>,
-
-        #[arg(long, default_value_t = 6)]
-        concurrency: usize,
-
-        /// List every wrong field.
-        #[arg(long)]
-        wrong: bool,
-
-        /// One JSON line per combination.
-        #[arg(long)]
-        json: bool,
+        #[command(subcommand)]
+        action: EvalAction,
     },
 
     /// List what's in a document: the email body, attachments, forwarded
@@ -142,6 +84,260 @@ enum Command {
         decider: Option<String>,
     },
 
+    /// Spendyard Cloud: sign this machine in, see where it acts, switch it
+    /// to another organisation, sign it out.
+    Cloud {
+        #[command(subcommand)]
+        action: CloudAction,
+    },
+
+    /// Mailboxes the CLI reads itself: sign in, list them, scan them,
+    /// sign out.
+    Mailbox {
+        #[command(subcommand)]
+        action: MailboxAction,
+    },
+
+    /// The documents in the store: list them, and correct one by hand.
+    Documents {
+        #[command(subcommand)]
+        action: DocumentsAction,
+    },
+
+    /// Spending per vendor or per month, from the store, in one currency.
+    Report {
+        /// vendor or month.
+        #[arg(long, default_value = "vendor")]
+        by: String,
+
+        /// How many months back.
+        #[arg(long, default_value_t = 12)]
+        months: u32,
+
+        /// Currency to report in. Default: the one paid in most often.
+        #[arg(long)]
+        currency: Option<String>,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Recurring vendors: cost per month, interval, seats, card, next
+    /// renewal, and whether the last payment went through.
+    Subscriptions {
+        #[arg(long)]
+        currency: Option<String>,
+
+        #[arg(long)]
+        json: bool,
+
+        /// Also show subscriptions lapsed for more than a year.
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Every payment once, money paid or back, with its receipts, invoices
+    /// and lines on card statements, newest first. Each keeps its number as
+    /// its evidence changes.
+    Payments {
+        /// Only those with no receipt or invoice: a statement's line alone.
+        #[arg(long)]
+        missing: bool,
+
+        /// Only this vendor (part of its name or domain).
+        #[arg(long)]
+        vendor: Option<String>,
+
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Card payments read from statements (`read` reads them), matched to
+    /// receipts: what's missing a receipt, and receipts with no payment.
+    Transactions {
+        #[command(subcommand)]
+        action: Option<TransactionsAction>,
+    },
+
+    /// The vendor catalog: lookups, lists, and vendors in your store it
+    /// doesn't know yet.
+    Vendors {
+        #[command(subcommand)]
+        action: Option<VendorsAction>,
+    },
+
+    /// Show where the config lives, the models in effect and which keys
+    /// are set.
+    Config {
+        #[command(subcommand)]
+        action: Option<ConfigAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DocumentsAction {
+    /// List the receipts, invoices and failed payments in the store, newest first.
+    List {
+        /// Only this vendor (part of its name or domain).
+        #[arg(long)]
+        vendor: Option<String>,
+
+        /// YYYY-MM-DD.
+        #[arg(long)]
+        since: Option<String>,
+
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+
+        /// Everything stored, not only receipts, invoices and failed payments.
+        #[arg(long)]
+        all: bool,
+
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show one: where it came from, how it was read and what was read,
+    /// its corrections, and the payments it's evidence of.
+    Get {
+        /// The ID `spendyard documents list` shows.
+        id: i64,
+
+        /// Print it as JSON, the stored result whole.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Correct a document by hand: personal, ignored, another vendor
+    /// name. Edits survive reading it again.
+    Edit {
+        /// The ID `spendyard documents list` shows.
+        id: i64,
+
+        /// Paid privately: left out of spend.
+        #[arg(long)]
+        personal: bool,
+
+        /// Not spend at all: left out everywhere.
+        #[arg(long)]
+        ignore: bool,
+
+        /// Undo --personal and --ignore.
+        #[arg(long)]
+        restore: bool,
+
+        /// Group it under this vendor name.
+        #[arg(long)]
+        vendor: Option<String>,
+
+        #[arg(long)]
+        note: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum EvalAction {
+    /// Score model combinations against the expected answers in a folder:
+    /// accuracy per field, routing, flags, cost and time.
+    Run {
+        dir: PathBuf,
+
+        /// First models to compare, comma-separated; `none` for no first
+        /// model. Default: the config.
+        #[arg(long, short)]
+        decider: Option<String>,
+
+        /// Extractors to compare, comma-separated. Default: the config.
+        #[arg(long, short)]
+        extractor: Option<String>,
+
+        /// Only the first this many documents.
+        #[arg(long)]
+        limit: Option<usize>,
+
+        #[arg(long, default_value_t = 6)]
+        concurrency: usize,
+
+        /// List every wrong field.
+        #[arg(long)]
+        wrong: bool,
+
+        /// One JSON line per combination.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Draft an expected answer for each document in a folder that has
+    /// none, with a careful model, for a person to review.
+    Label {
+        dir: PathBuf,
+
+        /// The model to draft with. Default: anthropic/claude-opus-5-5.
+        #[arg(long, short)]
+        extractor: Option<String>,
+
+        /// Draft at most this many.
+        #[arg(long)]
+        limit: Option<usize>,
+
+        #[arg(long, default_value_t = 4)]
+        concurrency: usize,
+    },
+
+    /// Ask only the cheap first model what documents are: receipt or not,
+    /// paid or due, seats, usage, card. Exits 2 on errors.
+    Decide {
+        #[arg(required = true)]
+        inputs: Vec<PathBuf>,
+
+        /// jev, clef, clef-flash or systemone, optionally with /model.
+        #[arg(long, short)]
+        decider: Option<String>,
+
+        /// One JSON object per line.
+        #[arg(long)]
+        json: bool,
+
+        #[arg(long, default_value_t = 8)]
+        concurrency: usize,
+    },
+}
+
+#[derive(Subcommand)]
+enum CloudAction {
+    /// Sign this machine in: a code to approve in the browser, for one of
+    /// your organisations. The token goes to the OS keychain.
+    Login {
+        /// The server. Default: SPENDYARD_CLOUD_URL, then
+        /// https://app.spendyard.com.
+        #[arg(long)]
+        server: Option<String>,
+
+        /// Only print the link: don't open it in the browser.
+        #[arg(long)]
+        no_browser: bool,
+    },
+
+    /// Who this machine is signed in as, and the organisation it acts in.
+    /// Exits 1 when it isn't signed in.
+    Status,
+
+    /// Act in another of your organisations. Without a slug, shows the one
+    /// this machine acts in and the others.
+    Switch {
+        /// The organisation's slug, as the list shows it.
+        slug: Option<String>,
+    },
+
+    /// Sign this machine out, here and on the server.
+    Logout,
+}
+
+#[derive(Subcommand)]
+enum MailboxAction {
     /// Sign in to a mailbox. Outlook signs in with a code you enter in the
     /// browser; the token goes to the OS keychain.
     Login {
@@ -170,14 +366,8 @@ enum Command {
         tenant: Option<String>,
     },
 
-    /// Sign out of a mailbox and delete its token.
-    Logout {
-        /// The address, or provider:address.
-        account: String,
-    },
-
     /// List signed-in mailboxes.
-    Accounts,
+    List,
 
     /// Read receipts straight from a mailbox: list messages since the last
     /// scan, keep the ones likely about money, and read those.
@@ -235,129 +425,11 @@ enum Command {
         concurrency: usize,
     },
 
-    /// List the receipts and invoices in the store, newest first.
-    Receipts {
-        /// Only this vendor (part of its name or domain).
-        #[arg(long)]
-        vendor: Option<String>,
-
-        /// YYYY-MM-DD.
-        #[arg(long)]
-        since: Option<String>,
-
-        #[arg(long, default_value_t = 50)]
-        limit: usize,
-
-        /// Everything stored, not only receipts, invoices and failed payments.
-        #[arg(long)]
-        all: bool,
-
-        #[arg(long)]
-        json: bool,
+    /// Sign out of a mailbox and delete its token.
+    Logout {
+        /// The address, or provider:address.
+        account: String,
     },
-
-    /// Spending per vendor or per month, from the store, in one currency.
-    Report {
-        /// vendor or month.
-        #[arg(long, default_value = "vendor")]
-        by: String,
-
-        /// How many months back.
-        #[arg(long, default_value_t = 12)]
-        months: u32,
-
-        /// Currency to report in. Default: the one paid in most often.
-        #[arg(long)]
-        currency: Option<String>,
-
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Recurring vendors: cost per month, interval, seats, card, next
-    /// renewal, and whether the last payment went through.
-    Subscriptions {
-        #[arg(long)]
-        currency: Option<String>,
-
-        #[arg(long)]
-        json: bool,
-
-        /// Also show subscriptions lapsed for more than a year.
-        #[arg(long)]
-        all: bool,
-    },
-
-    /// Correct a stored receipt by hand: personal, ignored, another vendor
-    /// name. Edits survive reading it again.
-    Edit {
-        /// The ID `spendyard receipts` shows.
-        id: i64,
-
-        /// Paid privately: left out of spend.
-        #[arg(long)]
-        personal: bool,
-
-        /// Not spend at all: left out everywhere.
-        #[arg(long)]
-        ignore: bool,
-
-        /// Undo --personal and --ignore.
-        #[arg(long)]
-        restore: bool,
-
-        /// Group it under this vendor name.
-        #[arg(long)]
-        vendor: Option<String>,
-
-        #[arg(long)]
-        note: Option<String>,
-    },
-
-    /// Every payment once, money paid or back, with its receipts, invoices
-    /// and lines on card statements, newest first. Each keeps its number as
-    /// its evidence changes.
-    Payments {
-        /// Only those with no receipt or invoice: a statement's line alone.
-        #[arg(long)]
-        missing: bool,
-
-        /// Only this vendor (part of its name or domain).
-        #[arg(long)]
-        vendor: Option<String>,
-
-        #[arg(long, default_value_t = 50)]
-        limit: usize,
-
-        #[arg(long)]
-        json: bool,
-    },
-
-    /// Card payments read from statements (`read` reads them), matched to
-    /// receipts: what's missing a receipt, and receipts with no payment.
-    /// `charges`, its name before, still works.
-    #[command(alias = "charges")]
-    Transactions {
-        #[command(subcommand)]
-        action: Option<TransactionsAction>,
-    },
-
-    /// The vendor catalog: lookups, lists, and vendors in your store it
-    /// doesn't know yet.
-    Vendors {
-        #[command(subcommand)]
-        action: Option<VendorsAction>,
-    },
-
-    /// Show where the config lives, the models in effect and which keys
-    /// are set.
-    Config {
-        #[command(subcommand)]
-        action: Option<ConfigAction>,
-    },
-
-    /// Print version details.
-    Version,
 }
 
 #[derive(Subcommand)]
@@ -461,7 +533,7 @@ fn main() -> ExitCode {
 }
 
 async fn run(env_files: Vec<PathBuf>) -> ExitCode {
-    let cli = Cli::parse();
+    let cli = parse_arguments();
 
     let result = match cli.command {
         Command::Read {
@@ -494,156 +566,17 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
             })
         }
 
-        Command::Decide {
-            inputs,
-            decider,
-            json,
-            concurrency,
-        } => {
-            let options = cli::decide::Options {
-                inputs,
-                decider,
-                json,
-                concurrency,
-            };
-
-            cli::decide::run(options).await.map(|errors| {
-                if errors > 0 {
-                    ExitCode::from(2)
-                } else {
-                    ExitCode::SUCCESS
-                }
-            })
-        }
-
-        Command::Label {
-            dir,
-            extractor,
-            limit,
-            concurrency,
-        } => {
-            let options = cli::eval::LabelOptions {
-                dir,
-                extractor,
-                limit,
-                concurrency,
-            };
-
-            cli::eval::label(options).await.map(|()| ExitCode::SUCCESS)
-        }
-
-        Command::Eval {
-            dir,
-            decider,
-            extractor,
-            limit,
-            concurrency,
-            wrong,
-            json,
-        } => {
-            let options = cli::eval::EvalOptions {
-                dir,
-                deciders: decider,
-                extractors: extractor,
-                limit,
-                concurrency,
-                wrong,
-                json,
-            };
-
-            cli::eval::run(options).await.map(|()| ExitCode::SUCCESS)
-        }
+        Command::Eval { action } => eval(action).await,
 
         Command::Parts { input, json, text } => {
             cli::parts::run(&input, json, text).map(|()| ExitCode::SUCCESS)
         }
 
-        Command::Login {
-            provider,
-            address,
-            server,
-            username,
-            client_id,
-            tenant,
-        } => cli::mailbox_commands::login(cli::mailbox_commands::LoginOptions {
-            provider,
-            address,
-            client_id,
-            tenant,
-            server,
-            username,
-        })
-        .await
-        .map(|()| ExitCode::SUCCESS),
+        Command::Cloud { action } => cloud(action).await,
 
-        Command::Logout { account } => {
-            cli::mailbox_commands::logout(&account).map(|()| ExitCode::SUCCESS)
-        }
+        Command::Mailbox { action } => mailbox(action).await,
 
-        Command::Accounts => cli::mailbox_commands::list_accounts().map(|()| ExitCode::SUCCESS),
-
-        Command::Scan {
-            provider,
-            account,
-            folder,
-            since,
-            limit,
-            all,
-            dry_run,
-            save,
-            again,
-            no_store,
-            extractor,
-            decider,
-            pretty,
-            concurrency,
-        } => {
-            let command = cli::mailbox_commands::ScanCommand {
-                provider,
-                options: cli::mailbox::ScanOptions {
-                    account,
-                    folder,
-                    since,
-                    limit,
-                    all,
-                    dry_run,
-                    save,
-                    again,
-                    concurrency,
-                },
-                extractor,
-                decider,
-                pretty,
-                no_store,
-            };
-
-            cli::mailbox_commands::scan(command)
-                .await
-                .map(|(found, errors)| {
-                    if errors > 0 {
-                        ExitCode::from(2)
-                    } else if found > 0 || dry_run {
-                        ExitCode::SUCCESS
-                    } else {
-                        ExitCode::from(1)
-                    }
-                })
-        }
-
-        Command::Receipts {
-            vendor,
-            since,
-            limit,
-            all,
-            json,
-        } => cli::reports::receipts(cli::reports::ReceiptsOptions {
-            vendor,
-            since,
-            limit,
-            all,
-            json,
-        })
-        .map(|()| ExitCode::SUCCESS),
+        Command::Documents { action } => documents(action).await,
 
         Command::Report {
             by,
@@ -670,32 +603,6 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
         })
         .await
         .map(|()| ExitCode::SUCCESS),
-
-        Command::Edit {
-            id,
-            personal,
-            ignore,
-            restore,
-            vendor,
-            note,
-        } => {
-            let flag = |set: bool| {
-                if restore {
-                    Some(false)
-                } else {
-                    set.then_some(true)
-                }
-            };
-
-            cli::reports::edit(cli::reports::EditOptions {
-                id,
-                personal: flag(personal),
-                ignore: flag(ignore),
-                vendor,
-                note,
-            })
-            .map(|()| ExitCode::SUCCESS)
-        }
 
         Command::Mcp { extractor, decider } => {
             let mcp = async {
@@ -808,12 +715,6 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
 
             done.map(|()| ExitCode::SUCCESS)
         }
-
-        Command::Version => {
-            print_version();
-
-            Ok(ExitCode::SUCCESS)
-        }
     };
 
     match result {
@@ -827,15 +728,241 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
     }
 }
 
-fn print_version() {
-    println!("spendyard {}", spendyard_core::VERSION);
-    println!("schema {}", spendyard_core::SCHEMA_VERSION);
+/// `spendyard documents …`: what the store holds, and corrections to it.
+async fn documents(action: DocumentsAction) -> anyhow::Result<ExitCode> {
+    match action {
+        DocumentsAction::Get { id, json } => {
+            cli::documents::get(cli::documents::GetOptions { id, json })
+                .await
+                .map(|()| ExitCode::SUCCESS)
+        }
+
+        DocumentsAction::List {
+            vendor,
+            since,
+            limit,
+            all,
+            json,
+        } => cli::reports::receipts(cli::reports::ReceiptsOptions {
+            vendor,
+            since,
+            limit,
+            all,
+            json,
+        })
+        .map(|()| ExitCode::SUCCESS),
+
+        DocumentsAction::Edit {
+            id,
+            personal,
+            ignore,
+            restore,
+            vendor,
+            note,
+        } => {
+            let flag = |set: bool| {
+                if restore {
+                    Some(false)
+                } else {
+                    set.then_some(true)
+                }
+            };
+
+            cli::reports::edit(cli::reports::EditOptions {
+                id,
+                personal: flag(personal),
+                ignore: flag(ignore),
+                vendor,
+                note,
+            })
+            .map(|()| ExitCode::SUCCESS)
+        }
+    }
+}
+
+/// `spendyard eval …`: expected answers for a folder, and scoring against them.
+async fn eval(action: EvalAction) -> anyhow::Result<ExitCode> {
+    match action {
+        EvalAction::Run {
+            dir,
+            decider,
+            extractor,
+            limit,
+            concurrency,
+            wrong,
+            json,
+        } => {
+            let options = cli::eval::EvalOptions {
+                dir,
+                deciders: decider,
+                extractors: extractor,
+                limit,
+                concurrency,
+                wrong,
+                json,
+            };
+
+            cli::eval::run(options).await.map(|()| ExitCode::SUCCESS)
+        }
+
+        EvalAction::Label {
+            dir,
+            extractor,
+            limit,
+            concurrency,
+        } => {
+            let options = cli::eval::LabelOptions {
+                dir,
+                extractor,
+                limit,
+                concurrency,
+            };
+
+            cli::eval::label(options).await.map(|()| ExitCode::SUCCESS)
+        }
+
+        EvalAction::Decide {
+            inputs,
+            decider,
+            json,
+            concurrency,
+        } => {
+            let options = cli::decide::Options {
+                inputs,
+                decider,
+                json,
+                concurrency,
+            };
+
+            cli::decide::run(options).await.map(|errors| {
+                if errors > 0 {
+                    ExitCode::from(2)
+                } else {
+                    ExitCode::SUCCESS
+                }
+            })
+        }
+    }
+}
+
+/// `spendyard cloud …`: this machine's sign-in to Spendyard Cloud.
+async fn cloud(action: CloudAction) -> anyhow::Result<ExitCode> {
+    match action {
+        CloudAction::Login { server, no_browser } => cli::cloud::login(server, !no_browser)
+            .await
+            .map(|()| ExitCode::SUCCESS),
+
+        CloudAction::Status => cli::cloud::status().await.map(|signed_in| {
+            if signed_in {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::from(1)
+            }
+        }),
+
+        CloudAction::Switch { slug } => cli::cloud::switch(slug.as_deref())
+            .await
+            .map(|()| ExitCode::SUCCESS),
+
+        CloudAction::Logout => cli::cloud::logout().await.map(|()| ExitCode::SUCCESS),
+    }
+}
+
+/// `spendyard mailbox …`: sign-ins and scans of the mailboxes the CLI reads.
+async fn mailbox(action: MailboxAction) -> anyhow::Result<ExitCode> {
+    match action {
+        MailboxAction::Login {
+            provider,
+            address,
+            server,
+            username,
+            client_id,
+            tenant,
+        } => cli::mailbox_commands::login(cli::mailbox_commands::LoginOptions {
+            provider,
+            address,
+            client_id,
+            tenant,
+            server,
+            username,
+        })
+        .await
+        .map(|()| ExitCode::SUCCESS),
+
+        MailboxAction::Logout { account } => {
+            cli::mailbox_commands::logout(&account).map(|()| ExitCode::SUCCESS)
+        }
+
+        MailboxAction::List => cli::mailbox_commands::list_accounts().map(|()| ExitCode::SUCCESS),
+
+        MailboxAction::Scan {
+            provider,
+            account,
+            folder,
+            since,
+            limit,
+            all,
+            dry_run,
+            save,
+            again,
+            no_store,
+            extractor,
+            decider,
+            pretty,
+            concurrency,
+        } => {
+            let command = cli::mailbox_commands::ScanCommand {
+                provider,
+                options: cli::mailbox::ScanOptions {
+                    account,
+                    folder,
+                    since,
+                    limit,
+                    all,
+                    dry_run,
+                    save,
+                    again,
+                    concurrency,
+                },
+                extractor,
+                decider,
+                pretty,
+                no_store,
+            };
+
+            cli::mailbox_commands::scan(command)
+                .await
+                .map(|(found, errors)| {
+                    if errors > 0 {
+                        ExitCode::from(2)
+                    } else if found > 0 || dry_run {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::from(1)
+                    }
+                })
+        }
+    }
+}
+
+/// The command line, with `--version` also giving the store's schema.
+fn parse_arguments() -> Cli {
+    let version = format!(
+        "{}\nschema {}",
+        spendyard_core::VERSION,
+        spendyard_core::SCHEMA_VERSION
+    );
+
+    // clap keeps a version for the life of the program.
+    let version: &'static str = Box::leak(version.into_boxed_str());
+
+    let matches = Cli::command().version(version).get_matches();
+
+    Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit())
 }
 
 #[cfg(test)]
 mod tests {
-    use clap::CommandFactory;
-
     use super::*;
 
     #[test]

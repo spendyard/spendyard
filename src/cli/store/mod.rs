@@ -543,7 +543,11 @@ const EDITED: &[(&str, &str)] = &[
 ];
 
 /// Adds to `table` those of `columns` it doesn't have.
-fn add_missing_columns(connection: &Connection, table: &str, columns: &[(&str, &str)]) -> Result<()> {
+fn add_missing_columns(
+    connection: &Connection,
+    table: &str,
+    columns: &[(&str, &str)],
+) -> Result<()> {
     let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
     let had: Vec<String> = statement
         .query_map([], |row| row.get::<_, String>(1))?
@@ -551,7 +555,8 @@ fn add_missing_columns(connection: &Connection, table: &str, columns: &[(&str, &
 
     for (column, kind) in columns {
         if !had.iter().any(|name| name == column) {
-            connection.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+            connection
+                .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
         }
     }
 
