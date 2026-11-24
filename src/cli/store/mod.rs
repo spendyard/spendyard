@@ -4,6 +4,10 @@
 //! mail), with every result read from it; the newest result also fills
 //! `receipts`, `lines` and `payments`, the columns reports use. Edits by
 //! hand live apart from results, so re-reading never loses them.
+//!
+//! Each original is kept too, beside the database: `originals/<sha256>`,
+//! the file as it was read, once, named by its content. `cloud push` sends
+//! them (the platform's `docs/push-pull.md`).
 
 pub mod rates;
 
@@ -197,6 +201,9 @@ const SAME_CHARGE: &str = "d.document_id != c.document_id
 
 pub struct Store {
     pub connection: Connection,
+
+    /// Where originals are kept: `originals/` beside the database.
+    originals: PathBuf,
 }
 
 /// Where a document came from.
@@ -232,7 +239,12 @@ impl Store {
         connection.pragma_update(None, "foreign_keys", "ON")?;
         connection.busy_timeout(std::time::Duration::from_secs(10))?;
 
-        let store = Store { connection };
+        let beside = path.parent().unwrap_or(Path::new("."));
+
+        let store = Store {
+            connection,
+            originals: beside.join("originals"),
+        };
 
         store.migrate()?;
 
@@ -339,7 +351,41 @@ impl Store {
 
         transaction.commit()?;
 
+        self.keep_original(bytes)?;
+
         Ok(document_id)
+    }
+
+    /// Keeps a document's bytes as `originals/<sha256>`, unless they're
+    /// there already, and says where. Written whole, then renamed, so a
+    /// file there is always all of it.
+    pub fn keep_original(&self, bytes: &[u8]) -> Result<PathBuf> {
+        let sha256 = hex(&Sha256::digest(bytes));
+        let path = self.originals.join(&sha256);
+
+        if path.exists() {
+            return Ok(path);
+        }
+
+        create_private_dir(&self.originals)?;
+
+        let partial = self
+            .originals
+            .join(format!(".{sha256}.{}.partial", std::process::id()));
+
+        std::fs::write(&partial, bytes)
+            .with_context(|| format!("keeping the original in {}", partial.display()))?;
+
+        std::fs::rename(&partial, &path)?;
+
+        Ok(path)
+    }
+
+    /// Where the original with this SHA-256 is kept, when it is.
+    pub fn original(&self, sha256: &str) -> Option<PathBuf> {
+        let path = self.originals.join(sha256);
+
+        path.exists().then_some(path)
     }
 
     /// The scan position for a mailbox folder.
@@ -731,6 +777,20 @@ pub fn normalize_message_id(message_id: &str) -> String {
     message_id.trim().trim_matches(['<', '>']).to_lowercase()
 }
 
+/// A directory only its owner may open: originals are receipts and mail.
+fn create_private_dir(path: &Path) -> Result<()> {
+    std::fs::create_dir_all(path)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    }
+
+    Ok(())
+}
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -773,11 +833,19 @@ mod tests {
         (store, dir)
     }
 
-    fn rand_suffix() -> u128 {
-        std::time::SystemTime::now()
+    /// Different for every store a test run makes: the clock alone isn't,
+    /// when tests start together (macOS counts in microseconds).
+    fn rand_suffix() -> String {
+        static MADE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+        let made = MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos();
+
+        format!("{nanos}-{made}")
     }
 
     fn fixture(name: &str) -> Vec<u8> {
@@ -786,6 +854,51 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn keeps_each_original_once_beside_the_database() {
+        let (mut store, dir) = temporary_store();
+
+        let bytes = fixture("receipt.eml");
+        let document = spendyard_core::read(&bytes, None).unwrap();
+
+        let result = spendyard_core::result::not_about_money(
+            spendyard_core::extract::schema::DocumentType::Other,
+            0.9,
+        );
+
+        let source = Source {
+            origin: "file:receipt.eml".to_string(),
+            name: None,
+            received: None,
+        };
+
+        // Read twice: kept once.
+        store.save(&bytes, &document, &source, &result).unwrap();
+        store.save(&bytes, &document, &source, &result).unwrap();
+
+        let sha256 = hex(&Sha256::digest(&bytes));
+        let originals = dir.join("originals");
+
+        let kept: Vec<String> = std::fs::read_dir(&originals)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(kept, vec![sha256.clone()]);
+        assert_eq!(std::fs::read(originals.join(&sha256)).unwrap(), bytes);
+        assert_eq!(store.original(&sha256), Some(originals.join(&sha256)));
+        assert_eq!(store.original("0000"), None);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mode = std::fs::metadata(&originals).unwrap().permissions().mode();
+
+            assert_eq!(mode & 0o777, 0o700);
+        }
     }
 
     #[test]

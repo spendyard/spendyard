@@ -174,6 +174,13 @@ pub fn describe(store: &Store, id: i64) -> Result<Vec<String>> {
         &mut out,
     );
 
+    let original = match store.original(&document.sha256) {
+        Some(path) => path.display().to_string(),
+        None => "not kept: read before originals were".to_string(),
+    };
+
+    out.insert(1, format!("  Original  {original}"));
+
     let Some(reading) = reading else {
         out.push(String::new());
         out.push("Not read yet: `spendyard read` reads it again from the original".to_string());

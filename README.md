@@ -101,8 +101,9 @@ spendyard mailbox scan imap --dry-run
 spendyard mailbox scan imap -d clef-flash
 ```
 
-Everything read or scanned is kept in `~/.spendyard/spendyard.db`
-(`--no-store` to skip), and reported from there:
+Everything read or scanned is kept in `~/.spendyard/spendyard.db`, each
+original beside it in `~/.spendyard/originals/` (`--no-store` to skip
+both), and reported from there:
 
 ```bash
 spendyard report                           # spend per vendor, last 12 months
