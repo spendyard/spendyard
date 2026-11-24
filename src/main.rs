@@ -379,6 +379,43 @@ enum VendorsAction {
 
     /// Vendors on receipts in your store that the catalog lacks.
     Unknown,
+
+    /// Add a vendor the catalog lacks, as a local file in
+    /// ~/.spendyard/vendors/: `spendyard vendors add fjordbyra.no --name Fjordbyrå`.
+    Add {
+        /// Its main domain, which becomes its ID.
+        domain: String,
+
+        /// The name to show.
+        #[arg(long)]
+        name: String,
+
+        /// ai, dev-tools, infrastructure, observability, security, data,
+        /// design, productivity, communication, analytics, marketing, sales,
+        /// support, finance, hr, legal, education or other.
+        #[arg(long, default_value = "other")]
+        category: String,
+
+        /// Another name on its receipts: a legal or old name. Repeat for more.
+        #[arg(long = "alias")]
+        aliases: Vec<String>,
+
+        /// Another domain its site or mail uses. Repeat for more.
+        #[arg(long = "also-domain")]
+        domains: Vec<String>,
+
+        /// How its charges start on card statements. Repeat for more.
+        #[arg(long = "descriptor")]
+        descriptors: Vec<String>,
+
+        /// seat, usage, plan or one_time. Repeat for more.
+        #[arg(long)]
+        pricing: Vec<String>,
+
+        /// Replace a local file that's already there.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -697,6 +734,30 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
                 }
 
                 Some(VendorsAction::Unknown) => cli::vendors::unknown(),
+
+                Some(VendorsAction::Add {
+                    domain,
+                    name,
+                    category,
+                    aliases,
+                    domains,
+                    descriptors,
+                    pricing,
+                    force,
+                }) => cli::vendors::add(
+                    spendyard_core::catalog::Vendor {
+                        id: domain,
+                        name,
+                        aliases,
+                        domains,
+                        descriptors,
+                        related: Vec::new(),
+                        category,
+                        pricing,
+                        local: true,
+                    },
+                    force,
+                ),
             };
 
             done.map(|()| ExitCode::SUCCESS)

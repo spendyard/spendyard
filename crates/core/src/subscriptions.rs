@@ -699,7 +699,7 @@ mod tests {
     fn rows(stored: Vec<StoredRow>) -> Vec<Row> {
         stored
             .into_iter()
-            .map(|row| Row::from_stored(row, catalog()))
+            .map(|row| Row::from_stored(row, &catalog()))
             .collect()
     }
 
@@ -1038,7 +1038,7 @@ mod tests {
             ..StoredRow::default()
         };
 
-        let mut row = Row::from_stored(stored, catalog());
+        let mut row = Row::from_stored(stored, &catalog());
 
         row.payment = Some(format!("100:{id}"));
 

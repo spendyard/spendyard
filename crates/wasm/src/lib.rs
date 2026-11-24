@@ -147,7 +147,7 @@ fn report_rows(rows: &str) -> Result<Vec<spendyard_core::spend::Row>, String> {
 
     Ok(stored
         .into_iter()
-        .map(|row| spendyard_core::spend::Row::from_stored(row, catalog))
+        .map(|row| spendyard_core::spend::Row::from_stored(row, &catalog))
         .collect())
 }
 
@@ -156,7 +156,7 @@ fn report_rows(rows: &str) -> Result<Vec<spendyard_core::spend::Row>, String> {
 /// `{"error": "…"}`. `options` is `{"currency"?, "today", "all"?, "rates"?,
 /// "vendor_edits"?, "charges"?, "match_receipts"?, "links"?}`: with the
 /// statements' payments, those with no receipt count too.
-pub fn subscriptions_json(rows: &str, options: &str) -> String {
+fn subscriptions_json_here(rows: &str, options: &str) -> String {
     let answer = (|| -> Result<Value, String> {
         let rows = report_rows(rows)?;
         let asked: SpendOptions =
@@ -188,7 +188,7 @@ pub fn subscriptions_json(rows: &str, options: &str) -> String {
 /// "all"?, "rates"?, "vendor_edits"?, "charges"?, "match_receipts"?,
 /// "links"?}`: with the statements' payments, those with no receipt count
 /// as spend too.
-pub fn vendors_json(rows: &str, options: &str) -> String {
+fn vendors_json_here(rows: &str, options: &str) -> String {
     let answer = (|| -> Result<Value, String> {
         let rows = report_rows(rows)?;
         let asked: VendorsOptions =
@@ -269,7 +269,7 @@ fn transaction_rows(
 /// Every payment matched to its receipt, as the CLI's `spendyard charges
 /// match` does: `{"transactions", "matched", "missing", …}`, or
 /// `{"error": "…"}`. `options` is `{"links"?, "rates"?}`.
-pub fn transactions_json(charges: &str, receipts: &str, options: &str) -> String {
+fn transactions_json_here(charges: &str, receipts: &str, options: &str) -> String {
     let answer = (|| -> Result<Value, String> {
         let (charges, receipts) = transaction_rows(charges, receipts)?;
         let asked: TransactionOptions =
@@ -300,7 +300,7 @@ pub fn transactions(charges: &str, receipts: &str, options: &str) -> String {
 /// Receipts that could be one payment's, the likeliest first: their
 /// document IDs, or `{"error": "…"}`. `options` is `{"id", "limit"?,
 /// "rates"?}`.
-pub fn transaction_suggestions_json(charges: &str, receipts: &str, options: &str) -> String {
+fn transaction_suggestions_json_here(charges: &str, receipts: &str, options: &str) -> String {
     let answer = (|| -> Result<Value, String> {
         let (charges, receipts) = transaction_rows(charges, receipts)?;
         let asked: TransactionOptions =
@@ -370,6 +370,29 @@ struct Naming {
 /// as [`vendors`] takes them): `[{"id", "name", "domain"?}]`, in the same
 /// order; or `{"error": "…"}`.
 pub fn vendor_refs_json(items: &str, edits: &str) -> String {
+    // The edits alone, or `{"vendor_edits", "vendors"}` with the organisation's own vendors.
+    let (edits, own) = match serde_json::from_str::<RefsOptions>(edits) {
+        Ok(options) => (
+            serde_json::to_string(&options.vendor_edits).unwrap_or_default(),
+            options.vendors,
+        ),
+        Err(_) => (edits.to_string(), Vec::new()),
+    };
+
+    spendyard_core::catalog::with_vendors(own_vendors(own), || vendor_refs_here(items, &edits))
+}
+
+/// What [`vendor_refs_json`] can take besides the things: what people
+/// decided about vendors, and the organisation's own vendors.
+#[derive(Debug, Default, Deserialize)]
+struct RefsOptions {
+    #[serde(default)]
+    vendor_edits: Vec<serde_json::Value>,
+    #[serde(default)]
+    vendors: Vec<OwnVendor>,
+}
+
+fn vendor_refs_here(items: &str, edits: &str) -> String {
     let answer = (|| -> Result<Value, String> {
         let items: Vec<Naming> = serde_json::from_str(items).map_err(|error| error.to_string())?;
         let edits: Vec<spendyard_core::vendors::VendorEdit> =
@@ -656,6 +679,47 @@ mod tests {
     }
 
     #[test]
+    fn takes_the_organisations_own_vendors() {
+        // The same firm, one receipt by its domain and one by its legal name.
+        let rows = json!([
+            {
+                "id": 2, "date": "2026-11-19", "kind": "receipt", "status": "paid", "is_receipt": 1,
+                "vendor_id": "fjordbyra.no", "vendor_name": "Fjordbyrå", "total": "300.00", "currency": "NOK",
+                "flags": 0, "personal": 0, "ignored": 0
+            },
+            {
+                "id": 1, "date": "2026-10-19", "kind": "receipt", "status": "paid", "is_receipt": 1,
+                "vendor_name": "Fjordbyrå Advokatfirma AS", "total": "300.00", "currency": "NOK",
+                "flags": 0, "personal": 0, "ignored": 0
+            }
+        ]);
+
+        let vendors = |options: Value| -> Value {
+            serde_json::from_str(&vendors_json(&rows.to_string(), &options.to_string())).unwrap()
+        };
+
+        let alone = vendors(json!({ "today": "2026-11-21" }));
+
+        let own = vendors(json!({
+            "today": "2026-11-21",
+            "vendors": [{
+                "id": "fjordbyra.no",
+                "name": "Fjordbyrå",
+                "aliases": ["Fjordbyrå Advokatfirma AS"],
+                "category": "legal"
+            }]
+        }));
+
+        assert_eq!(alone["vendors"].as_array().unwrap().len(), 2);
+
+        assert_eq!(own["vendors"].as_array().unwrap().len(), 1);
+        assert_eq!(own["vendors"][0]["id"], "fjordbyra.no");
+        assert_eq!(own["vendors"][0]["category"], "legal");
+        assert_eq!(own["vendors"][0]["known"], true);
+        assert_eq!(own["vendors"][0]["receipts"], 2);
+    }
+
+    #[test]
     fn says_which_rates_converting_needs() {
         let rows = json!([{
             "id": 1, "date": "2026-11-19", "kind": "receipt", "status": "paid", "is_receipt": 1,
@@ -752,4 +816,85 @@ mod tests {
 
         assert!(answer["error"].is_string());
     }
+}
+
+/// [`subscriptions_json_here`] with the organisation's own vendors (`options.vendors`) on top of the catalog.
+pub fn subscriptions_json(rows: &str, options: &str) -> String {
+    with_own_vendors(options, || subscriptions_json_here(rows, options))
+}
+
+/// [`vendors_json_here`] with the organisation's own vendors (`options.vendors`) on top of the catalog.
+pub fn vendors_json(rows: &str, options: &str) -> String {
+    with_own_vendors(options, || vendors_json_here(rows, options))
+}
+
+/// [`transactions_json_here`] with the organisation's own vendors (`options.vendors`) on top of the catalog.
+pub fn transactions_json(charges: &str, receipts: &str, options: &str) -> String {
+    with_own_vendors(options, || {
+        transactions_json_here(charges, receipts, options)
+    })
+}
+
+/// [`transaction_suggestions_json_here`] with the organisation's own vendors (`options.vendors`) on top of the catalog.
+pub fn transaction_suggestions_json(charges: &str, receipts: &str, options: &str) -> String {
+    with_own_vendors(options, || {
+        transaction_suggestions_json_here(charges, receipts, options)
+    })
+}
+
+/// One of the organisation's own vendors, as a host gives it: the catalog's
+/// fields, by `id` (its main domain).
+#[derive(Debug, Clone, Deserialize)]
+struct OwnVendor {
+    id: String,
+    name: String,
+    #[serde(default)]
+    aliases: Vec<String>,
+    #[serde(default)]
+    domains: Vec<String>,
+    #[serde(default)]
+    descriptors: Vec<String>,
+    #[serde(default = "other")]
+    category: String,
+    #[serde(default)]
+    pricing: Vec<String>,
+}
+
+fn other() -> String {
+    "other".to_string()
+}
+
+/// `options.vendors`, the organisation's own vendors.
+#[derive(Debug, Default, Deserialize)]
+struct OwnVendors {
+    #[serde(default)]
+    vendors: Vec<OwnVendor>,
+}
+
+/// The organisation's own vendors as the catalog has them; any that
+/// [`spendyard_core::catalog::vendor_problem`] finds wrong are left out.
+fn own_vendors(own: Vec<OwnVendor>) -> Vec<spendyard_core::catalog::Vendor> {
+    own.into_iter()
+        .map(|vendor| spendyard_core::catalog::Vendor {
+            id: vendor.id.trim().to_lowercase(),
+            name: vendor.name.trim().to_string(),
+            aliases: vendor.aliases,
+            domains: vendor.domains,
+            descriptors: vendor.descriptors,
+            related: Vec::new(),
+            category: vendor.category,
+            pricing: vendor.pricing,
+            local: true,
+        })
+        .filter(|vendor| spendyard_core::catalog::vendor_problem(vendor).is_none())
+        .collect()
+}
+
+/// Runs `work` with the organisation's own vendors in `options` on top of the catalog.
+fn with_own_vendors(options: &str, work: impl FnOnce() -> String) -> String {
+    let own = serde_json::from_str::<OwnVendors>(options)
+        .map(|options| options.vendors)
+        .unwrap_or_default();
+
+    spendyard_core::catalog::with_vendors(own_vendors(own), work)
 }

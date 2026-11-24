@@ -19,9 +19,15 @@
 //! built-in vendor replaces it, any other is added. The library never reads
 //! files itself; the CLI reads `~/.spendyard/vendors/*.toml` and passes
 //! them in.
+//!
+//! An organisation's own vendors go on top for one piece of work
+//! ([`with_vendors`]): Spendyard Cloud serves many organisations from one
+//! process, each with vendors of its own, so they can't be part of the
+//! catalog everyone shares.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
@@ -92,14 +98,32 @@ pub struct Catalog {
     by_name: HashMap<String, usize>,
 }
 
+/// `vendors` with `more` on top: one with an ID already there replaces it; others are added.
+fn on_top(mut vendors: Vec<Vendor>, more: Vec<Vendor>) -> Vec<Vendor> {
+    for vendor in more {
+        match vendors.iter().position(|existing| existing.id == vendor.id) {
+            Some(index) => vendors[index] = vendor,
+            None => vendors.push(vendor),
+        }
+    }
+
+    vendors
+}
+
 /// Local vendor files given by [`use_local`], parsed.
 static LOCAL: OnceLock<Vec<Vendor>> = OnceLock::new();
 
-static LOADED: LazyLock<Catalog> = LazyLock::new(|| {
+static LOADED: LazyLock<Arc<Catalog>> = LazyLock::new(|| {
     let local = LOCAL.get().cloned().unwrap_or_default();
 
-    Catalog::built_in_with(local)
+    Arc::new(Catalog::built_in_with(local))
 });
+
+thread_local! {
+    /// The catalog with an organisation's vendors on top, while
+    /// [`with_vendors`] runs on this thread.
+    static SCOPED: RefCell<Option<Arc<Catalog>>> = const { RefCell::new(None) };
+}
 
 /// A local vendor file: its ID (the file name without `.toml`) and text.
 pub struct LocalFile {
@@ -146,10 +170,88 @@ fn parse_local(file: &LocalFile) -> Result<Vendor, String> {
     Ok(vendor)
 }
 
-/// The compiled-in catalog.
-pub fn catalog() -> &'static Catalog {
-    &LOADED
+/// The catalog: the compiled-in one with local files on top, and an
+/// organisation's vendors on top of that inside [`with_vendors`].
+pub fn catalog() -> Arc<Catalog> {
+    SCOPED
+        .with_borrow(|scoped| scoped.clone())
+        .unwrap_or_else(|| LOADED.clone())
 }
+
+/// Runs `work` with `vendors` on top of the catalog, as local files are:
+/// one with a catalog vendor's ID replaces it, others are added, and a name
+/// or domain they claim points at them. For one organisation's work, on
+/// this thread; the catalog is as it was again afterwards.
+pub fn with_vendors<R>(vendors: Vec<Vendor>, work: impl FnOnce() -> R) -> R {
+    if vendors.is_empty() {
+        return work();
+    }
+
+    let vendors = vendors
+        .into_iter()
+        .map(|vendor| Vendor {
+            local: true,
+            ..vendor
+        })
+        .collect();
+
+    let scoped = Arc::new(catalog().with(vendors));
+
+    /// Puts the catalog back however `work` ends.
+    struct Restore(Option<Arc<Catalog>>);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SCOPED.set(self.0.take());
+        }
+    }
+
+    let _restore = Restore(SCOPED.replace(Some(scoped)));
+
+    work()
+}
+
+/// What an organisation's own vendor is checked for before it's used: an
+/// ID that's a domain, a name and a known category. `None` when it's fine.
+pub fn vendor_problem(vendor: &Vendor) -> Option<String> {
+    let id = vendor.id.trim();
+
+    if !id.contains('.') || id.contains(['/', '\\', ' ', '@']) || id != id.to_lowercase() {
+        return Some(format!("{id:?} isn't a domain, such as example.com"));
+    }
+
+    if vendor.name.trim().is_empty() {
+        return Some("a vendor needs a name".to_string());
+    }
+
+    if !CATEGORIES.contains(&vendor.category.as_str()) {
+        return Some(format!("{:?} isn't a known category", vendor.category));
+    }
+
+    None
+}
+
+/// The categories a vendor may have.
+pub const CATEGORIES: &[&str] = &[
+    "ai",
+    "dev-tools",
+    "infrastructure",
+    "observability",
+    "security",
+    "data",
+    "design",
+    "productivity",
+    "communication",
+    "analytics",
+    "marketing",
+    "sales",
+    "support",
+    "finance",
+    "hr",
+    "legal",
+    "education",
+    "other",
+];
 
 impl Catalog {
     /// The built-in catalog with `local` vendors on top: a local vendor
@@ -157,16 +259,12 @@ impl Catalog {
     pub fn built_in_with(local: Vec<Vendor>) -> Catalog {
         let file: File = toml::from_str(CATALOG).expect("the compiled-in vendor catalog is valid");
 
-        let mut vendors = file.vendor;
+        Catalog::new(on_top(file.vendor, local), file.processor)
+    }
 
-        for vendor in local {
-            match vendors.iter().position(|existing| existing.id == vendor.id) {
-                Some(index) => vendors[index] = vendor,
-                None => vendors.push(vendor),
-            }
-        }
-
-        Catalog::new(vendors, file.processor)
+    /// This catalog with `more` vendors on top, as [`Catalog::built_in_with`] puts local ones.
+    pub fn with(&self, more: Vec<Vendor>) -> Catalog {
+        Catalog::new(on_top(self.vendors.clone(), more), self.processors.clone())
     }
 
     /// Indexes vendors by domain and name. Local vendors are indexed last,
@@ -504,30 +602,9 @@ mod tests {
 
     #[test]
     fn every_vendor_has_a_known_category() {
-        let known = [
-            "ai",
-            "dev-tools",
-            "infrastructure",
-            "observability",
-            "security",
-            "data",
-            "design",
-            "productivity",
-            "communication",
-            "analytics",
-            "marketing",
-            "sales",
-            "support",
-            "finance",
-            "hr",
-            "legal",
-            "education",
-            "other",
-        ];
-
         for vendor in &catalog().vendors {
             assert!(
-                known.contains(&vendor.category.as_str()),
+                CATEGORIES.contains(&vendor.category.as_str()),
                 "{}: {}",
                 vendor.id,
                 vendor.category
@@ -641,6 +718,73 @@ mod tests {
         );
     }
 
+    fn own(id: &str, name: &str, descriptors: &[&str]) -> Vendor {
+        Vendor {
+            id: id.into(),
+            name: name.into(),
+            aliases: vec![],
+            domains: vec![],
+            descriptors: descriptors.iter().map(|d| d.to_string()).collect(),
+            related: vec![],
+            category: "other".into(),
+            pricing: vec![],
+            local: false,
+        }
+    }
+
+    #[test]
+    fn an_organisations_vendors_count_only_while_its_work_runs() {
+        let fjord = own("fjordbyra.no", "Fjordbyrå", &["FJORDBYRA AS"]);
+
+        let inside = with_vendors(vec![fjord], || {
+            let catalog = catalog();
+
+            (
+                catalog.by_domain("post@fjordbyra.no").map(|v| v.id.clone()),
+                catalog.by_name("Fjordbyrå").map(|v| v.id.clone()),
+                catalog
+                    .by_merchant("FJORDBYRA AS, OSLO, NO")
+                    .map(|v| v.id.clone()),
+                catalog.by_domain("anthropic.com").map(|v| v.id.clone()),
+            )
+        });
+
+        let id = Some("fjordbyra.no".to_string());
+
+        assert_eq!(
+            inside,
+            (id.clone(), id.clone(), id, Some("anthropic.com".into()))
+        );
+
+        // Another organisation's work, or none, doesn't see them.
+        assert!(catalog().by_domain("fjordbyra.no").is_none());
+    }
+
+    #[test]
+    fn an_organisations_vendor_replaces_the_catalogs_with_its_id() {
+        let ours = own("anthropic.com", "Anthropic (ours)", &[]);
+
+        let name = with_vendors(vec![ours], || catalog().by_domain("claude.ai").is_none());
+
+        // Its domains are its own now: the catalog's claude.ai went with the catalog's Anthropic.
+        assert!(name);
+        assert_eq!(catalog().by_domain("claude.ai").unwrap().name, "Anthropic");
+    }
+
+    #[test]
+    fn an_organisations_vendor_is_checked() {
+        assert!(vendor_problem(&own("fjordbyra.no", "Fjordbyrå", &[])).is_none());
+        assert!(vendor_problem(&own("Fjordbyra", "Fjordbyrå", &[])).is_some());
+        assert!(vendor_problem(&own("fjordbyra.no", " ", &[])).is_some());
+        assert!(
+            vendor_problem(&Vendor {
+                category: "snacks".into(),
+                ..own("fjordbyra.no", "Fjordbyrå", &[])
+            })
+            .is_some()
+        );
+    }
+
     #[test]
     fn bad_local_files_are_reported() {
         let file = |id: &str, text: &str| LocalFile {
@@ -696,9 +840,8 @@ mod merchant_tests {
         ];
 
         for (merchant, id) in cases {
-            let found = super::catalog()
-                .by_merchant(merchant)
-                .map(|v| v.id.as_str());
+            let catalog = super::catalog();
+            let found = catalog.by_merchant(merchant).map(|v| v.id.as_str());
 
             assert_eq!(found, Some(id), "{merchant}");
         }

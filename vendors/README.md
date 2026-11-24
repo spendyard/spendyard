@@ -34,14 +34,24 @@ and open a pull request.
 ## Local vendors
 
 Without waiting for a release, put files in the same format in
-`~/.spendyard/vendors/` (or `$SPENDYARD_HOME/vendors/`). They are read at
-startup, on top of the built-in catalog:
+`~/.spendyard/vendors/` (or `$SPENDYARD_HOME/vendors/`), or have the CLI
+write one:
+
+```sh
+spendyard vendors add fjordbyra.no --name "Fjordbyrå" --category legal \
+  --alias "Fjordbyrå Advokatfirma AS" --descriptor "FJORDBYRA AS"
+```
+
+They are read at startup, on top of the built-in catalog:
 
 - a file named like a built-in vendor (`plain.com.toml`) replaces it, to
   correct a name, add an alias or a domain;
 - any other file adds a vendor;
 - a name or domain a local file claims points at it;
 - a file that can't be read is skipped with a warning.
+
+In Spendyard Cloud, an organisation's own vendors go on top the same way,
+for that organisation only.
 
 `spendyard vendors` says how many came from there, and `vendors list` and
 `vendors lookup` mark them `local`. A local file that helps others is the

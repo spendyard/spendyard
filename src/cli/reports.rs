@@ -59,7 +59,7 @@ fn rows(store: &Store) -> Result<Vec<Row>> {
 
     Ok(stored
         .into_iter()
-        .map(|row| Row::from_stored(row, catalog))
+        .map(|row| Row::from_stored(row, &catalog))
         .collect())
 }
 

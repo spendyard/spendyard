@@ -183,9 +183,81 @@ pub fn unknown() -> Result<()> {
 
     println!();
     println!(
-        "Add one as {}/<domain>.toml (see vendors/README.md in the repo for the format), and send it upstream as a pull request.",
+        "Add one with `spendyard vendors add <domain> --name <name> --category <category>`, which writes {}/<domain>.toml; send it upstream as a pull request when others would find it too.",
         local_dir().display()
     );
+
+    Ok(())
+}
+
+/// One local vendor file, as `vendors add` writes it: the catalog's format, without what's empty.
+#[derive(serde::Serialize)]
+struct LocalVendorFile<'a> {
+    name: &'a str,
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    aliases: &'a [String],
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    domains: &'a [String],
+    category: &'a str,
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    pricing: &'a [String],
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    descriptors: &'a [String],
+}
+
+/// Writes `vendor` as `~/.spendyard/vendors/<id>.toml`, for the catalog to
+/// read from the next run on. Refuses a file that's there unless `force`.
+pub fn add(mut vendor: Vendor, force: bool) -> Result<()> {
+    vendor.id = vendor.id.trim().to_lowercase();
+
+    if let Some(problem) = catalog::vendor_problem(&vendor) {
+        anyhow::bail!("{problem}");
+    }
+
+    const PRICING: &[&str] = &["seat", "usage", "plan", "one_time"];
+
+    if let Some(unknown) = vendor
+        .pricing
+        .iter()
+        .find(|pricing| !PRICING.contains(&pricing.as_str()))
+    {
+        anyhow::bail!("{unknown:?} isn't a pricing: seat, usage, plan or one_time");
+    }
+
+    let path = local_dir().join(format!("{}.toml", vendor.id));
+
+    if path.exists() && !force {
+        anyhow::bail!("{} is there already: --force to replace it", path.display());
+    }
+
+    let catalog = catalog::catalog();
+
+    // A built-in vendor with this ID is replaced by the file; say so.
+    let replaces = catalog
+        .vendors
+        .iter()
+        .find(|known| known.id == vendor.id && !known.local)
+        .map(|known| known.name.clone());
+
+    let file = LocalVendorFile {
+        name: &vendor.name,
+        aliases: &vendor.aliases,
+        domains: &vendor.domains,
+        category: &vendor.category,
+        pricing: &vendor.pricing,
+        descriptors: &vendor.descriptors,
+    };
+
+    let text = toml::to_string(&file)?;
+
+    std::fs::create_dir_all(local_dir())?;
+    std::fs::write(&path, text)?;
+
+    println!("wrote {}", path.display());
+
+    if let Some(name) = replaces {
+        println!("it replaces the catalog's {name} on this computer");
+    }
 
     Ok(())
 }

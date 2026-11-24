@@ -163,7 +163,7 @@ pub fn vendor_ref(
         ..StoredRow::default()
     };
 
-    let row = Row::from_stored(stored, catalog());
+    let row = Row::from_stored(stored, &catalog());
     let row = apply_vendor_edits(vec![row], edits).remove(0);
 
     VendorRef {
@@ -481,7 +481,7 @@ mod tests {
     fn rows(stored: Vec<StoredRow>) -> Vec<Row> {
         stored
             .into_iter()
-            .map(|row| Row::from_stored(row, catalog()))
+            .map(|row| Row::from_stored(row, &catalog()))
             .collect()
     }
 
@@ -667,7 +667,7 @@ mod tests {
                     card: Some("card 3776".into()),
                     ..StoredRow::default()
                 },
-                catalog(),
+                &catalog(),
             );
 
             row.payment = Some(format!("50:{id}"));

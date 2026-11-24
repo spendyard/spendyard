@@ -174,10 +174,8 @@ impl MatchReceipt {
     /// receipts read before the catalog knew it.
     fn with_vendor(mut self) -> MatchReceipt {
         if self.vendor_id.is_none()
-            && let Some(vendor) = self
-                .vendor_name
-                .as_deref()
-                .and_then(|name| catalog().by_name(name))
+            && let Some(name) = self.vendor_name.as_deref()
+            && let Some(vendor) = catalog().by_name(name)
         {
             self.vendor_id = Some(vendor.id.clone());
         }
@@ -679,7 +677,7 @@ fn payment_row(found: &Transaction) -> Option<Row> {
         ..StoredRow::default()
     };
 
-    let mut row = Row::from_stored(stored, catalog());
+    let mut row = Row::from_stored(stored, &catalog());
 
     row.payment = Some(found.id.clone());
 
