@@ -269,7 +269,7 @@ pub struct Check {
 /// How the statement was read.
 #[derive(Debug, Clone, Serialize)]
 pub struct StatementMeta {
-    pub spendyard_version: &'static str,
+    pub spendyard_version: String,
     pub extractor: String,
 
     /// The models that answered, when more than one did.
@@ -386,7 +386,7 @@ pub async fn read_statement(
     statement.checks = check(&statement);
 
     statement.meta = StatementMeta {
-        spendyard_version: crate::VERSION,
+        spendyard_version: crate::VERSION.to_string(),
         extractor: extractor.name(),
         models,
         tokens: usage,
@@ -573,7 +573,7 @@ fn merge(outputs: Vec<StatementOutput>) -> Statement {
         checks: Vec::new(),
         warnings: Vec::new(),
         meta: StatementMeta {
-            spendyard_version: crate::VERSION,
+            spendyard_version: crate::VERSION.to_string(),
             extractor: String::new(),
             models: Vec::new(),
             tokens: Usage::default(),

@@ -380,7 +380,7 @@ enum DocumentType {
   DOCUMENT_TYPE_PAYMENT_FAILED = 4;
   // A card issuer's statement of many charges.
   DOCUMENT_TYPE_CARD_STATEMENT = 5;
-  // Anything else: a newsletter, a login code, a quote.
+  // Anything else: a newsletter, a login code.
   DOCUMENT_TYPE_OTHER = 6;
   // Money taken off what was billed or given back: a credit note, or a
   // refund's receipt. Its total is the amount credited, positive; status
@@ -388,10 +388,17 @@ enum DocumentType {
   // credit on account or lowers an unpaid invoice. Spend counts one paid
   // back as money back, below nothing.
   DOCUMENT_TYPE_CREDIT_NOTE = 7;
+  // A price offered, not billed.
+  DOCUMENT_TYPE_QUOTE = 8;
+  // Says a free trial ends, and what it will cost after.
+  DOCUMENT_TYPE_TRIAL_ENDING = 9;
 }
 
 // Reading is what was read from a document, as the CLI's `spendyard read`
-// gives it: amounts are plain decimals (`1234.50`), days YYYY-MM-DD.
+// gives it: amounts are plain decimals (`1234.50`), days YYYY-MM-DD. The
+// core makes it from its result and a result from it
+// (spendyard_core::reading), so the CLI and the cloud show a reading the
+// same way, and a reading pushed by the CLI is kept as one read here.
 message Reading {
   // What the document is.
   DocumentType document_type = 1;
@@ -424,6 +431,62 @@ message Reading {
   string model = 18;
   string decider = 19;
   google.protobuf.Timestamp read_at = 20;
+  // The version of spendyard that read it.
+  string spendyard_version = 22;
+  // A card statement's own: unset for anything else.
+  ReadStatement statement = 23;
+}
+
+// ReadStatement is what was read from a card statement: what it says of
+// itself, its cards, and its lines, which the cloud keeps as Transactions.
+message ReadStatement {
+  // The bank or card issuer, as the statement names it.
+  string issuer = 1;
+  string number = 2;
+  string issued = 3;
+  // When it's to be paid.
+  string due = 4;
+  string period_start = 5;
+  string period_end = 6;
+  // What its amounts are in, and the total it states.
+  string currency = 7;
+  string total = 8;
+  // How many lines it says it has.
+  int32 line_count = 9;
+  repeated ReadCard cards = 10;
+  repeated ReadTransaction transactions = 11;
+}
+
+// ReadCard is a card that appears on a statement.
+message ReadCard {
+  // Its last four digits, and the name on it.
+  string last4 = 1;
+  string name = 2;
+  // `visa`, `mastercard` or `amex`, when the statement says.
+  string brand = 3;
+  // How many of the statement's lines are this card's.
+  int32 transactions = 4;
+}
+
+// ReadTransaction is one line of a statement as it was read.
+message ReadTransaction {
+  // Its row on the statement, counted from 1, when it numbers them.
+  int32 row = 1;
+  // When it was paid, and when the bank booked it: YYYY-MM-DD.
+  string date = 2;
+  string posted = 3;
+  // As the statement writes it: "ANTHROPIC* CLAUDE.AI SAN FRANCISCO".
+  string merchant = 4;
+  string card_last4 = 5;
+  string name_on_card = 6;
+  // In the statement's currency, a plain decimal; and in the merchant's,
+  // with the rate, when another.
+  string amount = 7;
+  string original_amount = 8;
+  string original_currency = 9;
+  string rate = 10;
+  // `purchase`, `refund`, `fee`, `interest`, `payment`, `other`.
+  string kind = 11;
 }
 
 message ReadVendor {

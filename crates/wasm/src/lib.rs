@@ -61,6 +61,48 @@ pub fn part_bytes(bytes: &[u8], index: usize) -> Vec<u8> {
         .unwrap_or_default()
 }
 
+/// A stored result as the contract's `Reading`, in protobuf's JSON form
+/// (`spendyard_core::reading`): what `GetDocument` gives. `result` is the
+/// result's JSON as `results.json` keeps it; `read_at` when it was read,
+/// RFC 3339, or empty. `{"error": "…"}` when `result` isn't JSON.
+#[wasm_bindgen]
+pub fn reading_of(result: &str, read_at: &str) -> String {
+    let answer = match serde_json::from_str::<serde_json::Value>(result) {
+        Ok(stored) => {
+            let read_at = (!read_at.is_empty()).then_some(read_at);
+
+            spendyard_core::reading::reading_of(&stored, read_at)
+        }
+
+        Err(error) => json!({ "error": error.to_string() }),
+    };
+
+    answer.to_string()
+}
+
+/// A `Reading` pushed by the CLI, in protobuf's JSON form, as a result and
+/// the rows made from it, as [`understand`] gives them for a document read
+/// here: `{"result": …, "rows": …}`. `received` is when the document
+/// arrived, RFC 3339, for a reading that doesn't say when it was issued;
+/// empty when it isn't known. `{"error": "…"}` when `reading` isn't JSON.
+#[wasm_bindgen]
+pub fn result_of_reading(reading: &str, received: &str) -> String {
+    let answer = match serde_json::from_str::<serde_json::Value>(reading) {
+        Ok(pushed) => {
+            let result = spendyard_core::reading::result_of(&pushed);
+            let received = (!received.is_empty()).then_some(received);
+
+            let rows = spendyard_core::rows::rows(&result, received);
+
+            json!({ "result": result, "rows": rows })
+        }
+
+        Err(error) => json!({ "error": error.to_string() }),
+    };
+
+    answer.to_string()
+}
+
 /// The core's version: `meta.spendyard_version` in its results.
 #[wasm_bindgen]
 pub fn version() -> String {

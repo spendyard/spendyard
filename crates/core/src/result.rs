@@ -171,7 +171,7 @@ pub struct Evidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Flag {
     /// A stable code, such as `totals_dont_add_up`.
-    pub code: &'static str,
+    pub code: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub field: Option<String>,
@@ -181,8 +181,8 @@ pub struct Flag {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Meta {
-    pub spendyard_version: &'static str,
-    pub schema_version: &'static str,
+    pub spendyard_version: String,
+    pub schema_version: String,
 
     /// The first model, `provider/model`, when one ran.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -207,8 +207,8 @@ pub struct Meta {
 impl Meta {
     fn new() -> Meta {
         Meta {
-            spendyard_version: crate::VERSION,
-            schema_version: crate::SCHEMA_VERSION,
+            spendyard_version: crate::VERSION.to_string(),
+            schema_version: crate::SCHEMA_VERSION.to_string(),
             decider: None,
             decider_tokens: None,
             extractor: None,

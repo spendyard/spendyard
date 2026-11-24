@@ -20,6 +20,7 @@ pub mod pairing;
 pub mod payments;
 pub mod rates;
 pub mod read;
+pub mod reading;
 pub mod result;
 pub mod rows;
 pub mod spend;

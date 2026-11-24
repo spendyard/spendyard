@@ -226,7 +226,7 @@ async fn invented_values_are_flagged() {
 
     let result = understand(&document, &pipeline(&fake, None)).await.unwrap();
 
-    let codes: Vec<&str> = result.flags.iter().map(|flag| flag.code).collect();
+    let codes: Vec<&str> = result.flags.iter().map(|flag| flag.code.as_str()).collect();
 
     assert!(codes.contains(&"totals_dont_add_up"), "{codes:?}");
     assert!(codes.contains(&"quote_not_found"), "{codes:?}");

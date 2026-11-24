@@ -3,25 +3,22 @@ syntax = "proto3";
 package spendyard.api.v1;
 
 import "buf/validate/validate.proto";
-import "google/protobuf/struct.proto";
+import "spendyard/api/v1/documents.proto";
 import "spendyard/api/v1/options.proto";
 
 // PushService takes in what the CLI read with its own keys or models
 // (`spendyard cloud push`; the platform's docs/push-pull.md): documents,
-// each with its current reading and its corrections, and their originals.
-// Payments, vendors and subscriptions aren't pushed: the cloud works them
-// out from what the organisation has, as for any document.
+// each with its reading and its corrections, and their originals. Payments,
+// vendors, subscriptions and a statement's Transactions aren't pushed: the
+// cloud makes them from what the organisation has, as for any document.
 //
 // A document is the same document on both sides when its SHA-256 is, or
 // for mail its Message-ID: the numbers each side gives its documents are
 // its own, never sent. Pushing twice, or two people pushing the same
 // receipt, keeps it once. A reading is kept when it's newer than the
 // cloud's, and an edit when it's newer than the cloud's, whichever side
-// made it.
-//
-// Rows go as the CLI store has them, column by column, as of the store's
-// schema version: one the cloud doesn't hold is refused with
-// FAILED_PRECONDITION before anything is kept, saying to upgrade.
+// made it. The cloud makes its rows from a pushed reading with its own
+// core, as from one it read itself.
 service PushService {
   // PushDocuments keeps documents read by the CLI, with their readings and
   // edits, in the organisation named; a document a member pushes is theirs
@@ -44,26 +41,22 @@ message PushDocumentsRequest {
     min_len: 1
     max_len: 100
   }];
-  // The CLI store's schema version (`PRAGMA user_version`): the rows below
-  // are its columns.
-  int32 schema_version = 2 [(buf.validate.field).int32.gt = 0];
-  // The CLI's version, which made the rows.
-  string client_version = 3 [(buf.validate.field).string.max_len = 64];
+  // The CLI's version.
+  string client_version = 2 [(buf.validate.field).string.max_len = 64];
   // Say what would be done with each, and keep nothing.
-  bool dry_run = 4;
-  repeated PushedDocument documents = 5 [(buf.validate.field).repeated = {
+  bool dry_run = 3;
+  repeated PushedDocument documents = 4 [(buf.validate.field).repeated = {
     min_items: 1
     max_items: 200
   }];
 }
 
-// PushedDocument is a document as the CLI's store has it: its row in
-// `documents`, its current reading and its edit. Never the CLI's number for
-// it.
+// PushedDocument is a document the CLI has: what it knows of the file, what
+// was read from it, and how it was corrected. Never the CLI's number for it.
 message PushedDocument {
   // Of its bytes, lower-case hex.
   string sha256 = 1 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
-  // For mail: the Message-ID, as the store keeps it.
+  // For mail: the Message-ID.
   string message_id = 2 [(buf.validate.field).string.max_len = 1000];
   // A file name, or the mail's subject.
   string name = 3 [(buf.validate.field).string.max_len = 1000];
@@ -75,30 +68,12 @@ message PushedDocument {
   string format = 6 [(buf.validate.field).string.max_len = 32];
   // Its size in bytes.
   int64 size = 7 [(buf.validate.field).int64.gte = 0];
-  // When the CLI first had it, RFC 3339.
-  string first_seen = 8 [(buf.validate.field).string.max_len = 64];
-  // Its current reading; unset when it has none.
-  PushedReading reading = 9;
-  // Its row in `edits`, column by column, `updated` among them; unset when
-  // it wasn't corrected.
-  google.protobuf.Struct edit = 10;
-}
-
-// PushedReading is a document's current reading as the CLI's store has it:
-// the result, and the rows the CLI made from it, each a row of its table,
-// column by column.
-message PushedReading {
-  // Its row in `results`: `created`, `spendyard_version`, `schema_version`,
-  // `decider`, `extractor`, `model`, and `json`, the result itself.
-  google.protobuf.Struct result = 1 [(buf.validate.field).required = true];
-  // Its row in `receipts`; unset when it isn't about money.
-  google.protobuf.Struct receipt = 2;
-  // Its rows in `lines`, in order.
-  repeated google.protobuf.Struct lines = 3 [(buf.validate.field).repeated.max_items = 1000];
-  // Its rows in `payments`, in order.
-  repeated google.protobuf.Struct payments = 4 [(buf.validate.field).repeated.max_items = 100];
-  // A card statement's rows in `charges`, in order; none for anything else.
-  repeated google.protobuf.Struct charges = 5 [(buf.validate.field).repeated.max_items = 5000];
+  // What was read from it, as GetDocument gives it: `read_at` says when,
+  // and decides whether it's newer than the cloud's.
+  Reading reading = 8 [(buf.validate.field).required = true];
+  // How it was corrected; unset when it wasn't. `updated_at` decides
+  // whether it's newer than the cloud's.
+  DocumentEdit edit = 9;
 }
 
 message PushDocumentsResponse {

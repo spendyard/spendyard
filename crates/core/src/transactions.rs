@@ -57,7 +57,7 @@ pub const CHARGES_SQL: &str = "SELECT c.id AS id,
        c.vendor_id AS vendor_id,
        c.vendor_name AS vendor_name,
        d.source AS source
-FROM charges c
+FROM transactions c
 JOIN documents d ON d.id = c.document_id
 ORDER BY c.date DESC, c.document_id DESC, c.position";
 

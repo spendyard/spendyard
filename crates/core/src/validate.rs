@@ -37,7 +37,7 @@ pub fn validate(result: &mut ReadResult, document: &Document) {
 
 fn flag(code: &'static str, field: Option<&str>, message: impl Into<String>) -> Flag {
     Flag {
-        code,
+        code: code.to_string(),
         field: field.map(str::to_string),
         message: message.into(),
     }
