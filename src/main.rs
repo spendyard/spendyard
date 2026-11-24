@@ -341,6 +341,14 @@ enum CloudAction {
         dry_run: bool,
     },
 
+    /// Bring corrections made in the cloud to the documents this machine
+    /// has: those corrected there since they were here.
+    Pull {
+        /// Say what it would correct, field by field, and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Sign this machine out, here and on the server.
     Logout,
 }
@@ -874,6 +882,10 @@ async fn cloud(action: CloudAction) -> anyhow::Result<ExitCode> {
             .map(|()| ExitCode::SUCCESS),
 
         CloudAction::Push { dry_run } => cli::push::push(cli::push::PushOptions { dry_run })
+            .await
+            .map(|()| ExitCode::SUCCESS),
+
+        CloudAction::Pull { dry_run } => cli::pull::pull(cli::pull::PullOptions { dry_run })
             .await
             .map(|()| ExitCode::SUCCESS),
 

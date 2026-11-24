@@ -11,8 +11,8 @@ model providers you configure.
 
 > **Status:** early development. `parts`, `read`, `config`, `eval`,
 > `mcp`, `mailbox login`/`mailbox scan` for Outlook and IMAP (Gmail with an app password),
-> the store with its reports, and the cloud (`cloud login`, `cloud push`) work;
-> pulling from the cloud comes next. The design is in
+> the store with its reports, and the cloud (`cloud login`, `push`, `pull`)
+> work. The design is in
 > [docs/design.md](docs/design.md).
 
 ## How it works
@@ -125,6 +125,8 @@ spendyard cloud switch                     # where it acts, and your other organ
 spendyard cloud switch nordlys             # act in another
 spendyard cloud push --dry-run             # what the cloud would take, keeping nothing
 spendyard cloud push                       # what's new or changed since the last push, originals included
+spendyard cloud pull --dry-run             # corrections made in the cloud, field by field, changing nothing
+spendyard cloud pull                       # bring them to the documents this machine has
 spendyard cloud logout
 ```
 

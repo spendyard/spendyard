@@ -17,6 +17,7 @@ pub mod models;
 pub mod parts;
 pub mod payments;
 pub mod pretty;
+pub mod pull;
 pub mod push;
 pub mod read;
 pub mod reports;

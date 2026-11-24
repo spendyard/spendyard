@@ -475,14 +475,15 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-/// `~/.spendyard/cloud.db`: what was pushed where. Apart from the store, so
-/// the store's tables stay the ones the cloud's store has too.
-struct SentDb {
+/// `~/.spendyard/cloud.db`: what was pushed where, and where pull got to.
+/// Apart from the store, so the store's tables stay the ones the cloud's
+/// store has too.
+pub(crate) struct SentDb {
     connection: Connection,
 }
 
 impl SentDb {
-    fn open() -> Result<SentDb> {
+    pub(crate) fn open() -> Result<SentDb> {
         let path = config::home().join("cloud.db");
 
         let connection =
@@ -499,6 +500,13 @@ impl SentDb {
                  original      INTEGER NOT NULL DEFAULT 0,
                  pushed_at     TEXT NOT NULL,
                  PRIMARY KEY (server, org_id, sha256)
+             );
+             CREATE TABLE IF NOT EXISTS pulled (
+                 server   TEXT NOT NULL,
+                 org_id   TEXT NOT NULL,
+                 sync_id  INTEGER NOT NULL,
+                 epoch    INTEGER NOT NULL,
+                 PRIMARY KEY (server, org_id)
              );",
         )?;
 
@@ -522,6 +530,52 @@ impl SentDb {
         })?;
 
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Where pull got to on this server and organisation: the sync id and
+    /// its epoch; none before the first pull.
+    pub(crate) fn pulled(&self, (server, org_id): &(String, String)) -> Result<Option<(i64, i64)>> {
+        let found = self
+            .connection
+            .query_row(
+                "SELECT sync_id, epoch FROM pulled WHERE server = ?1 AND org_id = ?2",
+                params![server, org_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        Ok(found)
+    }
+
+    pub(crate) fn set_pulled(
+        &self,
+        (server, org_id): &(String, String),
+        sync_id: i64,
+        epoch: i64,
+    ) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO pulled (server, org_id, sync_id, epoch) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (server, org_id) DO UPDATE SET sync_id = ?3, epoch = ?4",
+            params![server, org_id, sync_id, epoch],
+        )?;
+
+        Ok(())
+    }
+
+    /// An edit pulled from the cloud: as sent, so the next push doesn't send
+    /// it back. Only for a document pushed there before.
+    pub(crate) fn edit_pulled(
+        &self,
+        (server, org_id): &(String, String),
+        sha256: &str,
+        updated: &str,
+    ) -> Result<()> {
+        self.connection.execute(
+            "UPDATE pushed SET edit_updated = ?4 WHERE server = ?1 AND org_id = ?2 AND sha256 = ?3",
+            params![server, org_id, sha256, updated],
+        )?;
+
+        Ok(())
     }
 
     /// A document sent: its reading and edit as they are here now, its number
