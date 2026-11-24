@@ -86,28 +86,31 @@ pub struct Regrouped {
 }
 
 /// The evidence of each payment, from the store's rows (one per document,
-/// as [`crate::spend::ROWS_SQL`] gives them) and the card lines matched to
-/// them. Documents count as [`crate::spend::spend`] counts them: receipts
-/// and paid invoices, not personal or ignored. A card line counts when it
-/// is a purchase or a refund, with its receipt or with none; one matched to
-/// a document that doesn't count (personal) doesn't either.
+/// as [`crate::spend::ROWS_SQL`] gives them, and a statement's payment with
+/// no receipt standing in for one, as [`crate::transactions::payment_rows`]
+/// makes it) and the card lines matched to them. Rows count when they are
+/// money paid ([`counts_as_paid`]): receipts and paid invoices, not
+/// personal or ignored. A card line counts when it is a purchase or a
+/// refund, with its receipt or with none; one matched to a document that
+/// doesn't count (personal) doesn't either.
 pub fn group(rows: &[Row], matching: &Matching) -> Vec<Evidence> {
-    let documents: Vec<&Row> = rows
-        .iter()
-        .filter(|row| row.payment.is_none() && counts_as_paid(row))
-        .collect();
+    let paid: Vec<&Row> = rows.iter().filter(|row| counts_as_paid(row)).collect();
 
     let mut sets = Sets::default();
 
-    for row in &documents {
-        sets.add(Piece::Document(row.id));
+    for &row in &paid {
+        sets.add(piece_of(row));
     }
 
-    let alone = join_by_number(&documents, &mut sets);
+    let alone = join_by_number(&paid, &mut sets);
 
     join_invoices_and_receipts(&alone, &mut sets);
 
-    let counted: BTreeSet<i64> = documents.iter().map(|row| row.id).collect();
+    let counted: BTreeSet<i64> = paid
+        .iter()
+        .filter(|row| row.payment.is_none())
+        .map(|row| row.id)
+        .collect();
 
     for found in &matching.transactions {
         if !found.charge.needs_receipt() {
@@ -131,13 +134,22 @@ pub fn group(rows: &[Row], matching: &Matching) -> Vec<Evidence> {
     sets.groups()
 }
 
-/// Joins documents with the same number (the same receipt saved twice),
-/// and gives the first of each with its number, and those without one.
-fn join_by_number<'a>(documents: &[&'a Row], sets: &mut Sets) -> Vec<&'a Row> {
-    let mut first_by_number: BTreeMap<String, i64> = BTreeMap::new();
+/// The piece a row is: a statement's payment standing in for a receipt is
+/// its card line, any other row its document.
+pub(crate) fn piece_of(row: &Row) -> Piece {
+    match &row.payment {
+        Some(charge) => Piece::Charge(charge.clone()),
+        None => Piece::Document(row.id),
+    }
+}
+
+/// Joins rows with the same number (the same receipt saved twice), and
+/// gives the first of each with its number, and those without one.
+fn join_by_number<'a>(rows: &[&'a Row], sets: &mut Sets) -> Vec<&'a Row> {
+    let mut first_by_number: BTreeMap<String, Piece> = BTreeMap::new();
     let mut alone = Vec::new();
 
-    for &row in documents {
+    for &row in rows {
         let Some(key) = number_key(row) else {
             alone.push(row);
 
@@ -145,9 +157,9 @@ fn join_by_number<'a>(documents: &[&'a Row], sets: &mut Sets) -> Vec<&'a Row> {
         };
 
         match first_by_number.get(&key) {
-            Some(&first) => sets.join(&Piece::Document(first), &Piece::Document(row.id)),
+            Some(first) => sets.join(first, &piece_of(row)),
             None => {
-                first_by_number.insert(key, row.id);
+                first_by_number.insert(key, piece_of(row));
                 alone.push(row);
             }
         }
@@ -169,8 +181,8 @@ fn join_invoices_and_receipts(rows: &[&Row], sets: &mut Sets) {
     let same = |a: usize, b: usize| same_vendor_and_amount(rows[a], rows[b]);
 
     for (invoice, receipt) in pair_invoices(&papers, same) {
-        let invoice = Piece::Document(rows[invoice].id);
-        let receipt = Piece::Document(rows[receipt].id);
+        let invoice = piece_of(rows[invoice]);
+        let receipt = piece_of(rows[receipt]);
 
         sets.join(&invoice, &receipt);
     }

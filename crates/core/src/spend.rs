@@ -15,8 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::catalog::{Catalog, name_key};
 use crate::dates::shift_date;
-use crate::pairing::{Paper, pair_invoices};
+use crate::payments::{Piece, group, piece_of};
 use crate::rates::{Rates, convert};
+use crate::transactions::Matching;
 
 /// The query for the rows, newest first, over the store's documents,
 /// receipts and edits: its columns are [`StoredRow`]'s.
@@ -208,34 +209,75 @@ pub fn amount(text: &str) -> Option<Decimal> {
     text.parse().ok()
 }
 
-/// Paid receipts that count as spend, each once.
+/// Paid receipts that count as spend, each payment once
+/// ([`crate::payments`]): its receipt (else its first document) with what
+/// its other documents say and it doesn't, such as its invoice's interval,
+/// seats and next renewal; payments from statements with no receipt as
+/// they are. In the rows' order.
 pub fn spend(rows: &[Row]) -> Vec<Row> {
-    let once = once_by_number(rows);
+    let counted: Vec<&Row> = rows.iter().filter(|row| counts_as_paid(row)).collect();
 
-    without_invoice_copies(once)
+    let groups = group(rows, &Matching::default());
+
+    let payment_of: BTreeMap<Piece, usize> = groups
+        .iter()
+        .enumerate()
+        .flat_map(|(at, evidence)| evidence.pieces().map(move |piece| (piece, at)))
+        .collect();
+
+    let mut documents: Vec<Vec<&Row>> = vec![Vec::new(); groups.len()];
+
+    for &row in &counted {
+        if let Some(&at) = payment_of.get(&piece_of(row)) {
+            documents[at].push(row);
+        }
+    }
+
+    // Each payment where its chosen row is.
+    counted
+        .iter()
+        .filter_map(|&row| {
+            let at = *payment_of.get(&piece_of(row))?;
+            let chosen = chosen(&documents[at]);
+
+            std::ptr::eq(chosen, row).then(|| with_facts(chosen, &documents[at]))
+        })
+        .collect()
 }
 
-/// Drops a paid invoice when a receipt for the same payment is kept: same
-/// vendor, amount and currency, paired by [`pair_invoices`].
-fn without_invoice_copies(rows: Vec<Row>) -> Vec<Row> {
-    let papers: Vec<Paper> = rows
+/// The row that stands for a payment: its first receipt, else its first
+/// document (a paid invoice with no receipt).
+fn chosen<'a>(documents: &[&'a Row]) -> &'a Row {
+    documents
         .iter()
-        .map(|row| Paper {
-            invoice: row.kind == "invoice",
-            date: &row.date,
-        })
-        .collect();
+        .find(|row| row.kind != "invoice")
+        .unwrap_or(&documents[0])
+}
 
-    let same = |a: usize, b: usize| same_vendor_and_amount(&rows[a], &rows[b]);
+/// `chosen` with what the payment's other documents say and it doesn't: a
+/// receipt rarely names the interval, seats or next renewal its invoice
+/// does.
+fn with_facts(chosen: &Row, documents: &[&Row]) -> Row {
+    let mut row = chosen.clone();
 
-    let dropped: BTreeSet<i64> = pair_invoices(&papers, same)
-        .into_iter()
-        .map(|(invoice, _)| rows[invoice].id)
-        .collect();
+    for other in documents {
+        fill(&mut row.billing_model, &other.billing_model);
+        fill(&mut row.interval, &other.interval);
+        fill(&mut row.next_renewal, &other.next_renewal);
+        fill(&mut row.seats, &other.seats);
+        fill(&mut row.number, &other.number);
+        fill(&mut row.card, &other.card);
+        fill(&mut row.account, &other.account);
+        fill(&mut row.product, &other.product);
+    }
 
-    rows.into_iter()
-        .filter(|row| !dropped.contains(&row.id))
-        .collect()
+    row
+}
+
+fn fill<T: Clone>(field: &mut Option<T>, from: &Option<T>) {
+    if field.is_none() {
+        field.clone_from(from);
+    }
 }
 
 /// Whether two rows are for the same vendor, amount and currency: what a
@@ -277,28 +319,6 @@ pub(crate) fn number_key(row: &Row) -> Option<String> {
     let total = row.total.as_deref().unwrap_or("");
 
     Some(format!("{}|{plain}|{total}", row.vendor_key))
-}
-
-/// Each payment once by its number: the same receipt saved twice.
-fn once_by_number(rows: &[Row]) -> Vec<Row> {
-    let mut seen = BTreeSet::new();
-
-    rows.iter()
-        .filter(|row| counts_as_paid(row))
-        .filter(|row| {
-            let key = match number_key(row) {
-                Some(key) => key,
-                // A payment from a statement is its own: many share the statement's document.
-                None => match &row.payment {
-                    Some(payment) => format!("payment {payment}"),
-                    None => format!("document {}", row.id),
-                },
-            };
-
-            seen.insert(key)
-        })
-        .cloned()
-        .collect()
 }
 
 /// The currency to report in: the one asked for, or the most common one
@@ -400,6 +420,47 @@ mod tests {
 
         assert_eq!(spent.len(), 1);
         assert_eq!(spent[0].kind, "receipt");
+    }
+
+    #[test]
+    fn a_receipt_takes_what_its_invoice_says_and_it_doesnt() {
+        let receipt = row(2, "2026-11-02", "Figma", "540.00", "USD");
+
+        let paid_invoice = StoredRow {
+            interval: Some("year".into()),
+            billing_model: Some("subscription".into()),
+            seats: Some(12.0),
+            next_renewal: Some("2027-11-01".into()),
+            ..invoice(1, "2026-11-01", "Figma", "540.00")
+        };
+
+        let rows = rows(vec![receipt, paid_invoice]);
+
+        let spent = spend(&rows);
+
+        assert_eq!(spent.len(), 1);
+        assert_eq!(spent[0].id, 2);
+        assert_eq!(spent[0].interval.as_deref(), Some("year"));
+        assert_eq!(spent[0].seats, Some(12.0));
+        assert_eq!(spent[0].next_renewal.as_deref(), Some("2027-11-01"));
+    }
+
+    #[test]
+    fn a_statements_payment_counts_once_with_the_invoice_it_pays() {
+        let card_line = row(90, "2026-11-02", "Vercel", "20.00", "USD");
+
+        let mut card = Row::from_stored(card_line, &catalog());
+
+        card.payment = Some("90:4".into());
+
+        let mut rows = rows(vec![invoice(1, "2026-11-01", "Vercel", "20.00")]);
+
+        rows.insert(0, card);
+
+        let spent = spend(&rows);
+
+        assert_eq!(spent.len(), 1);
+        assert_eq!(spent[0].payment.as_deref(), Some("90:4"));
     }
 
     #[test]
