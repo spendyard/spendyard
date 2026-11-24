@@ -19,7 +19,7 @@ let failed = 0;
 
 for (const name of readdirSync(fixtures).filter((file) => !file.endsWith(".md"))) {
   const bytes = readFileSync(`${fixtures}/${name}`);
-  const wasm = read(bytes);
+  const wasm = read(bytes, name);
   const native = execFileSync("target/debug/examples/read", [`${fixtures}/${name}`]).toString();
 
   if (wasm === native) {

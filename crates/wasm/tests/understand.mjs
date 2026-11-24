@@ -104,7 +104,7 @@ function answering(status, body, asked) {
 
 // One part's bytes, as it came: the receipt's attached PDF, by the index read gives it; nothing for a part not there.
 {
-  const parts = JSON.parse(read(receipt)).document.parts;
+  const parts = JSON.parse(read(receipt, "")).document.parts;
   const pdf = parts.find((part) => part.kind === "pdf");
 
   const bytes = part_bytes(receipt, pdf.index);

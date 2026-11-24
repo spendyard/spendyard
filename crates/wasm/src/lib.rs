@@ -34,8 +34,8 @@ use wasm_bindgen::prelude::wasm_bindgen;
 /// Reads a document: `{"document": …}`, or `{"error": "…"}` when it can't be
 /// read. The document is what `spendyard parts` shows: its format, parts and
 /// text.
-pub fn read_json(bytes: &[u8]) -> String {
-    let answer = match spendyard_core::read(bytes, None) {
+pub fn read_json(bytes: &[u8], name: Option<&str>) -> String {
+    let answer = match spendyard_core::read(bytes, name) {
         Ok(document) => json!({ "document": document }),
         Err(error) => json!({ "error": error.to_string() }),
     };
@@ -43,10 +43,13 @@ pub fn read_json(bytes: &[u8]) -> String {
     answer.to_string()
 }
 
-/// [`read_json`], for JavaScript.
+/// [`read_json`], for JavaScript. `name` is the file's name, for a PDF's or
+/// a picture's part to be labelled by; empty when there's none.
 #[wasm_bindgen]
-pub fn read(bytes: &[u8]) -> String {
-    read_json(bytes)
+pub fn read(bytes: &[u8], name: &str) -> String {
+    let name = (!name.is_empty()).then_some(name);
+
+    read_json(bytes, name)
 }
 
 /// One part of a document as it came in, by its index (as `read` and
