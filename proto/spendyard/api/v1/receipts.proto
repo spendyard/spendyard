@@ -12,7 +12,8 @@ import "spendyard/api/v1/options.proto";
 // its documents (DocumentService) about money, and checking it. As the CLI's
 // `spendyard receipts` has them: receipts, invoices (paid or due), renewal
 // notices and failed payments. Only what was paid is spend: a receipt, or a
-// paid invoice (`paid`). Quotes, trial endings and card statements aren't
+// paid invoice (`paid`, and `paid_by` for how that's known: the document says
+// so, a card payment from a statement is its, or it was marked paid by hand). Quotes, trial endings and card statements aren't
 // receipts. A receipt is one document's newest reading, with
 // corrections by hand over it, and is named by its document's id.
 //
@@ -78,23 +79,49 @@ message Receipt {
   // Marked by hand as personal, or as not spend at all.
   bool personal = 13;
   bool ignored = 14;
+  // Where the payment stands, as its document says.
   PaymentStatus status = 15;
   // Money was paid: a receipt, or a paid invoice. Only these are spend.
+  // `paid_by` says how that's known.
   bool paid = 16;
   // The total in the organisation's currency, converted with the European
   // Central Bank's rate of its day, a plain decimal; empty when it's in that
   // currency already, or there's no rate to convert with.
   string converted_total = 17;
   string converted_currency = 18;
+  // How it's known to be paid; unspecified when it isn't. Its document saying
+  // so comes first, then a card payment, then a mark by hand.
+  PaidBy paid_by = 19;
+  // The card payment from a statement that is its, when one is (matched, or
+  // linked by hand): its id in TransactionService, its day, YYYY-MM-DD, and
+  // the card as statements name it ("Mastercard 3776"). Empty when none is.
+  string payment_id = 20;
+  string payment_date = 21;
+  string payment_card = 22;
+}
+
+// How a receipt is known to have been paid.
+enum PaidBy {
+  // It isn't known to be.
+  PAID_BY_UNSPECIFIED = 0;
+  // Its document says so: a receipt, or an invoice read as paid.
+  PAID_BY_DOCUMENT = 1;
+  // A payment from a card statement is its, matched or linked by hand
+  // (TransactionService): an invoice whose document only says what's due.
+  PAID_BY_PAYMENT = 2;
+  // Marked paid by hand (UpdateReceiptRequest.paid): paid some other way, or
+  // before the card's statements are in.
+  PAID_BY_HAND = 3;
 }
 
 // Which kind of receipts ListReceipts lists.
 enum ReceiptKind {
   // All of them.
   RECEIPT_KIND_UNSPECIFIED = 0;
-  // What was paid: receipts, and paid invoices. The spend.
+  // What was paid: receipts, and paid invoices, however that's known
+  // (Receipt.paid_by). The spend.
   RECEIPT_KIND_PAID = 1;
-  // Invoices not paid yet.
+  // Invoices not known to be paid yet.
   RECEIPT_KIND_DUE = 2;
   // Renewal notices and failed payments: a charge coming, or one that
   // didn't go through.
@@ -274,6 +301,8 @@ message ReceiptEdit {
   bool ignored = 3;
   string note = 4;
   google.protobuf.Timestamp updated_at = 5;
+  // Marked paid by hand.
+  bool paid = 6;
 }
 
 message ReceiptConfirmation {
@@ -299,6 +328,9 @@ message UpdateReceiptRequest {
   // Not spend at all: a newsletter, a duplicate.
   optional bool ignored = 4;
   optional string note = 5 [(buf.validate.field).string.max_len = 2000];
+  // Paid, though its document doesn't say so: an invoice paid some other way,
+  // or before the card's statements are in. False takes the mark away.
+  optional bool paid = 6;
 }
 
 message UpdateReceiptResponse {
