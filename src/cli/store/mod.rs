@@ -20,7 +20,7 @@ use spendyard_core::{Document, ReadResult};
 use super::config;
 
 /// Bump with every change to the tables, and add a step to `migrate`.
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
@@ -113,7 +113,14 @@ CREATE TABLE IF NOT EXISTS edits (
     vendor_id    TEXT,
     vendor_name  TEXT,
     note         TEXT,
-    updated      TEXT NOT NULL
+    updated      TEXT NOT NULL,
+    -- Corrections to what was read, each NULL when it's as read. From version 7.
+    date         TEXT,
+    type         TEXT,
+    total        TEXT,
+    currency     TEXT,
+    number       TEXT,
+    seats        REAL
 );
 
 CREATE TABLE IF NOT EXISTS rates (
@@ -251,6 +258,10 @@ impl Store {
             }
 
             self.connection.execute_batch(SCHEMA)?;
+
+            // From 7 a correction can say a document's date, type, amount, currency, number and seats. A table made
+            // now has them; one made before is given those it lacks.
+            add_missing_columns(&self.connection, "edits", EDITED)?;
 
             // Version 2 kept a charge once per document; from 3 once in all.
             if version < 3 {
@@ -519,6 +530,32 @@ fn upsert_document(
     )?;
 
     Ok(transaction.last_insert_rowid())
+}
+
+/// The corrections an edit can hold beside what was read, from version 7, and their types.
+const EDITED: &[(&str, &str)] = &[
+    ("date", "TEXT"),
+    ("type", "TEXT"),
+    ("total", "TEXT"),
+    ("currency", "TEXT"),
+    ("number", "TEXT"),
+    ("seats", "REAL"),
+];
+
+/// Adds to `table` those of `columns` it doesn't have.
+fn add_missing_columns(connection: &Connection, table: &str, columns: &[(&str, &str)]) -> Result<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let had: Vec<String> = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<_>>()?;
+
+    for (column, kind) in columns {
+        if !had.iter().any(|name| name == column) {
+            connection.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Replaces the document's report rows with this result's.

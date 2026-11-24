@@ -62,24 +62,29 @@ JOIN documents d ON d.id = c.document_id
 ORDER BY c.date DESC, c.document_id DESC, c.position";
 
 /// The query for the receipts payments are matched to: receipts and
-/// invoices with a date, total and currency, not set aside; vendors as
-/// edited. Its columns are [`MatchReceipt`]'s.
+/// invoices with a date, total and currency, not set aside; vendors, and
+/// what else was corrected (date, type, total, currency, number), as
+/// edited. A number corrected is the invoice's on an invoice, the receipt's
+/// on anything else. Its columns are [`MatchReceipt`]'s.
 pub const MATCH_RECEIPTS_SQL: &str = "SELECT r.document_id AS document_id,
        coalesce(e.vendor_id, r.vendor_id) AS vendor_id,
        coalesce(e.vendor_name, r.vendor_name) AS vendor_name,
-       substr(r.date, 1, 10) AS date,
-       r.total AS total,
-       upper(r.currency) AS currency,
+       substr(coalesce(e.date, r.date), 1, 10) AS date,
+       coalesce(e.total, r.total) AS total,
+       upper(coalesce(e.currency, r.currency)) AS currency,
        r.card_last4 AS card_last4,
        r.card_brand AS card_brand,
-       r.invoice_number AS invoice_number,
-       r.receipt_number AS receipt_number,
-       coalesce(r.type, '') AS kind
+       CASE WHEN e.number IS NOT NULL AND coalesce(e.type, r.type) = 'invoice' THEN e.number ELSE r.invoice_number END AS invoice_number,
+       CASE WHEN e.number IS NOT NULL AND coalesce(e.type, r.type) != 'invoice' THEN e.number ELSE r.receipt_number END AS receipt_number,
+       coalesce(e.type, r.type, '') AS kind
 FROM receipts r
 LEFT JOIN edits e ON e.document_id = r.document_id
-WHERE (r.is_receipt = 1 OR r.is_invoice = 1)
+WHERE (CASE WHEN e.type IS NULL THEN (r.is_receipt = 1 OR r.is_invoice = 1)
+            ELSE e.type IN ('receipt', 'invoice') END)
   AND coalesce(e.ignored, 0) = 0
-  AND r.date IS NOT NULL AND r.total IS NOT NULL AND r.currency IS NOT NULL";
+  AND coalesce(e.date, r.date) IS NOT NULL
+  AND coalesce(e.total, r.total) IS NOT NULL
+  AND coalesce(e.currency, r.currency) IS NOT NULL";
 
 /// One charge as [`CHARGES_SQL`] gives it.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

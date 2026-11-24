@@ -302,6 +302,26 @@ message UpdateDocumentRequest {
   // Checked: right as read, or as corrected. It leaves the review queue.
   // Only true: a document read again is checked again.
   optional bool confirmed = 7 [(buf.validate.field).bool.const = true];
+
+  // Corrections to what was read, each kept through reading it again; empty
+  // (DOCUMENT_TYPE_UNSPECIFIED for the type, 0 for seats) puts the
+  // reading's back.
+  //
+  // The vendor it is: one of the organisation's vendors, by its ID (Vendor.id).
+  optional string vendor_id = 8 [(buf.validate.field).string.max_len = 200];
+  // The day it was issued or paid, YYYY-MM-DD.
+  optional string date = 9 [(buf.validate.field).string.pattern = "^([0-9]{4}-[0-9]{2}-[0-9]{2})?$"];
+  // What it is: a receipt, an invoice, a renewal notice, a payment that
+  // failed, a credit note. Whether it's paid follows, as reading has it.
+  optional DocumentType type = 10 [(buf.validate.field).enum.defined_only = true];
+  // Its total, a plain decimal: 49.00.
+  optional string total = 11 [(buf.validate.field).string.pattern = "^(-?[0-9]+(\\.[0-9]+)?)?$"];
+  // Its currency, ISO 4217: USD.
+  optional string currency = 12 [(buf.validate.field).string.pattern = "^([A-Za-z]{3})?$"];
+  // Its receipt or invoice number, as it shows it.
+  optional string number = 13 [(buf.validate.field).string.max_len = 100];
+  // How many seats it's for.
+  optional double seats = 14 [(buf.validate.field).double.gte = 0];
 }
 
 message UpdateDocumentResponse {
@@ -477,6 +497,17 @@ message DocumentEdit {
   google.protobuf.Timestamp updated_at = 5;
   // Marked paid by hand.
   bool paid = 6;
+  // Corrections to what was read, each empty (DOCUMENT_TYPE_UNSPECIFIED,
+  // 0) when the reading's stands: the vendor chosen (its ID; vendor_name is
+  // its name), the day, the type, the total and its currency, the number,
+  // the seats.
+  string vendor_id = 7;
+  string date = 8;
+  DocumentType type = 9;
+  string total = 10;
+  string currency = 11;
+  string number = 12;
+  double seats = 13;
 }
 
 message DocumentConfirmation {

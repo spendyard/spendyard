@@ -20,24 +20,28 @@ use crate::rates::{Rates, convert};
 use crate::transactions::Matching;
 
 /// The query for the rows, newest first, over the store's documents,
-/// receipts and edits: its columns are [`StoredRow`]'s.
+/// receipts and edits: its columns are [`StoredRow`]'s. What was corrected
+/// (an edit's date, type, total, currency, number and seats) takes the place
+/// of what was read; a type corrected says whether it's paid as reading does
+/// (a receipt, or an invoice its reading says is paid).
 pub const ROWS_SQL: &str = "SELECT d.id AS id,
-       coalesce(r.date, substr(d.received, 1, 10), '') AS date,
-       coalesce(r.type, '') AS kind,
+       coalesce(e.date, r.date, substr(d.received, 1, 10), '') AS date,
+       coalesce(e.type, r.type, '') AS kind,
        coalesce(r.status, '') AS status,
-       coalesce(r.is_receipt, 0) AS is_receipt,
+       CASE WHEN e.type IS NULL THEN coalesce(r.is_receipt, 0)
+            ELSE (e.type = 'receipt' OR (e.type = 'invoice' AND r.status = 'paid')) END AS is_receipt,
        r.vendor_id AS vendor_id,
        coalesce(r.vendor_name, '') AS vendor_name,
        e.vendor_name AS edited_vendor_name,
-       r.total AS total,
-       r.currency AS currency,
+       coalesce(e.total, r.total) AS total,
+       coalesce(e.currency, r.currency) AS currency,
        r.billing_model AS billing_model,
        r.interval AS interval,
        r.next_renewal AS next_renewal,
-       coalesce(r.invoice_number, r.receipt_number) AS number,
+       coalesce(e.number, r.invoice_number, r.receipt_number) AS number,
        r.credited_invoice AS credited_invoice,
        CASE WHEN r.card_last4 IS NOT NULL THEN coalesce(r.card_brand, 'card') || ' ' || r.card_last4 END AS card,
-       r.seats AS seats,
+       coalesce(e.seats, r.seats) AS seats,
        coalesce(r.flags, 0) AS flags,
        coalesce(e.personal, 0) AS personal,
        coalesce(e.ignored, 0) AS ignored,
