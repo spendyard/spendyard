@@ -231,7 +231,7 @@ pub async fn report(options: ReportOptions) -> Result<()> {
 
     let since = shift_date(&today(), -(options.months as i32), 0);
 
-    let paid: Vec<Row> = spend(&rows(&store)?)
+    let paid: Vec<Row> = spend(&rows_paid_however(&store)?)
         .into_iter()
         .filter(|row| row.date >= since)
         .collect();
@@ -370,28 +370,35 @@ pub struct SubscriptionsOptions {
     pub all: bool,
 }
 
-/// A subscription's status in the table, and when it's known only from the
-/// statements' payments, that its receipts are missing.
-fn status_of(subscription: &spendyard_core::subscriptions::Subscription) -> String {
-    match subscription.source.as_str() {
-        "payments" => format!("{} (no receipts)", subscription.status),
-        _ => subscription.status.clone(),
-    }
-}
-
-/// The statements' payments with no receipt, as rows standing in for their
-/// receipts: matched as `spendyard transactions match` matches them.
-fn payments_without_receipts(store: &Store) -> Result<Vec<Row>> {
-    use spendyard_core::transactions::{
-        CHARGES_SQL, MATCH_RECEIPTS_SQL, match_transactions, payment_rows,
-    };
+/// The store's rows, with an invoice a card payment paid counted as paid,
+/// as one read as paid is: its statement's line matched to it, as
+/// `transactions match` matches them. So spend and subscriptions are the
+/// cloud's (its spending's paid however it's known), where the invoice's PDF
+/// only said what was due.
+fn rows_paid_however(store: &Store) -> Result<Vec<Row>> {
+    use spendyard_core::transactions::{CHARGES_SQL, MATCH_RECEIPTS_SQL, match_transactions};
 
     let charges = super::transactions::query(store, CHARGES_SQL)?;
     let receipts = super::transactions::query(store, MATCH_RECEIPTS_SQL)?;
 
-    let matched = match_transactions(charges, receipts, &[], store);
+    let matching = match_transactions(charges, receipts, &[], store);
 
-    Ok(payment_rows(&matched))
+    let paid_by_card: std::collections::BTreeSet<i64> = matching
+        .transactions
+        .iter()
+        .filter(|found| found.state == "matched")
+        .filter_map(|found| found.receipt_id)
+        .collect();
+
+    let mut all = rows(store)?;
+
+    for row in &mut all {
+        if paid_by_card.contains(&row.id) {
+            row.is_receipt = true;
+        }
+    }
+
+    Ok(all)
 }
 
 /// A subscription's name in the table: its vendor, and its product or
@@ -416,12 +423,11 @@ fn label(subscription: &spendyard_core::subscriptions::Subscription) -> String {
 pub async fn subscriptions(options: SubscriptionsOptions) -> Result<()> {
     let store = Store::open()?;
 
-    let mut all = rows(&store)?;
-
-    // Payments on the statements with no receipt stand in for theirs: a vendor
-    // charged every month is a subscription even when no receipt came in.
-    all.extend(payments_without_receipts(&store)?);
-    all.sort_by(|a, b| b.date.cmp(&a.date).then(b.id.cmp(&a.id)));
+    // From receipts and invoices only, as the cloud has them: a card
+    // statement's payments say what was paid, not what was subscribed to, so
+    // none are guessed from them nor counted into one. A vendor charging the
+    // card month after month with no receipt is `transactions list --missing`.
+    let all = rows_paid_however(&store)?;
 
     let paid = spend(&all);
 
@@ -481,7 +487,7 @@ pub async fn subscriptions(options: SubscriptionsOptions) -> Result<()> {
             subscription.last_paid.as_deref().unwrap_or(""),
             subscription.next_renewal.as_deref().unwrap_or(""),
             clip(subscription.card.as_deref().unwrap_or(""), 17),
-            status_of(subscription)
+            subscription.status
         );
     }
 
@@ -572,6 +578,104 @@ pub(crate) fn apply_edit(store: &Store, options: &EditOptions) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_invoice_a_card_payment_paid_is_paid() {
+        use spendyard_core::extract::schema::{
+            Amount, DocumentType, Payment, PaymentMethod, Status,
+        };
+        use spendyard_core::result::{Account, Vendor, not_about_money};
+        use spendyard_core::statement::{ChargeOutput, StatementOutput, assemble};
+
+        use crate::cli::store::Source;
+
+        let dir = std::env::temp_dir().join(format!(
+            "spendyard-paid-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let mut store = Store::open_at(&dir.join("test.db")).unwrap();
+
+        // Vercel's invoice, read as due: its PDF says what's owed, not that it was paid.
+        let mut invoice = not_about_money(DocumentType::Invoice, 0.9);
+
+        invoice.document.is_invoice = true;
+        invoice.document.status = Status::Due;
+        invoice.issued = Some("2026-04-13".to_string());
+
+        invoice.vendor = Some(Vendor {
+            id: Some("vercel.com".to_string()),
+            name: "Vercel".to_string(),
+            legal_name: None,
+            category: None,
+            known: true,
+            processor: None,
+            account: Account::default(),
+        });
+
+        invoice.amount = Some(Amount {
+            total: Some("192.07".to_string()),
+            currency: Some("USD".to_string()),
+            ..Amount::default()
+        });
+
+        invoice.payments = vec![Payment {
+            method: PaymentMethod::Card,
+            last4: Some("3776".to_string()),
+            ..Payment::default()
+        }];
+
+        // The card statement with the line that paid it.
+        let mut statement = not_about_money(DocumentType::CardStatement, 0.9);
+
+        statement.statement = Some(assemble(vec![StatementOutput {
+            is_card_statement: true,
+            currency: Some("USD".to_string()),
+            charges: vec![ChargeOutput {
+                row: Some(1),
+                date: "2026-04-14".to_string(),
+                merchant: "VERCEL INC., COVINA, US".to_string(),
+                card_last4: Some("3776".to_string()),
+                amount: "192.07".to_string(),
+                ..ChargeOutput::default()
+            }],
+            ..StatementOutput::default()
+        }]));
+
+        let source = Source {
+            origin: "file:test".to_string(),
+            name: None,
+            received: None,
+        };
+
+        let mut save = |bytes: &[u8], result| {
+            let document = spendyard_core::read(bytes, None).unwrap();
+
+            store.save(bytes, &document, &source, result).unwrap()
+        };
+
+        let invoice_id = save(b"vercel's invoice", &invoice);
+
+        save(b"the card statement", &statement);
+
+        let as_read = rows(&store).unwrap();
+        let paid = rows_paid_however(&store).unwrap();
+
+        let is_paid = |all: &[Row]| {
+            all.iter()
+                .find(|row| row.id == invoice_id)
+                .unwrap()
+                .is_receipt
+        };
+
+        assert!(!is_paid(&as_read));
+        assert!(is_paid(&paid));
+
+        std::fs::remove_dir_all(dir).ok();
+    }
 
     #[test]
     fn dates_shift() {
