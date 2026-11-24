@@ -844,14 +844,13 @@ opening-and-closing-balance check for statements that print balances.
 
 ```bash
 spendyard cloud login
-spendyard cloud push                # new and changed rows since the last push
-spendyard cloud push --with-files   # originals too
-spendyard cloud pull                # edits made in the cloud, such as fixed vendors
+spendyard cloud push                # what's new or changed since the last push, originals included
+spendyard cloud pull                # corrections made in the cloud
 ```
 
-Rows are matched by document SHA-256 and message ID, so pushing twice, or
-two people pushing the same forwarded receipt, adds it once. Details in
-§11.
+Documents are matched by SHA-256 and message ID, so pushing twice, or two
+people pushing the same forwarded receipt, adds it once. Details in §11,
+and in the platform's `docs/push-pull.md`.
 
 ## 9. Vendor catalog
 
@@ -1022,22 +1021,23 @@ own, and send results to the cloud:
 
 ```bash
 spendyard cloud login                      # device code: open a URL, check the code
-spendyard mailbox scan gmail --new --push  # scan into the local store, then push
-spendyard cloud push                       # new and changed rows from the store (§8)
-spendyard cloud push --with-files          # originals too
-spendyard cloud pull                       # edits made in the cloud
+spendyard mailbox scan gmail --new         # scan into the local store
+spendyard cloud push                       # then send what's new or changed (§8)
+spendyard cloud pull                       # corrections made in the cloud
 ```
 
 Everything about the cloud itself is under `spendyard cloud` (`login`,
 `logout`, `status`, `switch`, `push`, `pull`), so what
-talks to Spendyard is easy to see: those, and three flags on commands that already exist,
-`--push`, `--cloud` and `-e cloud`. The mailboxes the CLI reads are under
+talks to Spendyard is easy to see: those, and two flags on commands that
+already exist, `--cloud` and `-e cloud`. Reading and scanning only fill the
+local store; pushing is a step of its own. The mailboxes the CLI reads are under
 `spendyard mailbox` (`login`, `list`, `scan`, `logout`).
 
-- By default only **rows** are sent: results, receipts, lines and edits.
-  Documents stay where they are, which suits companies that won't hand
-  their mailbox to a SaaS.
-- `--with-files` also uploads the originals, so the cloud can show them.
+- What's sent is documents, their readings (results and the rows made from
+  them) and edits, and always their originals: the CLI keeps each original
+  it reads in `~/.spendyard/originals/`, so it has it to send. Never
+  payments: the cloud works out its own. The mailbox itself stays the
+  CLI's, which suits companies that won't hand theirs to a SaaS.
 - The cloud's database uses the store's schema (both are SQLite), so a push
   is rows going from one to the other, matched by document SHA-256 and
   message ID.
