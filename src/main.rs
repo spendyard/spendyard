@@ -314,6 +314,25 @@ enum Command {
         note: Option<String>,
     },
 
+    /// Every payment once, money paid or back, with its receipts, invoices
+    /// and lines on card statements, newest first. Each keeps its number as
+    /// its evidence changes.
+    Payments {
+        /// Only those with no receipt or invoice: a statement's line alone.
+        #[arg(long)]
+        missing: bool,
+
+        /// Only this vendor (part of its name or domain).
+        #[arg(long)]
+        vendor: Option<String>,
+
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Card charges read from statements (`read` reads them), matched to
     /// receipts: what's missing a receipt, and receipts with no charge.
     Charges {
@@ -688,6 +707,20 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
 
             mcp.await.map(|()| ExitCode::SUCCESS)
         }
+
+        Command::Payments {
+            missing,
+            vendor,
+            limit,
+            json,
+        } => cli::payments::list(cli::payments::PaymentsOptions {
+            missing,
+            vendor,
+            limit,
+            json,
+        })
+        .await
+        .map(|()| ExitCode::SUCCESS),
 
         Command::Charges { action } => {
             let done = async {

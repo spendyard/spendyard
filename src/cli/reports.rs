@@ -21,7 +21,7 @@ use super::store::{Store, now};
 
 /// The store's rows, newest first, their vendors grouped: the core's query
 /// and rows, as the cloud has them too.
-fn rows(store: &Store) -> Result<Vec<Row>> {
+pub(crate) fn rows(store: &Store) -> Result<Vec<Row>> {
     let mut statement = store.connection.prepare(ROWS_SQL)?;
 
     let catalog = spendyard_core::catalog::catalog();
@@ -86,7 +86,7 @@ fn today() -> String {
     now().chars().take(10).collect()
 }
 
-fn money(value: Decimal) -> String {
+pub(crate) fn money(value: Decimal) -> String {
     let rounded = value.round_dp(2);
 
     let text = format!("{rounded:.2}");
@@ -110,7 +110,7 @@ fn money(value: Decimal) -> String {
     format!("{}{grouped}.{cents}", if negative { "-" } else { "" })
 }
 
-fn clip(text: &str, width: usize) -> String {
+pub(crate) fn clip(text: &str, width: usize) -> String {
     if text.chars().count() <= width {
         return text.to_string();
     }

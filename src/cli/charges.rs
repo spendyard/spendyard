@@ -136,6 +136,9 @@ pub async fn match_command(json: bool) -> Result<()> {
 
     let summary = match_all(&store).await?;
 
+    // Which receipt a payment has changed: its payment, and so the payments kept, with it.
+    super::payments::regroup(&store).await?;
+
     if json {
         println!("{}", serde_json::to_string_pretty(&summary)?);
 
@@ -247,7 +250,7 @@ fn summary_of(matched: &Matching, receipts: &[MatchReceipt]) -> MatchSummary {
 
 /// Fetches ECB rates for receipts in another currency than the charges,
 /// when the store lacks them. Matching goes on without them on failure.
-async fn ensure_rates(store: &Store, charges: &[Charge], receipts: &[MatchReceipt]) {
+pub(crate) async fn ensure_rates(store: &Store, charges: &[Charge], receipts: &[MatchReceipt]) {
     let Some((currencies, since)) = rates_needed(charges, receipts) else {
         return;
     };

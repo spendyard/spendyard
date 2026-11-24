@@ -7,11 +7,13 @@
 
 pub mod rates;
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
+use spendyard_core::payments::{Evidence, Payment, Records};
 use spendyard_core::rows::{self, ChargeRow, Rows};
 use spendyard_core::{Document, ReadResult};
 
@@ -344,6 +346,100 @@ impl Store {
 
         Ok(())
     }
+
+    /// The payments kept, each one's number and evidence, and the numbers
+    /// retired (moved into another, or gone), which aren't given again.
+    pub fn stored_payments(&self) -> Result<(Vec<Payment>, Vec<i64>)> {
+        let mut by_id: BTreeMap<i64, Evidence> = BTreeMap::new();
+
+        let mut statement = self.connection.prepare(
+            "SELECT payment_id, document_id, statement_id, position FROM payment_evidence",
+        )?;
+
+        let rows = statement.query_map([], |row| {
+            let id: i64 = row.get(0)?;
+            let document: Option<i64> = row.get(1)?;
+            let statement: Option<i64> = row.get(2)?;
+            let position: Option<i64> = row.get(3)?;
+
+            Ok((id, document, statement, position))
+        })?;
+
+        for row in rows {
+            let (id, document, statement, position) = row?;
+
+            // A deleted document leaves its row with nothing in it: the payment is still known.
+            let evidence = by_id.entry(id).or_default();
+
+            if let Some(document) = document {
+                evidence.documents.push(document);
+            }
+
+            if let (Some(statement), Some(position)) = (statement, position) {
+                evidence.charges.push(format!("{statement}:{position}"));
+            }
+        }
+
+        let payments = by_id
+            .into_iter()
+            .map(|(id, evidence)| Payment { id, evidence })
+            .collect();
+
+        let retired = self
+            .connection
+            .prepare("SELECT from_id FROM payment_moves")?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<i64>, _>>()?;
+
+        Ok((payments, retired))
+    }
+
+    /// Keeps the payments as the core grouped them again: each one's
+    /// evidence, in place of what was kept; and those retired, moved into
+    /// another or gone, beside those retired before.
+    pub fn save_payments(&self, records: &Records) -> Result<()> {
+        let transaction = self.connection.unchecked_transaction()?;
+
+        transaction.execute("DELETE FROM payment_evidence", [])?;
+
+        for payment in &records.payments {
+            for document in &payment.evidence.documents {
+                transaction.execute(
+                    "INSERT INTO payment_evidence (payment_id, document_id) VALUES (?1, ?2)",
+                    params![payment.id, document],
+                )?;
+            }
+
+            for charge in &payment.evidence.charges {
+                let Some((statement, position)) = charge.split_once(':') else {
+                    continue;
+                };
+
+                transaction.execute(
+                    "INSERT INTO payment_evidence (payment_id, statement_id, position) VALUES (?1, ?2, ?3)",
+                    params![payment.id, statement.parse::<i64>()?, position.parse::<i64>()?],
+                )?;
+            }
+        }
+
+        let moved = records
+            .moved
+            .iter()
+            .map(|moved| (moved.from, Some(moved.to)));
+        let gone = records.gone.iter().map(|&id| (id, None));
+
+        for (from, to) in moved.chain(gone) {
+            transaction.execute(
+                "INSERT INTO payment_moves (from_id, to_id) VALUES (?1, ?2)
+                 ON CONFLICT (from_id) DO UPDATE SET to_id = ?2",
+                params![from, to],
+            )?;
+        }
+
+        transaction.commit()?;
+
+        Ok(())
+    }
 }
 
 /// Finds the document by SHA-256, then by Message-ID (the same mail
@@ -639,6 +735,73 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn keeps_payments_and_their_numbers_when_their_document_is_deleted() {
+        let (mut store, dir) = temporary_store();
+
+        let bytes = fixture("receipt.eml");
+        let document = spendyard_core::read(&bytes, None).unwrap();
+
+        let result = spendyard_core::result::not_about_money(
+            spendyard_core::extract::schema::DocumentType::Other,
+            0.9,
+        );
+
+        let source = Source {
+            origin: "file:receipt.eml".to_string(),
+            name: None,
+            received: None,
+        };
+
+        let id = store.save(&bytes, &document, &source, &result).unwrap();
+
+        let kept = Records {
+            payments: vec![Payment {
+                id: 1,
+                evidence: Evidence {
+                    documents: vec![id],
+                    charges: vec![format!("{id}:4")],
+                },
+            }],
+            ..Records::default()
+        };
+
+        store.save_payments(&kept).unwrap();
+
+        let (payments, retired) = store.stored_payments().unwrap();
+
+        assert_eq!(payments, kept.payments);
+        assert!(retired.is_empty());
+
+        // Its document deleted: the payment is still known, with nothing to show for it.
+        store
+            .connection
+            .execute("DELETE FROM documents WHERE id = ?1", params![id])
+            .unwrap();
+
+        let (payments, _) = store.stored_payments().unwrap();
+
+        assert_eq!(payments.len(), 1);
+        assert!(
+            payments[0].evidence.documents.is_empty() && payments[0].evidence.charges.is_empty()
+        );
+
+        // Found gone: retired, its number not given again.
+        let gone = Records {
+            gone: vec![1],
+            ..Records::default()
+        };
+
+        store.save_payments(&gone).unwrap();
+
+        let (payments, retired) = store.stored_payments().unwrap();
+
+        assert!(payments.is_empty());
+        assert_eq!(retired, [1]);
+
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

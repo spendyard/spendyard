@@ -14,6 +14,7 @@ pub mod mailbox_commands;
 pub mod mcp;
 pub mod models;
 pub mod parts;
+pub mod payments;
 pub mod pretty;
 pub mod read;
 pub mod reports;
