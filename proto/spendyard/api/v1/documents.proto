@@ -9,7 +9,7 @@ import "spendyard/api/v1/options.proto";
 
 // DocumentService is the active organisation's documents: what arrived (files
 // dropped in the browser, forwarded mail, later mailboxes and the CLI's
-// pushes), where each is in being read, what was read from it, and checking
+// pushes, PushService), where each is in being read, what was read from it, and checking
 // and correcting that. Reading happens on its own, in the background, as each
 // arrives.
 //
@@ -100,7 +100,8 @@ message Document {
   int32 id = 1;
   // The file's name, or the mail's subject.
   string name = 2;
-  // Where it came from: `upload:<user id>`, `forward:<address>`, `cli:<machine>`.
+  // Where it came from: `upload:<user id>`, `forward:<address>`,
+  // `cli:<user id>:<machine>`.
   string source = 3;
   // Who sent it, for mail.
   string sender = 4;
@@ -157,6 +158,12 @@ message Document {
   // The statement's line that paid it (matched, or linked by hand); unset
   // when none is.
   PaidWith paid_with = 30;
+  // Of its bytes, lower-case hex: the same document wherever it is (the
+  // CLI's store, another organisation's), whatever number each gives it.
+  string sha256 = 31;
+  // How it was corrected by hand, with when; unset when it wasn't. For a
+  // client that keeps documents of its own (`spendyard cloud pull`).
+  DocumentEdit edit = 32;
 }
 
 // PaidWith is the line on a card statement that paid a document.

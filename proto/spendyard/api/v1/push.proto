@@ -1,0 +1,165 @@
+syntax = "proto3";
+
+package spendyard.api.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/struct.proto";
+import "spendyard/api/v1/options.proto";
+
+// PushService takes in what the CLI read with its own keys or models
+// (`spendyard cloud push`; the platform's docs/push-pull.md): documents,
+// each with its current reading and its corrections, and their originals.
+// Payments, vendors and subscriptions aren't pushed: the cloud works them
+// out from what the organisation has, as for any document.
+//
+// A document is the same document on both sides when its SHA-256 is, or
+// for mail its Message-ID: the numbers each side gives its documents are
+// its own, never sent. Pushing twice, or two people pushing the same
+// receipt, keeps it once. A reading is kept when it's newer than the
+// cloud's, and an edit when it's newer than the cloud's, whichever side
+// made it.
+//
+// Rows go as the CLI store has them, column by column, as of the store's
+// schema version: one the cloud doesn't hold is refused with
+// FAILED_PRECONDITION before anything is kept, saying to upgrade.
+service PushService {
+  // PushDocuments keeps documents read by the CLI, with their readings and
+  // edits, in the organisation named; a document a member pushes is theirs
+  // to see. Says, for each, what was kept, and where to put its original
+  // when the cloud has none. With `dry_run`, says what it would do and
+  // keeps nothing.
+  rpc PushDocuments(PushDocumentsRequest) returns (PushDocumentsResponse) {
+    option (spendyard.api.v1.permission) = "documents:write";
+  }
+  // ConfirmOriginals takes in originals put where PushDocuments said: each
+  // one there, and the document's bytes (the upload is checked against its
+  // SHA-256), becomes its document's original.
+  rpc ConfirmOriginals(ConfirmOriginalsRequest) returns (ConfirmOriginalsResponse) {
+    option (spendyard.api.v1.permission) = "documents:write";
+  }
+}
+
+message PushDocumentsRequest {
+  string org_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+  }];
+  // The CLI store's schema version (`PRAGMA user_version`): the rows below
+  // are its columns.
+  int32 schema_version = 2 [(buf.validate.field).int32.gt = 0];
+  // The CLI's version, which made the rows.
+  string client_version = 3 [(buf.validate.field).string.max_len = 64];
+  // Say what would be done with each, and keep nothing.
+  bool dry_run = 4;
+  repeated PushedDocument documents = 5 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 200
+  }];
+}
+
+// PushedDocument is a document as the CLI's store has it: its row in
+// `documents`, its current reading and its edit. Never the CLI's number for
+// it.
+message PushedDocument {
+  // Of its bytes, lower-case hex.
+  string sha256 = 1 [(buf.validate.field).string.pattern = "^[0-9a-f]{64}$"];
+  // For mail: the Message-ID, as the store keeps it.
+  string message_id = 2 [(buf.validate.field).string.max_len = 1000];
+  // A file name, or the mail's subject.
+  string name = 3 [(buf.validate.field).string.max_len = 1000];
+  // Who sent it, for mail.
+  string sender = 4 [(buf.validate.field).string.max_len = 1000];
+  // When it arrived, RFC 3339: the mail's date, or the file's.
+  string received = 5 [(buf.validate.field).string.max_len = 64];
+  // `email`, `pdf`, `image`, `html`, `text`.
+  string format = 6 [(buf.validate.field).string.max_len = 32];
+  // Its size in bytes.
+  int64 size = 7 [(buf.validate.field).int64.gte = 0];
+  // When the CLI first had it, RFC 3339.
+  string first_seen = 8 [(buf.validate.field).string.max_len = 64];
+  // Its current reading; unset when it has none.
+  PushedReading reading = 9;
+  // Its row in `edits`, column by column, `updated` among them; unset when
+  // it wasn't corrected.
+  google.protobuf.Struct edit = 10;
+}
+
+// PushedReading is a document's current reading as the CLI's store has it:
+// the result, and the rows the CLI made from it, each a row of its table,
+// column by column.
+message PushedReading {
+  // Its row in `results`: `created`, `spendyard_version`, `schema_version`,
+  // `decider`, `extractor`, `model`, and `json`, the result itself.
+  google.protobuf.Struct result = 1 [(buf.validate.field).required = true];
+  // Its row in `receipts`; unset when it isn't about money.
+  google.protobuf.Struct receipt = 2;
+  // Its rows in `lines`, in order.
+  repeated google.protobuf.Struct lines = 3 [(buf.validate.field).repeated.max_items = 1000];
+  // Its rows in `payments`, in order.
+  repeated google.protobuf.Struct payments = 4 [(buf.validate.field).repeated.max_items = 100];
+  // A card statement's rows in `charges`, in order; none for anything else.
+  repeated google.protobuf.Struct charges = 5 [(buf.validate.field).repeated.max_items = 5000];
+}
+
+message PushDocumentsResponse {
+  // One for each document pushed, in the same order.
+  repeated PushedDocumentResult documents = 1;
+}
+
+// What was done with a document pushed, or would be on a dry run.
+message PushedDocumentResult {
+  string sha256 = 1;
+  // The cloud's number for it; 0 on a dry run for one it hasn't got.
+  int32 document_id = 2;
+  PushOutcome outcome = 3;
+  // The reading pushed is its reading now: it had none, or an older one.
+  bool reading_kept = 4;
+  // The edit pushed is its edit now; false when none was pushed, or the
+  // cloud's is as new or newer.
+  bool edit_kept = 5;
+  // The cloud has no original for it: put it where `original_upload` says
+  // and ConfirmOriginals. On a dry run, said without where.
+  bool original_wanted = 6;
+  OriginalUpload original_upload = 7;
+}
+
+// What a push did with a document.
+enum PushOutcome {
+  PUSH_OUTCOME_UNSPECIFIED = 0;
+  // New to the cloud.
+  PUSH_OUTCOME_ADDED = 1;
+  // Known already, and its reading or edit changed.
+  PUSH_OUTCOME_UPDATED = 2;
+  // Known already, and nothing changed.
+  PUSH_OUTCOME_UNCHANGED = 3;
+}
+
+// OriginalUpload is where to PUT an original, good for a few minutes, and
+// the headers to send with it: among them its SHA-256, which the store
+// checks the bytes against.
+message OriginalUpload {
+  string url = 1;
+  map<string, string> headers = 2;
+}
+
+message ConfirmOriginalsRequest {
+  string org_id = 1 [(buf.validate.field).string = {
+    min_len: 1
+    max_len: 100
+  }];
+  // Of originals put where PushDocuments said.
+  repeated string sha256 = 2 [(buf.validate.field).repeated = {
+    min_items: 1
+    max_items: 200
+    items: {
+      string: {pattern: "^[0-9a-f]{64}$"}
+    }
+  }];
+}
+
+message ConfirmOriginalsResponse {
+  // Now their documents' originals.
+  repeated string kept = 1;
+  // Not there, or not the bytes their SHA-256 says: put them again.
+  repeated string missing = 2;
+}

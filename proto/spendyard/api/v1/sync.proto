@@ -95,6 +95,18 @@ message SyncChangesRequest {
   // The epoch it was of, from the answer that gave it; 0 when it holds
   // nothing, which is always told to start over.
   int64 epoch = 3;
+  // Only changes of these kinds, a Deleted one by the kind it says; all of
+  // them when empty. `last_sync_id` still reaches past the others, so the
+  // caller moves on.
+  repeated EntityKind kinds = 4 [(buf.validate.field).repeated = {
+    max_items: 10
+    items: {
+      enum: {
+        defined_only: true
+        not_in: [0]
+      }
+    }
+  }];
 }
 
 message SyncChangesResponse {
