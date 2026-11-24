@@ -639,7 +639,7 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
                         card,
                         month,
                         json,
-                    }) => cli::charges::list(cli::charges::ListOptions {
+                    }) => cli::transactions::list(cli::transactions::ListOptions {
                         missing,
                         card,
                         month,
@@ -647,10 +647,10 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
                     }),
 
                     Some(TransactionsAction::Match { json }) => {
-                        cli::charges::match_command(json).await
+                        cli::transactions::match_command(json).await
                     }
 
-                    None => cli::charges::match_command(false).await,
+                    None => cli::transactions::match_command(false).await,
                 }
             };
 

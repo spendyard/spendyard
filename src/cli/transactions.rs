@@ -1,7 +1,7 @@
-//! `spendyard transactions` (`charges` before): card payments from
-//! statements, matched to receipts.
+//! `spendyard transactions`: card payments from statements, matched to
+//! receipts.
 //!
-//! `read` fills the `charges` table from card statements. Matching pairs
+//! `read` fills the `transactions` table from card statements. Matching pairs
 //! each purchase with the receipt or paid invoice for it: the same vendor,
 //! the same amount (in the receipt's currency, or converted within a
 //! margin for card currency fees), a date close by, and the same card when
@@ -166,11 +166,11 @@ pub async fn match_all(store: &Store) -> Result<MatchSummary> {
 
     let transaction = store.connection.unchecked_transaction()?;
 
-    transaction.execute("UPDATE charges SET receipt_id = NULL", [])?;
+    transaction.execute("UPDATE transactions SET receipt_id = NULL", [])?;
 
     for found in &matched.transactions {
         transaction.execute(
-            "UPDATE charges SET receipt_id = ?1, vendor_id = ?2, vendor_name = ?3 WHERE id = ?4",
+            "UPDATE transactions SET receipt_id = ?1, vendor_id = ?2, vendor_name = ?3 WHERE id = ?4",
             params![
                 found.receipt_id,
                 found.charge.vendor_id,
@@ -272,7 +272,7 @@ fn load_charges(store: &Store) -> Result<Vec<StoredCharge>> {
     let mut statement = store.connection.prepare(
         "SELECT id, date, merchant, card_last4, amount, currency, original_amount,
                 original_currency, kind, vendor_id, vendor_name, receipt_id, document_id
-         FROM charges ORDER BY date, document_id, position",
+         FROM transactions ORDER BY date, document_id, position",
     )?;
 
     let rows = statement.query_map([], |row| {

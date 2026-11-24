@@ -14,7 +14,7 @@ pub mod rates;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, params};
 use sha2::{Digest, Sha256};
 use spendyard_core::payments::{Evidence, Payment, Records};
@@ -24,7 +24,7 @@ use spendyard_core::{Document, ReadResult};
 use super::config;
 
 /// Bump with every change to the tables, and add a step to `migrate`.
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
@@ -81,7 +81,6 @@ CREATE TABLE IF NOT EXISTS receipts (
     card_last4         TEXT,
     seats              REAL,
     flags              INTEGER,
-    -- Last, as ALTER TABLE adds it to stores made before version 6.
     credited_invoice   TEXT
 );
 
@@ -118,7 +117,7 @@ CREATE TABLE IF NOT EXISTS edits (
     vendor_name  TEXT,
     note         TEXT,
     updated      TEXT NOT NULL,
-    -- Corrections to what was read, each NULL when it's as read. From version 7.
+    -- Corrections to what was read, each NULL when it's as read.
     date         TEXT,
     type         TEXT,
     total        TEXT,
@@ -134,7 +133,7 @@ CREATE TABLE IF NOT EXISTS rates (
     PRIMARY KEY (date, currency)
 );
 
-CREATE TABLE IF NOT EXISTS charges (
+CREATE TABLE IF NOT EXISTS transactions (
     id                 INTEGER PRIMARY KEY,
     document_id        INTEGER NOT NULL REFERENCES documents (id) ON DELETE CASCADE,
     position           INTEGER NOT NULL,
@@ -157,7 +156,7 @@ CREATE TABLE IF NOT EXISTS charges (
     UNIQUE (document_id, position)
 );
 
-CREATE INDEX IF NOT EXISTS charges_card_date ON charges (card_last4, date);
+CREATE INDEX IF NOT EXISTS transactions_card_date ON transactions (card_last4, date);
 
 -- Payments (spendyard_core::payments): which payment each piece of evidence
 -- is, a document (document_id) or a statement's line (statement_id and
@@ -246,43 +245,33 @@ impl Store {
             originals: beside.join("originals"),
         };
 
-        store.migrate()?;
+        store.migrate(path)?;
 
         Ok(store)
     }
 
-    fn migrate(&self) -> Result<()> {
+    /// Makes a new store's tables. One made by another version is refused,
+    /// never upgraded: a store is cheap to make again by reading again.
+    fn migrate(&self, path: &Path) -> Result<()> {
         let version: i64 = self
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))?;
 
-        if version < SCHEMA_VERSION {
-            // Version 4 numbered payments with text; from 5 with numbers. Nothing filled them yet.
-            if version == 4 {
-                self.connection
-                    .execute_batch("DROP TABLE payment_evidence; DROP TABLE payment_moves;")?;
-            }
-
-            // From 6 a credit note says which invoice it credits. A new table has it already.
-            if (1..6).contains(&version) {
-                self.connection
-                    .execute_batch("ALTER TABLE receipts ADD COLUMN credited_invoice TEXT;")?;
-            }
-
-            self.connection.execute_batch(SCHEMA)?;
-
-            // From 7 a correction can say a document's date, type, amount, currency, number and seats. A table made
-            // now has them; one made before is given those it lacks.
-            add_missing_columns(&self.connection, "edits", EDITED)?;
-
-            // Version 2 kept a charge once per document; from 3 once in all.
-            if version < 3 {
-                remove_copied_charges(&self.connection)?;
-            }
-
-            self.connection
-                .pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        if version == SCHEMA_VERSION {
+            return Ok(());
         }
+
+        if version != 0 {
+            bail!(
+                "{} is a store of another spendyard (version {version}, this one reads {SCHEMA_VERSION}): move it away, and its originals beside it, to start a new one",
+                path.display()
+            );
+        }
+
+        self.connection.execute_batch(SCHEMA)?;
+
+        self.connection
+            .pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
         Ok(())
     }
@@ -578,52 +567,6 @@ fn upsert_document(
     Ok(transaction.last_insert_rowid())
 }
 
-/// The corrections an edit can hold beside what was read, from version 7, and their types.
-const EDITED: &[(&str, &str)] = &[
-    ("date", "TEXT"),
-    ("type", "TEXT"),
-    ("total", "TEXT"),
-    ("currency", "TEXT"),
-    ("number", "TEXT"),
-    ("seats", "REAL"),
-];
-
-/// Adds to `table` those of `columns` it doesn't have.
-fn add_missing_columns(
-    connection: &Connection,
-    table: &str,
-    columns: &[(&str, &str)],
-) -> Result<()> {
-    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
-    let had: Vec<String> = statement
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect::<rusqlite::Result<_>>()?;
-
-    for (column, kind) in columns {
-        if !had.iter().any(|name| name == column) {
-            connection
-                .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {kind};"))?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Replaces the document's report rows with this result's.
-/// Deletes every charge that another document already has.
-fn remove_copied_charges(connection: &Connection) -> Result<usize> {
-    let removed = connection.execute(
-        &format!(
-            "DELETE FROM charges WHERE id IN (
-                 SELECT c.id FROM charges c
-                 WHERE EXISTS (SELECT 1 FROM charges d WHERE d.id < c.id AND {SAME_CHARGE}))"
-        ),
-        [],
-    )?;
-
-    Ok(removed)
-}
-
 /// A statement's charges, replacing any read from the same document
 /// before, and leaving out those another document already has (the same
 /// statement sent twice). Matches to receipts are made by `transactions match`.
@@ -633,19 +576,19 @@ fn write_charges(
     charges: &[ChargeRow],
 ) -> Result<()> {
     transaction.execute(
-        "DELETE FROM charges WHERE document_id = ?1",
+        "DELETE FROM transactions WHERE document_id = ?1",
         params![document_id],
     )?;
 
     for charge in charges {
         transaction.execute(
             &format!(
-                "INSERT INTO charges (document_id, position, issuer, row, date, posted, merchant,
+                "INSERT INTO transactions (document_id, position, issuer, row, date, posted, merchant,
                  card_last4, name_on_card, amount, currency, original_amount, original_currency,
                  rate, kind, vendor_id, vendor_name)
              SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17
              WHERE NOT EXISTS (
-                 SELECT 1 FROM charges d,
+                 SELECT 1 FROM transactions d,
                      (SELECT ?1 AS document_id, ?5 AS date, ?10 AS amount, ?8 AS card_last4,
                              ?4 AS row, ?7 AS merchant) c
                  WHERE {SAME_CHARGE})"
@@ -854,6 +797,35 @@ mod tests {
             env!("CARGO_MANIFEST_DIR")
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn refuses_a_store_of_another_version_and_leaves_it_be() {
+        let dir = std::env::temp_dir().join(format!("spendyard-test-old-{}", rand_suffix()));
+        let path = dir.join("test.db");
+
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let old = Connection::open(&path).unwrap();
+
+        old.execute_batch("CREATE TABLE charges (id INTEGER PRIMARY KEY);")
+            .unwrap();
+        old.pragma_update(None, "user_version", 7).unwrap();
+
+        drop(old);
+
+        let refused = Store::open_at(&path).err().unwrap().to_string();
+
+        assert!(refused.contains("version 7, this one reads 8"));
+        assert!(refused.contains("move it away"));
+
+        // Untouched: still its own tables and version.
+        let after = Connection::open(&path).unwrap();
+        let version: i64 = after
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(version, 7);
     }
 
     #[test]
@@ -1074,7 +1046,7 @@ mod tests {
 
         let charges: i64 = store
             .connection
-            .query_row("SELECT count(*) FROM charges", [], |row| row.get(0))
+            .query_row("SELECT count(*) FROM transactions", [], |row| row.get(0))
             .unwrap();
 
         assert_eq!(charges, 3);

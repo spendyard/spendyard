@@ -682,7 +682,7 @@ data between them is moving rows.
 | `rates` | Exchange rates per day, from the European Central Bank's free daily feed, so spending can be added up in one currency. |
 | `scans` | Mailbox cursors and which messages were already read. |
 | `edits` | Corrections by hand: a fixed vendor, a receipt marked personal or ignored. They win over the model's result and survive re-runs. |
-| `charges` | Card charges from statements (and, in the cloud, card platforms and banks), with the receipt each one matched. Below. |
+| `transactions` | Card payments from statements (and, in the cloud, card platforms and banks), with the receipt each one matched. Below. |
 
 Re-extracting never needs the mailbox again when originals are kept
 (`keep_files`). Without them, `spendyard rescan` fetches the messages again
@@ -703,8 +703,10 @@ spendyard documents edit 412 --vendor "Atlassian"  # group it under another name
 Each command prints a table, or JSON with `--json`, and
 `sqlite3 ~/.spendyard/spendyard.db` works for anything they don't cover.
 
-**As built (M5c).** The tables are those above, in one SQLite file with
-`PRAGMA user_version` for migrations. A document is found again by its
+**As built (M5c).** The tables are those above, in one SQLite file,
+versioned with `PRAGMA user_version`. A store of another version is
+refused, not upgraded: move it away and read again (it's a cache of what
+was read, and the originals are where they came from). A document is found again by its
 SHA-256 or its Message-ID; every result is kept, and the newest fills
 `receipts`, `lines` and `payments`. Spend is what was paid: receipts and
 paid invoices, positive totals, not marked personal or ignored, and each
@@ -763,8 +765,8 @@ The group is `transactions`, not `statements`: what is stored, listed and
 matched is a payment on a card or an account, and the statement is only
 one source of them. The cloud fills the same table from card platforms
 (Pleo, Ramp, Brex) and banks through open banking, so the matching is
-written once. It's the dashboard's word for them too. The table is still
-`charges`, as stores already have it.
+written once. It's the dashboard's word for them too, and the table's:
+`transactions`.
 
 1. **Recognise.** `document_type` has a `card_statement` option, also in
    the extractor's schema: a card issuer's list of many purchases, even
@@ -793,7 +795,7 @@ written once. It's the dashboard's word for them too. The table is still
    charges is read again once, and the better answer kept. The quote check
    receipts get isn't used: the arithmetic checks more, and needs no text
    layer.
-4. **Store.** A `charges` table (§8): the statement's document, position,
+4. **Store.** A `transactions` table (§8): the statement's document, position,
    issuer, row, dates, merchant as printed, card and name, amount and
    currency, original amount, currency and rate, kind, the vendor it was
    mapped to, and the receipt it matched. Reading the statement again

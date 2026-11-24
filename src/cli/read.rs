@@ -10,7 +10,7 @@ use spendyard_core::ReadResult;
 use super::input::{for_each_as_done, read_input};
 use super::models::Models;
 use super::store::{Source, Store};
-use super::{charges, config, pretty};
+use super::{config, pretty, transactions};
 
 pub struct Options {
     pub inputs: Vec<PathBuf>,
@@ -112,11 +112,11 @@ pub async fn run(options: Options) -> Result<Outcome> {
     if statements > 0
         && let Some(store) = &store
     {
-        let summary = charges::match_all(store).await?;
+        let summary = transactions::match_all(store).await?;
 
         if options.pretty {
             println!();
-            charges::print_summary(&summary);
+            transactions::print_summary(&summary);
         }
     }
 

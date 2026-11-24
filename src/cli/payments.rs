@@ -14,9 +14,9 @@ use spendyard_core::transactions::{
     payment_rows,
 };
 
-use super::charges::{ensure_rates, query};
 use super::reports::{clip, money, rows};
 use super::store::Store;
+use super::transactions::{ensure_rates, query};
 
 /// Every payment in the store, worked out again and kept: newest first.
 pub async fn regroup(store: &Store) -> Result<Records> {

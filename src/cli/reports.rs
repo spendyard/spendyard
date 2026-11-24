@@ -386,8 +386,8 @@ fn payments_without_receipts(store: &Store) -> Result<Vec<Row>> {
         CHARGES_SQL, MATCH_RECEIPTS_SQL, match_transactions, payment_rows,
     };
 
-    let charges = super::charges::query(store, CHARGES_SQL)?;
-    let receipts = super::charges::query(store, MATCH_RECEIPTS_SQL)?;
+    let charges = super::transactions::query(store, CHARGES_SQL)?;
+    let receipts = super::transactions::query(store, MATCH_RECEIPTS_SQL)?;
 
     let matched = match_transactions(charges, receipts, &[], store);
 
