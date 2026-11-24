@@ -1,0 +1,5 @@
+name = "Apple"
+aliases = ["Apple Distribution International Ltd.", "Apple Inc."]
+domains = ["icloud.com"]
+category = "other"
+pricing = ["plan", "one_time"]

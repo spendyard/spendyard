@@ -1,0 +1,3 @@
+name = "Braintrust"
+category = "ai"
+pricing = ["usage", "plan"]

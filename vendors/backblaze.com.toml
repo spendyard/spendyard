@@ -1,0 +1,4 @@
+name = "Backblaze"
+aliases = ["Backblaze, Inc."]
+category = "infrastructure"
+pricing = ["usage"]

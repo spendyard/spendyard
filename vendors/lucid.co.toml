@@ -1,0 +1,5 @@
+name = "Lucid"
+aliases = ["Lucid Software Inc."]
+domains = ["lucidchart.com", "lucid.app"]
+category = "design"
+pricing = ["seat"]

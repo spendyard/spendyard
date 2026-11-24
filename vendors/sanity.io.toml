@@ -1,0 +1,3 @@
+name = "Sanity"
+category = "dev-tools"
+pricing = ["seat", "usage"]

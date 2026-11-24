@@ -1,0 +1,4 @@
+name = "DeepL"
+aliases = ["DeepL SE"]
+category = "ai"
+pricing = ["seat", "usage"]

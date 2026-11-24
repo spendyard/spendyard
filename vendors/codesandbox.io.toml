@@ -1,0 +1,3 @@
+name = "CodeSandbox"
+category = "dev-tools"
+pricing = ["seat", "usage"]

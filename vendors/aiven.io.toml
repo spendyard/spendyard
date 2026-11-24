@@ -1,0 +1,4 @@
+name = "Aiven"
+aliases = ["Aiven Oy"]
+category = "infrastructure"
+pricing = ["usage"]

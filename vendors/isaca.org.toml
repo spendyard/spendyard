@@ -1,0 +1,3 @@
+name = "ISACA"
+category = "education"
+pricing = ["plan", "one_time"]

@@ -1,0 +1,3 @@
+name = "Clay"
+category = "sales"
+pricing = ["usage", "plan"]

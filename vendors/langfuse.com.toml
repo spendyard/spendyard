@@ -1,0 +1,3 @@
+name = "Langfuse"
+category = "ai"
+pricing = ["usage", "plan"]

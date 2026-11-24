@@ -1,0 +1,5 @@
+name = "Basecamp"
+aliases = ["37signals"]
+domains = ["37signals.com", "hey.com"]
+category = "productivity"
+pricing = ["plan", "seat"]

@@ -1,0 +1,4 @@
+name = "Semgrep"
+domains = ["semgrep.com"]
+category = "security"
+pricing = ["seat"]

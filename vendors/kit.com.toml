@@ -1,0 +1,5 @@
+name = "Kit"
+aliases = ["ConvertKit"]
+domains = ["convertkit.com"]
+category = "marketing"
+pricing = ["plan"]

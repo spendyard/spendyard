@@ -1,0 +1,3 @@
+name = "OneSignal"
+category = "communication"
+pricing = ["usage", "plan"]

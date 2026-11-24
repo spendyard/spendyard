@@ -1,0 +1,5 @@
+name = "Intuit"
+aliases = ["Intuit Inc."]
+domains = ["quickbooks.com"]
+category = "finance"
+pricing = ["plan"]

@@ -1,0 +1,4 @@
+name = "Qdrant"
+domains = ["qdrant.io"]
+category = "data"
+pricing = ["usage"]

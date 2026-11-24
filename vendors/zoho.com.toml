@@ -1,0 +1,5 @@
+name = "Zoho"
+aliases = ["Zoho Corporation"]
+domains = ["zoho.eu"]
+category = "productivity"
+pricing = ["seat"]

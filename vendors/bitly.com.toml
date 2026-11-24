@@ -1,0 +1,4 @@
+name = "Bitly"
+domains = ["bit.ly"]
+category = "marketing"
+pricing = ["plan"]

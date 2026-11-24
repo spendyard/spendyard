@@ -1,0 +1,5 @@
+name = "Meta"
+aliases = ["Meta Platforms Ireland Limited", "Meta Platforms, Inc.", "Facebook"]
+domains = ["facebook.com", "facebookmail.com", "instagram.com"]
+category = "marketing"
+pricing = ["usage"]

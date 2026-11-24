@@ -1,0 +1,5 @@
+name = "Devin"
+aliases = ["Cognition AI"]
+domains = ["devin.ai"]
+category = "ai"
+pricing = ["seat", "usage"]

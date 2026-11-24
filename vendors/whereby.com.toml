@@ -1,0 +1,4 @@
+name = "Whereby"
+aliases = ["Whereby AS"]
+category = "communication"
+pricing = ["seat"]

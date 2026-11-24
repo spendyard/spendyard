@@ -1,0 +1,3 @@
+name = "Meilisearch"
+category = "infrastructure"
+pricing = ["usage", "plan"]
