@@ -250,6 +250,11 @@ impl Cloud {
         })
     }
 
+    /// Where this machine is signed in, and as whom.
+    pub fn signed_in_as(&self) -> &SignedIn {
+        &self.signed_in
+    }
+
     /// One method of the API, `Service/Method`, such as `OrgService/ListOrgs`.
     pub async fn call<T: DeserializeOwned>(&self, method: &str, request: Value) -> Result<T> {
         let url = format!("{}/spendyard.api.v1.{method}", self.signed_in.server);

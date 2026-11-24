@@ -332,6 +332,15 @@ enum CloudAction {
         slug: Option<String>,
     },
 
+    /// Send what this machine read to the organisation it acts in:
+    /// documents new or changed since the last push, their readings and
+    /// corrections, and their originals.
+    Push {
+        /// Say what the cloud would do with each, and send and keep nothing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// Sign this machine out, here and on the server.
     Logout,
 }
@@ -861,6 +870,10 @@ async fn cloud(action: CloudAction) -> anyhow::Result<ExitCode> {
         }),
 
         CloudAction::Switch { slug } => cli::cloud::switch(slug.as_deref())
+            .await
+            .map(|()| ExitCode::SUCCESS),
+
+        CloudAction::Push { dry_run } => cli::push::push(cli::push::PushOptions { dry_run })
             .await
             .map(|()| ExitCode::SUCCESS),
 

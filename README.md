@@ -11,8 +11,8 @@ model providers you configure.
 
 > **Status:** early development. `parts`, `read`, `config`, `eval`,
 > `mcp`, `mailbox login`/`mailbox scan` for Outlook and IMAP (Gmail with an app password),
-> the store with its reports, and signing in to the cloud (`cloud login`) work;
-> pushing to the cloud comes next. The design is in
+> the store with its reports, and the cloud (`cloud login`, `cloud push`) work;
+> pulling from the cloud comes next. The design is in
 > [docs/design.md](docs/design.md).
 
 ## How it works
@@ -115,14 +115,16 @@ spendyard documents edit 412 --personal    # leave one out of the spend
 spendyard vendors unknown                  # vendors on your receipts the catalog lacks
 ```
 
-Spendyard Cloud, for the whole company's spend, is optional. Signing this
-machine in is the first step; pushing what it reads comes next:
+Spendyard Cloud, for the whole company's spend, is optional. Sign this
+machine in, then push what it reads, which the company sees together:
 
 ```bash
 spendyard cloud login                      # opens the browser: check the code, pick the organisation
 spendyard cloud status                     # who it's signed in as, and where it acts
 spendyard cloud switch                     # where it acts, and your other organisations
 spendyard cloud switch nordlys             # act in another
+spendyard cloud push --dry-run             # what the cloud would take, keeping nothing
+spendyard cloud push                       # what's new or changed since the last push, originals included
 spendyard cloud logout
 ```
 
