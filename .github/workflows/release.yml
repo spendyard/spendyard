@@ -1,6 +1,7 @@
 # A release, on a v* tag that matches Cargo.toml's version: spendyard for
 # macOS and Linux (amd64, arm64) as spendyard_<os>_<arch>.tar.gz, and for
-# Windows (amd64) as spendyard_windows_amd64.zip, with install.sh and
+# Windows (amd64, built on Linux with MinGW) as spendyard_windows_amd64.zip,
+# with install.sh and
 # checksums.txt, attached to the tag's GitHub release; then
 # the Homebrew cask in spendyard/homebrew-tap (scripts/homebrew.sh), and the
 # release installed on Linux and macOS as users do.
@@ -62,8 +63,9 @@ jobs:
           - target: aarch64-unknown-linux-musl
             os: ubuntu-latest
             asset: linux_arm64
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
+          # Built on Linux with MinGW, as the other Linux builds are there; the verify job runs it on Windows.
+          - target: x86_64-pc-windows-gnu
+            os: ubuntu-latest
             asset: windows_amd64
 
     steps:
@@ -75,21 +77,29 @@ jobs:
           rustup target add ${{ matrix.target }}
 
       - name: Install cargo-zigbuild
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.asset != 'windows_amd64'
         run: pip install ziglang cargo-zigbuild
 
       - name: Build (Linux, static with musl)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.asset != 'windows_amd64'
         run: cargo zigbuild --release --locked --target ${{ matrix.target }}
 
-      - name: Build (macOS, Windows)
-        if: runner.os != 'Linux'
+      - name: Build (Windows, on Linux with MinGW)
+        if: matrix.asset == 'windows_amd64'
+        env:
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER: x86_64-w64-mingw32-gcc
+        run: |
+          sudo apt-get update && sudo apt-get install -y mingw-w64
+          cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       # The same name in every release, so releases/latest/download/… always
       # finds it; the binary at the archive's top, as install.sh and the cask expect.
       - name: Package
-        if: runner.os != 'Windows'
+        if: matrix.asset != 'windows_amd64'
         run: |
           name="spendyard_${{ matrix.asset }}"
           mkdir -p "dist/$name"
@@ -98,13 +108,12 @@ jobs:
 
       # A zip, as Windows opens one: spendyard.exe at its top.
       - name: Package (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
+        if: matrix.asset == 'windows_amd64'
         run: |
           name="spendyard_${{ matrix.asset }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/spendyard.exe" README.md LICENSE "dist/$name/"
-          (cd "dist/$name" && 7z a "../$name.zip" spendyard.exe README.md LICENSE)
+          (cd "dist/$name" && zip "../$name.zip" spendyard.exe README.md LICENSE)
 
       - uses: actions/upload-artifact@v4
         with:
