@@ -702,6 +702,18 @@ fn payment_row(found: &Transaction) -> Option<Row> {
 
     row.payment = Some(found.id.clone());
 
+    // What it was in the merchant's currency, when another: the statement's own figure, signed as the row is.
+    if let Some(original) = charge.original_amount.as_deref().and_then(amount) {
+        let original = if refund {
+            -original.abs()
+        } else {
+            original.abs()
+        };
+
+        row.original_total = Some(original.to_string());
+        row.original_currency = charge.original_currency.clone();
+    }
+
     Some(row)
 }
 
@@ -1009,6 +1021,24 @@ mod tests {
         assert_eq!(rows[0].kind, "refund");
         assert_eq!(rows[0].total.as_deref(), Some("-45.00"));
         assert_eq!(rows[0].payment.as_deref(), Some("100:2"));
+    }
+
+    #[test]
+    fn a_payment_in_another_currency_counts_as_the_statement_says_it_was() {
+        let mut figma = charge(1, "2026-11-10", "FIGMA MONTHLY", "189.28");
+
+        figma.currency = Some("NOK".into());
+        figma.original_amount = Some("20.00".into());
+        figma.original_currency = Some("USD".into());
+
+        let matched = match_transactions(vec![figma], vec![], &[], &RateTable::default());
+        let rows = payment_rows(&matched);
+
+        // In dollars, the statement's own 20.00: no rate needed, none of the bank's fee.
+        let dollars = crate::spend::converted(&RateTable::default(), &rows[0], "USD");
+
+        assert_eq!(dollars, Some(Decimal::new(2000, 2)));
+        assert_eq!(rows[0].total.as_deref(), Some("189.28"));
     }
 
     #[test]

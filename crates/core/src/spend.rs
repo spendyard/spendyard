@@ -137,6 +137,16 @@ pub struct Row {
     /// transaction's ID ([`crate::transactions::Charge::key`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub payment: Option<String>,
+    /// A statement's payment in another currency than the card's: what it
+    /// was in the merchant's currency, as the statement says (`20.00`, below
+    /// nothing for money back), and that currency. [`converted`] takes it
+    /// as it is when it's the currency asked for, rather than converting
+    /// the card's amount back at the day's rate, which the bank's rate and
+    /// fee are not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_total: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_currency: Option<String>,
 }
 
 impl Row {
@@ -196,6 +206,8 @@ impl Row {
             account: account_of(stored.account_workspace, stored.account_email),
             product: stored.product.filter(|product| !product.trim().is_empty()),
             payment: None,
+            original_total: None,
+            original_currency: None,
         }
     }
 }
@@ -420,8 +432,20 @@ pub fn rates_needed(rows: &[Row], target: &str) -> Option<(BTreeSet<String>, Str
     Some((currencies, since))
 }
 
-/// A row's total in `target`, or `None` when it can't be converted.
+/// A row's total in `target`, or `None` when it can't be converted. A
+/// statement's payment that says what it was in `target` is that, exactly.
 pub fn converted(rates: &impl Rates, row: &Row, target: &str) -> Option<Decimal> {
+    let said = row
+        .original_currency
+        .as_deref()
+        .filter(|currency| currency.eq_ignore_ascii_case(target))
+        .and(row.original_total.as_deref())
+        .and_then(amount);
+
+    if let Some(original) = said {
+        return Some(original);
+    }
+
     let total = row.total.as_deref().and_then(amount)?;
     let currency = row.currency.as_deref()?;
 
