@@ -8,8 +8,8 @@ import "spendyard/api/v1/model.proto";
 import "spendyard/api/v1/options.proto";
 
 // AccountService is the signed-in person's own account: what they're called,
-// their email addresses and how they sign in, and where they're signed in. It
-// follows them across organisations, and anyone signed in may use it.
+// and where they're signed in. It follows them across organisations, and
+// anyone signed in may use it.
 service AccountService {
   // GetAccount returns the caller's profile.
   rpc GetAccount(GetAccountRequest) returns (GetAccountResponse) {
@@ -17,45 +17,6 @@ service AccountService {
   }
   // UpdateProfile changes what the caller is called.
   rpc UpdateProfile(UpdateProfileRequest) returns (UpdateProfileResponse) {
-    option (spendyard.api.v1.permission) = "account:write";
-  }
-  // ListEmailAddresses lists the caller's addresses: each one they've shown
-  // is theirs, by a code sent to it or a provider vouching for it. Signing in
-  // by any of them lands in this account; email goes to the primary one.
-  rpc ListEmailAddresses(ListEmailAddressesRequest) returns (ListEmailAddressesResponse) {
-    option (spendyard.api.v1.permission) = "account:read";
-  }
-  // AddEmailAddress sends a code to an address, to add it with
-  // VerifyEmailAddress. The answer is the same whether or not the address is
-  // someone else's: that's said only once the code shows it's the caller's.
-  rpc AddEmailAddress(AddEmailAddressRequest) returns (AddEmailAddressResponse) {
-    option (spendyard.api.v1.permission) = "account:write";
-  }
-  // VerifyEmailAddress adds the address with the code sent to it. Invites to
-  // it are accepted, as at sign-in. FAILED_PRECONDITION when another account
-  // has it.
-  rpc VerifyEmailAddress(VerifyEmailAddressRequest) returns (VerifyEmailAddressResponse) {
-    option (spendyard.api.v1.permission) = "account:write";
-  }
-  // SetPrimaryEmailAddress makes one of the caller's addresses the one
-  // Spendyard writes to, and shows to the others in their organisations.
-  rpc SetPrimaryEmailAddress(SetPrimaryEmailAddressRequest) returns (SetPrimaryEmailAddressResponse) {
-    option (spendyard.api.v1.permission) = "account:write";
-  }
-  // RemoveEmailAddress takes an address off the caller's account; not the
-  // primary one (FAILED_PRECONDITION). A provider linked under it stays.
-  rpc RemoveEmailAddress(RemoveEmailAddressRequest) returns (RemoveEmailAddressResponse) {
-    option (spendyard.api.v1.permission) = "account:write";
-  }
-  // ListSignInProviders lists the providers the caller signs in with, and
-  // whether a code by email works here too. Adding one is in the browser:
-  // /auth/link-social, while signed in.
-  rpc ListSignInProviders(ListSignInProvidersRequest) returns (ListSignInProvidersResponse) {
-    option (spendyard.api.v1.permission) = "account:read";
-  }
-  // RemoveSignInProvider takes a provider off, as long as another way in
-  // remains: another provider, or a code by email (FAILED_PRECONDITION).
-  rpc RemoveSignInProvider(RemoveSignInProviderRequest) returns (RemoveSignInProviderResponse) {
     option (spendyard.api.v1.permission) = "account:write";
   }
   // ListSessions lists where the caller is signed in: browsers, and the CLI.
@@ -94,87 +55,6 @@ message UpdateProfileRequest {
 message UpdateProfileResponse {
   Account account = 1;
 }
-
-// EmailAddress is one of the caller's addresses.
-message EmailAddress {
-  // Lowercase.
-  string email = 1;
-  // The one Spendyard writes to: invites, notices, the weekly email. Always
-  // exactly one.
-  bool primary = 2;
-  // How they showed it's theirs: "email" for a code sent to it, or the
-  // provider that vouched for it, "google" or "microsoft".
-  string verified_by = 3;
-  google.protobuf.Timestamp create_time = 4;
-}
-
-message ListEmailAddressesRequest {}
-
-message ListEmailAddressesResponse {
-  // The primary first, then in the order they were added.
-  repeated EmailAddress email_addresses = 1;
-}
-
-message AddEmailAddressRequest {
-  string email = 1 [(buf.validate.field).string = {
-    email: true
-    max_len: 254
-  }];
-}
-
-message AddEmailAddressResponse {}
-
-message VerifyEmailAddressRequest {
-  string email = 1 [(buf.validate.field).string = {
-    email: true
-    max_len: 254
-  }];
-  // The 6 digits from the email.
-  string code = 2 [(buf.validate.field).string.pattern = "^[0-9]{6}$"];
-}
-
-message VerifyEmailAddressResponse {
-  EmailAddress email_address = 1;
-}
-
-message SetPrimaryEmailAddressRequest {
-  string email = 1 [(buf.validate.field).string.min_len = 1];
-}
-
-message SetPrimaryEmailAddressResponse {
-  Account account = 1;
-}
-
-message RemoveEmailAddressRequest {
-  string email = 1 [(buf.validate.field).string.min_len = 1];
-}
-
-message RemoveEmailAddressResponse {}
-
-// SignInProvider is a provider account linked to the caller's.
-message SignInProvider {
-  // "google" or "microsoft".
-  string provider = 1;
-  // The address the provider gave, when it gave one.
-  string email = 2;
-  google.protobuf.Timestamp create_time = 3;
-}
-
-message ListSignInProvidersRequest {}
-
-message ListSignInProvidersResponse {
-  // In the order they were linked.
-  repeated SignInProvider providers = 1;
-  // Whether a code by email signs in here: one more way in, to any of their
-  // addresses.
-  bool email_code = 2;
-}
-
-message RemoveSignInProviderRequest {
-  string provider = 1 [(buf.validate.field).string.min_len = 1];
-}
-
-message RemoveSignInProviderResponse {}
 
 // Session is one signed-in browser or CLI.
 message Session {
