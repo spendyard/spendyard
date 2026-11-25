@@ -31,7 +31,9 @@ processor.
 is often just a cover note. Set source_part to the part you read the details from.
 - Record every line item. Seats are lines of kind seat with quantity and unit_price; usage, \
 overage, tokens and requests are kind usage. Sum seats per product line as written; don't merge \
-products.
+products. When a line is broken down into sub-lines that add up to it (pricing tiers, a flat fee \
+and seats), record the sub-lines and not the line they add up to, so nothing counts twice; a \
+zero-amount sub-line can be left out.
 - A forwarded email: read the forwarded receipt, not the note from the person forwarding it.
 - Invoice numbers and receipt numbers are different fields. Take each from the number labelled \
 as such; many receipts (Stripe's in particular) show both. Never put one in the other's field.

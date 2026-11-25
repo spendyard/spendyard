@@ -93,6 +93,12 @@ message Payment {
   // A credit: the payment whose invoice it credits, found by the invoice's
   // number its credit note names, for the same vendor; 0 when none is.
   int32 corrects_payment_id = 17;
+  // Marked personal, or as not spend at all, on one of its documents: it
+  // isn't the organisation's spend, and no sum counts it. Lists leave it
+  // out unless asked for all; it keeps its number, so the mark can be
+  // taken off where it was put.
+  bool personal = 18;
+  bool not_spend = 19;
 }
 
 message ListPaymentsRequest {
@@ -114,6 +120,8 @@ message ListPaymentsRequest {
   // Only this subscription's (Subscription.id): those its receipts and
   // invoices are evidence of.
   string subscription_id = 8 [(buf.validate.field).string.max_len = 300];
+  // Also those marked personal or not spend.
+  bool include_all = 9;
 }
 
 message ListPaymentsResponse {

@@ -26,6 +26,8 @@ pub struct PaymentsOptions {
     /// YYYY-MM-DD, both included.
     pub from: Option<String>,
     pub to: Option<String>,
+    /// Also those marked personal or not spend.
+    pub all: bool,
     pub limit: usize,
     pub json: bool,
 }
@@ -109,6 +111,7 @@ pub async fn payments(options: PaymentsOptions) -> Result<()> {
             "query": options.vendor.clone().unwrap_or_default(),
             "from": options.from.clone().unwrap_or_default(),
             "to": options.to.clone().unwrap_or_default(),
+            "includeAll": options.all,
         });
 
         let page: PaymentsPage = cloud.call("PaymentService/ListPayments", request).await?;
@@ -173,6 +176,14 @@ fn evidence_of(payment: &Value) -> String {
     let kind = word(text(payment, "kind"), "PAYMENT_KIND_");
 
     let mut words: Vec<String> = Vec::new();
+
+    if payment["personal"].as_bool() == Some(true) {
+        words.push("personal".into());
+    }
+
+    if payment["notSpend"].as_bool() == Some(true) {
+        words.push("not spend".into());
+    }
 
     if kind != "payment" && !kind.is_empty() {
         words.push(kind.clone());

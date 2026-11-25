@@ -71,6 +71,8 @@ pub struct PaymentsOptions {
     pub missing: bool,
     /// Only this vendor (part of its name or key).
     pub vendor: Option<String>,
+    /// Also those marked personal or not spend.
+    pub all: bool,
     pub limit: usize,
     pub json: bool,
 }
@@ -86,6 +88,7 @@ pub async fn list(options: PaymentsOptions) -> Result<()> {
     let picked: Vec<&Record> = found
         .records
         .iter()
+        .filter(|record| options.all || !(record.row.personal || record.row.ignored))
         .filter(|record| !options.missing || record.evidence.documents.is_empty())
         .filter(|record| {
             vendor.as_deref().is_none_or(|vendor| {
@@ -148,6 +151,14 @@ fn evidence_of(record: &Record) -> String {
     let lines = record.evidence.charges.len();
 
     let mut words: Vec<String> = Vec::new();
+
+    if record.row.personal {
+        words.push("personal".into());
+    }
+
+    if record.row.ignored {
+        words.push("not spend".into());
+    }
 
     if record.kind != "payment" {
         words.push(record.kind.clone());

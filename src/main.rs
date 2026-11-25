@@ -163,6 +163,10 @@ enum Command {
         #[arg(long)]
         vendor: Option<String>,
 
+        /// Also those marked personal or not spend.
+        #[arg(long)]
+        all: bool,
+
         #[arg(long, default_value_t = 50)]
         limit: usize,
 
@@ -473,6 +477,10 @@ enum CloudAction {
         /// To this day, YYYY-MM-DD, included.
         #[arg(long)]
         to: Option<String>,
+
+        /// Also those marked personal or not spend.
+        #[arg(long)]
+        all: bool,
 
         #[arg(long, default_value_t = 50)]
         limit: usize,
@@ -850,11 +858,13 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
         Command::Payments {
             missing,
             vendor,
+            all,
             limit,
             json,
         } => cli::payments::list(cli::payments::PaymentsOptions {
             missing,
             vendor,
+            all,
             limit,
             json,
         })
@@ -1112,6 +1122,7 @@ async fn cloud(action: CloudAction) -> anyhow::Result<ExitCode> {
             vendor,
             from,
             to,
+            all,
             limit,
             json,
         } => cli::cloud_lists::payments(cli::cloud_lists::PaymentsOptions {
@@ -1120,6 +1131,7 @@ async fn cloud(action: CloudAction) -> anyhow::Result<ExitCode> {
             vendor,
             from,
             to,
+            all,
             limit,
             json,
         })

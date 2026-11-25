@@ -240,9 +240,29 @@ pub fn amount(text: &str) -> Option<Decimal> {
 /// receipt as they are. Money back (a refund, a credit note paid back) is
 /// below nothing, however it was written. In the rows' order.
 pub fn spend(rows: &[Row]) -> Vec<Row> {
-    let counted: Vec<&Row> = rows.iter().filter(|row| counts_as_paid(row)).collect();
-
     let groups = group(rows, &Matching::default());
+
+    // A payment with a document marked personal or not spend is marked whole: none of its rows count.
+    let pieces_marked: BTreeSet<Piece> = rows
+        .iter()
+        .filter(|row| paid_or_back(row) && (row.personal || row.ignored))
+        .map(piece_of)
+        .collect();
+
+    let marked: BTreeSet<Piece> = groups
+        .iter()
+        .filter(|evidence| {
+            evidence
+                .pieces()
+                .any(|piece| pieces_marked.contains(&piece))
+        })
+        .flat_map(|evidence| evidence.pieces())
+        .collect();
+
+    let counted: Vec<&Row> = rows
+        .iter()
+        .filter(|row| counts_as_paid(row) && !marked.contains(&piece_of(row)))
+        .collect();
 
     let payment_of: BTreeMap<Piece, usize> = groups
         .iter()
@@ -356,14 +376,21 @@ pub(crate) fn is_money_back(row: &Row) -> bool {
     refund || credited
 }
 
-/// Whether a row is money that counts, not personal or ignored: paid (a
-/// receipt or paid invoice, above nothing) or back ([`is_money_back`]).
-pub(crate) fn counts_as_paid(row: &Row) -> bool {
+/// Whether a row is money that moved, marked or not: paid (a receipt or
+/// paid invoice, above nothing) or back ([`is_money_back`]). Payments are
+/// made of these ([`crate::payments`]), marked ones too.
+pub(crate) fn paid_or_back(row: &Row) -> bool {
     let total = row.total.as_deref().and_then(amount).unwrap_or_default();
 
     let paid = row.is_receipt && total > Decimal::ZERO;
 
-    !row.personal && !row.ignored && (paid || is_money_back(row))
+    paid || is_money_back(row)
+}
+
+/// Whether a row is money that counts: paid or back, and not marked
+/// personal or ignored.
+pub(crate) fn counts_as_paid(row: &Row) -> bool {
+    !row.personal && !row.ignored && paid_or_back(row)
 }
 
 /// What one payment's documents share when it was saved twice: its vendor,

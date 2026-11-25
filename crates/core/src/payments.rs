@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::pairing::{Paper, pair_invoices};
 use crate::spend::{
-    Row, amount, counts_as_paid, is_money_back, number_key, payment_row, plain_number,
+    Row, amount, is_money_back, number_key, paid_or_back, payment_row, plain_number,
     same_vendor_and_amount,
 };
 use crate::transactions::Matching;
@@ -100,7 +100,7 @@ pub struct Regrouped {
 /// refund, with its receipt or with none; one matched to a document that
 /// doesn't count (personal) doesn't either.
 pub fn group(rows: &[Row], matching: &Matching) -> Vec<Evidence> {
-    let paid: Vec<&Row> = rows.iter().filter(|row| counts_as_paid(row)).collect();
+    let paid: Vec<&Row> = rows.iter().filter(|row| paid_or_back(row)).collect();
 
     let mut sets = Sets::default();
 
@@ -384,7 +384,7 @@ pub fn records(rows: &[Row], matching: &Matching, stored: &[Payment], retired: &
 
     let mut rows_of: BTreeMap<Piece, Vec<&Row>> = BTreeMap::new();
 
-    for row in rows.iter().filter(|row| counts_as_paid(row)) {
+    for row in rows.iter().filter(|row| paid_or_back(row)) {
         rows_of.entry(piece_of(row)).or_default().push(row);
     }
 
@@ -424,7 +424,11 @@ fn record_of(payment: &Payment, rows_of: &BTreeMap<Piece, Vec<&Row>>) -> Option<
     // Newest first, as the store gives them, so the receipt chosen is as spend's.
     rows.sort_by(|a, b| b.date.cmp(&a.date).then(b.id.cmp(&a.id)));
 
-    let row = payment_row(&rows);
+    let mut row = payment_row(&rows);
+
+    // Marked when any of its documents is: it stays a payment, under its number, and no sum counts it.
+    row.personal = rows.iter().any(|row| row.personal);
+    row.ignored = rows.iter().any(|row| row.ignored);
 
     let kind = match (is_money_back(&row), row.kind.as_str()) {
         (false, _) => "payment",
@@ -674,7 +678,7 @@ mod tests {
     }
 
     #[test]
-    fn a_card_line_matched_to_a_personal_receipt_is_personal_too() {
+    fn a_card_line_matched_to_a_personal_receipt_is_its_payment_marked_personal() {
         let mut personal = row(1, "2026-11-19", "Netflix", "15.49");
 
         personal.personal = 1;
@@ -682,7 +686,59 @@ mod tests {
         let rows = rows(vec![personal]);
         let matching = matching(vec![line(1, "purchase", Some(1))]);
 
-        assert!(group(&rows, &matching).is_empty());
+        assert_eq!(group(&rows, &matching), [evidence(&[1], &["90:1"])]);
+
+        let found = records(&rows, &matching, &[], &[]);
+
+        assert_eq!(found.records.len(), 1);
+        assert!(found.records[0].row.personal);
+        assert!(spend(&rows).is_empty());
+    }
+
+    #[test]
+    fn a_payment_marked_keeps_its_number_and_counts_again_when_the_mark_is_off() {
+        let receipt = row(1, "2026-11-19", "Sentry", "89.00");
+        let mut copy = row(2, "2026-11-19", "Sentry", "89.00");
+
+        copy.number = Some("2385-2252".into());
+
+        let mut first = receipt.clone();
+
+        first.number = Some("2385-2252".into());
+
+        let before = records(
+            &rows(vec![first.clone(), copy.clone()]),
+            &Matching::default(),
+            &[],
+            &[],
+        );
+
+        assert_eq!(before.records.len(), 1);
+        assert!(!before.records[0].row.personal);
+
+        // One of its two documents marked: the payment is marked whole, under the same number, and spend has none of it.
+        let mut marked = first.clone();
+
+        marked.ignored = 1;
+
+        let marked_rows = rows(vec![marked, copy.clone()]);
+        let after = records(&marked_rows, &Matching::default(), &before.payments, &[]);
+
+        assert_eq!(after.records.len(), 1);
+        assert_eq!(after.records[0].id, before.records[0].id);
+        assert!(after.records[0].row.ignored);
+        assert!(spend(&marked_rows).is_empty());
+
+        // The mark taken off: the same payment, counted again.
+        let again = records(
+            &rows(vec![first, copy]),
+            &Matching::default(),
+            &after.payments,
+            &[],
+        );
+
+        assert_eq!(again.records[0].id, before.records[0].id);
+        assert!(!again.records[0].row.ignored);
     }
 
     #[test]
