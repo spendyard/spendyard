@@ -26,5 +26,6 @@ pub mod read;
 pub mod reports;
 pub mod secrets;
 pub mod store;
+pub mod store_commands;
 pub mod transactions;
 pub mod vendors;

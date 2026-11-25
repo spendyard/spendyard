@@ -171,6 +171,24 @@ pub async fn push(options: PushOptions) -> Result<()> {
     Ok(())
 }
 
+/// The organisation this machine acts in and how many documents the next
+/// push would send it, when it's signed in: for `store info`.
+pub(crate) fn waiting(store: &Store) -> Result<Option<(String, usize)>> {
+    let Some(signed_in) = crate::cli::cloud::signed_in()? else {
+        return Ok(None);
+    };
+
+    let place = (signed_in.server.clone(), signed_in.org.id.clone());
+    let sent = SentDb::open()?.sent(&place)?;
+
+    let due = documents(store)?
+        .iter()
+        .filter(|document| is_due(store, document, sent.get(&document.sha256)))
+        .count();
+
+    Ok(Some((signed_in.org.name, due)))
+}
+
 /// Whether a document has anything the cloud hasn't had from here: all of
 /// it, a newer reading, a newer edit, or its original, while there's one
 /// here to send (one that isn't stays the cloud's reading only, not asked

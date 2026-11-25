@@ -115,6 +115,14 @@ spendyard documents edit 412 --personal    # leave one out of the spend
 spendyard vendors unknown                  # vendors on your receipts the catalog lacks
 ```
 
+The store as a whole:
+
+```bash
+spendyard store info                       # where it is, what it holds, originals, scans, what's left to push
+spendyard store backup                     # the store and its originals in one .tar.gz, here
+spendyard store wipe                       # delete it all to start again, after asking; --backup first
+```
+
 Spendyard Cloud, for the whole company's spend, is optional. Sign this
 machine in, then push what it reads, which the company sees together:
 

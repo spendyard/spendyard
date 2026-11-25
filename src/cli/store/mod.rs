@@ -24,7 +24,7 @@ use spendyard_core::{Document, ReadResult};
 use super::config;
 
 /// Bump with every change to the tables, and add a step to `migrate`.
-const SCHEMA_VERSION: i64 = 8;
+pub(crate) const SCHEMA_VERSION: i64 = 8;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS documents (
@@ -263,7 +263,7 @@ impl Store {
 
         if version != 0 {
             bail!(
-                "{} is a store of another spendyard (version {version}, this one reads {SCHEMA_VERSION}): move it away, and its originals beside it, to start a new one",
+                "{} is a store of another spendyard (version {version}, this one reads {SCHEMA_VERSION}): `spendyard store backup` keeps it, `spendyard store wipe` starts a new one",
                 path.display()
             );
         }
@@ -817,7 +817,7 @@ mod tests {
         let refused = Store::open_at(&path).err().unwrap().to_string();
 
         assert!(refused.contains("version 7, this one reads 8"));
-        assert!(refused.contains("move it away"));
+        assert!(refused.contains("spendyard store wipe"));
 
         // Untouched: still its own tables and version.
         let after = Connection::open(&path).unwrap();

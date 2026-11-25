@@ -99,6 +99,13 @@ enum Command {
         action: ApiAction,
     },
 
+    /// The local store as a whole: what's in it, a backup of it, and
+    /// wiping it to start again.
+    Store {
+        #[command(subcommand)]
+        action: StoreAction,
+    },
+
     /// Mailboxes the CLI reads itself: sign in, list them, scan them,
     /// sign out.
     Mailbox {
@@ -355,6 +362,34 @@ enum ApiAction {
         /// The request as JSON; `-` reads it from standard input; {} when
         /// none.
         request: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum StoreAction {
+    /// Where it is, its version and size, what it holds, its originals,
+    /// each mailbox's last scan, and, when signed in to Spendyard Cloud,
+    /// how many documents the next `cloud push` would send.
+    Info {
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// The store, its originals and what was pushed, in one .tar.gz: in the
+    /// current folder, or at PATH.
+    Backup { path: Option<PathBuf> },
+
+    /// Delete the store, its originals and what was pushed, for good, after
+    /// saying what goes and asking. The config, model keys, sign-ins and
+    /// backups stay.
+    Wipe {
+        /// Don't ask.
+        #[arg(long)]
+        yes: bool,
+
+        /// Back it up to ~/.spendyard/backups/ first.
+        #[arg(long)]
+        backup: bool,
     },
 }
 
@@ -762,6 +797,8 @@ async fn run(env_files: Vec<PathBuf>) -> ExitCode {
 
         Command::Api { action } => api(action).await,
 
+        Command::Store { action } => store(action).await,
+
         Command::Mailbox { action } => mailbox(action).await,
 
         Command::Documents { action } => documents(action).await,
@@ -1159,6 +1196,16 @@ async fn api(action: ApiAction) -> anyhow::Result<ExitCode> {
             .await
             .map(|()| ExitCode::SUCCESS),
     }
+}
+
+/// `spendyard store …`: the local store as a whole.
+async fn store(action: StoreAction) -> anyhow::Result<ExitCode> {
+    match action {
+        StoreAction::Info { json } => cli::store_commands::info(json).await,
+        StoreAction::Backup { path } => cli::store_commands::backup(path),
+        StoreAction::Wipe { yes, backup } => cli::store_commands::wipe(yes, backup).await,
+    }
+    .map(|()| ExitCode::SUCCESS)
 }
 
 /// `spendyard mailbox …`: sign-ins and scans of the mailboxes the CLI reads.
