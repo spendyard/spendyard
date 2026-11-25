@@ -200,6 +200,9 @@ enum DocumentFilter {
   DOCUMENT_FILTER_READING = 2;
   // Those read.
   DOCUMENT_FILTER_READ = 3;
+  // Those read with something to check (flags), not checked yet, and not
+  // set aside: what the dashboard's Inbox asks someone to look at.
+  DOCUMENT_FILTER_TO_REVIEW = 4;
 }
 
 message ListDocumentsRequest {
@@ -221,6 +224,13 @@ message ListDocumentsRequest {
   google.protobuf.Timestamp since = 6;
   // Only those that arrived before this time; unset for no bound.
   google.protobuf.Timestamp until = 7;
+  // Only this vendor's (a Vendor's id), as matching has them: those read as
+  // the vendor's, or corrected to it.
+  string vendor_id = 8 [(buf.validate.field).string.max_len = 200];
+  // Only those corrected (their DocumentEdit's updated_at) at or after this
+  // time; unset for no bound. What `spendyard cloud pull` asks for: the
+  // corrections made since it last pulled.
+  google.protobuf.Timestamp edited_since = 9;
 }
 
 message ListDocumentsResponse {

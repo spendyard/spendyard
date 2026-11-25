@@ -122,6 +122,9 @@ message ListTransactionsRequest {
   // Only those paid from and to these days, YYYY-MM-DD, both included.
   string from = 6 [(buf.validate.field).string.pattern = "^(\\d{4}-\\d{2}-\\d{2})?$"];
   string to = 7 [(buf.validate.field).string.pattern = "^(\\d{4}-\\d{2}-\\d{2})?$"];
+  // Only this card statement's lines (the statement's document id), in the
+  // order it lists them.
+  int32 statement_id = 8 [(buf.validate.field).int32.gte = 0];
 }
 
 message ListTransactionsResponse {

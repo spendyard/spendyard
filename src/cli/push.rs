@@ -649,11 +649,11 @@ impl SentDb {
                  pushed_at     TEXT NOT NULL,
                  PRIMARY KEY (server, org_id, sha256)
              );
-             CREATE TABLE IF NOT EXISTS pulled (
-                 server   TEXT NOT NULL,
-                 org_id   TEXT NOT NULL,
-                 sync_id  INTEGER NOT NULL,
-                 epoch    INTEGER NOT NULL,
+             DROP TABLE IF EXISTS pulled;
+             CREATE TABLE IF NOT EXISTS pulled_edits (
+                 server        TEXT NOT NULL,
+                 org_id        TEXT NOT NULL,
+                 edited_since  TEXT NOT NULL,
                  PRIMARY KEY (server, org_id)
              );",
         )?;
@@ -680,15 +680,16 @@ impl SentDb {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Where pull got to on this server and organisation: the sync id and
-    /// its epoch; none before the first pull.
-    pub(crate) fn pulled(&self, (server, org_id): &(String, String)) -> Result<Option<(i64, i64)>> {
+    /// Where pull got to on this server and organisation: the newest
+    /// correction it brought, as the cloud timed it; none before the first
+    /// pull.
+    pub(crate) fn pulled(&self, (server, org_id): &(String, String)) -> Result<Option<String>> {
         let found = self
             .connection
             .query_row(
-                "SELECT sync_id, epoch FROM pulled WHERE server = ?1 AND org_id = ?2",
+                "SELECT edited_since FROM pulled_edits WHERE server = ?1 AND org_id = ?2",
                 params![server, org_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| row.get(0),
             )
             .optional()?;
 
@@ -698,13 +699,12 @@ impl SentDb {
     pub(crate) fn set_pulled(
         &self,
         (server, org_id): &(String, String),
-        sync_id: i64,
-        epoch: i64,
+        edited_since: &str,
     ) -> Result<()> {
         self.connection.execute(
-            "INSERT INTO pulled (server, org_id, sync_id, epoch) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT (server, org_id) DO UPDATE SET sync_id = ?3, epoch = ?4",
-            params![server, org_id, sync_id, epoch],
+            "INSERT INTO pulled_edits (server, org_id, edited_since) VALUES (?1, ?2, ?3)
+             ON CONFLICT (server, org_id) DO UPDATE SET edited_since = ?3",
+            params![server, org_id, edited_since],
         )?;
 
         Ok(())

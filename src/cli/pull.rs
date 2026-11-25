@@ -1,10 +1,10 @@
 //! `spendyard cloud pull`: corrections made in the cloud, brought to the
 //! documents this machine has (the platform's docs/push-pull.md §3).
 //!
-//! It follows the organisation's log of changes (`SyncChanges`), documents
-//! only, from where the last pull got to; behind what the log keeps, it
-//! starts over from all of them (`SyncBootstrap`). Each document comes with
-//! its SHA-256 and its correction (`DocumentEdit`, with when it was made):
+//! It asks for the documents corrected since the newest correction the last
+//! pull brought (`ListDocuments`, `edited_since`); the first pull asks for
+//! every corrected one. Each document comes with its SHA-256 and its
+//! correction (`DocumentEdit`, with when it was made):
 //! one this machine has, corrected there later than here, takes the cloud's
 //! correction whole. Newer here stays, for the next push to send. Documents
 //! this machine hasn't got are passed over: the company's store stays the
@@ -21,7 +21,8 @@ use crate::cli::cloud::Cloud;
 use crate::cli::push::SentDb;
 use crate::cli::store::Store;
 
-const DOCUMENTS: &str = "ENTITY_KIND_DOCUMENT";
+/// How many documents a page of `ListDocuments` asks for: the most it gives.
+const PAGE_SIZE: u32 = 500;
 
 pub struct PullOptions {
     pub dry_run: bool,
@@ -29,37 +30,9 @@ pub struct PullOptions {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct Changes {
+struct Listed {
     #[serde(default)]
-    epoch: Option<String>,
-
-    #[serde(default)]
-    changes: Vec<Value>,
-
-    #[serde(default)]
-    last_sync_id: Option<String>,
-
-    #[serde(default)]
-    more: bool,
-
-    #[serde(default)]
-    bootstrap: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Bootstrap {
-    #[serde(default)]
-    epoch: Option<String>,
-
-    #[serde(default)]
-    sync_id: Option<String>,
-
-    #[serde(default)]
-    changes: Vec<Value>,
-
-    #[serde(default)]
-    next_page_token: Option<String>,
+    documents: Vec<Value>,
 }
 
 /// A correction, as the store keeps one.
@@ -79,13 +52,6 @@ struct Edit {
     updated: String,
 }
 
-/// A long number of protobuf's JSON, a string, as a number.
-fn number(text: &Option<String>) -> i64 {
-    text.as_deref()
-        .and_then(|text| text.parse().ok())
-        .unwrap_or(0)
-}
-
 /// `spendyard cloud pull`.
 pub async fn pull(options: PullOptions) -> Result<()> {
     let cloud = Cloud::connect()?;
@@ -95,7 +61,16 @@ pub async fn pull(options: PullOptions) -> Result<()> {
     let signed_in = cloud.signed_in_as();
     let place = (signed_in.server.clone(), signed_in.org.id.clone());
 
-    let (documents, sync_id, epoch) = changed_documents(&cloud, &sent_db, &place).await?;
+    let since = sent_db.pulled(&place)?;
+    let documents = corrected_documents(&cloud, since.as_deref()).await?;
+
+    // Where the next pull starts: the newest correction this one brought, or where this one started.
+    let newest = documents
+        .iter()
+        .filter_map(|document| document["edit"]["updatedAt"].as_str())
+        .max()
+        .map(str::to_string)
+        .or(since);
 
     // The newest of each: a document changed twice is the later change.
     let mut latest: BTreeMap<String, Value> = BTreeMap::new();
@@ -154,7 +129,9 @@ pub async fn pull(options: PullOptions) -> Result<()> {
         return Ok(());
     }
 
-    sent_db.set_pulled(&place, sync_id, epoch)?;
+    if let Some(newest) = &newest {
+        sent_db.set_pulled(&place, newest)?;
+    }
 
     println!(
         "Corrected {corrected} documents from {org}; {newer_here} are corrected here since, for the next push"
@@ -163,94 +140,36 @@ pub async fn pull(options: PullOptions) -> Result<()> {
     Ok(())
 }
 
-/// The documents changed since the last pull, and where that gets to: from
-/// the log, or from everything when the log can't say.
-async fn changed_documents(
-    cloud: &Cloud,
-    sent_db: &SentDb,
-    place: &(String, String),
-) -> Result<(Vec<Value>, i64, i64)> {
-    let org_id = &place.1;
-    let (mut since, mut epoch) = sent_db.pulled(place)?.unwrap_or((0, 0));
-
-    let mut documents = Vec::new();
-    let mut started_over = false;
+/// The documents corrected at or after `since` (a correction's
+/// `updatedAt`), every one corrected when there's none: page after page,
+/// newest first.
+async fn corrected_documents(cloud: &Cloud, since: Option<&str>) -> Result<Vec<Value>> {
+    let mut documents: Vec<Value> = Vec::new();
+    let mut before_id = 0;
 
     loop {
-        let request = json!({
-            "orgId": org_id,
-            "since": since.to_string(),
-            "epoch": epoch.to_string(),
-            "kinds": [DOCUMENTS],
-        });
+        let mut request = json!({ "pageSize": PAGE_SIZE, "beforeId": before_id });
 
-        let page: Changes = cloud.call("SyncService/SyncChanges", request).await?;
+        // The first pull: every document corrected, the time before any was.
+        request["editedSince"] = json!(since.unwrap_or("1970-01-01T00:00:00Z"));
 
-        if page.bootstrap {
-            // Once: a log that says to start over again straight after is the server's to answer for.
-            anyhow::ensure!(
-                !started_over,
-                "the cloud keeps saying to start over; try again later"
-            );
+        let page: Listed = cloud.call("DocumentService/ListDocuments", request).await?;
+        let count = page.documents.len();
 
-            let (all, as_of, of_epoch) = everything(cloud, org_id).await?;
+        before_id = page
+            .documents
+            .last()
+            .and_then(|document| document["id"].as_i64())
+            .unwrap_or(0);
 
-            documents.extend(all);
-            since = as_of;
-            epoch = of_epoch.max(number(&page.epoch));
-            started_over = true;
+        documents.extend(page.documents);
 
-            continue;
-        }
-
-        epoch = number(&page.epoch);
-        since = number(&page.last_sync_id).max(since);
-
-        documents.extend(
-            page.changes
-                .into_iter()
-                .filter_map(|change| change.get("document").cloned()),
-        );
-
-        if !page.more {
+        if count < PAGE_SIZE as usize || before_id == 0 {
             break;
         }
     }
 
-    Ok((documents, since, epoch))
-}
-
-/// Every document the caller may see, and the sync id that's as of.
-async fn everything(cloud: &Cloud, org_id: &str) -> Result<(Vec<Value>, i64, i64)> {
-    let mut documents = Vec::new();
-    let mut page_token = String::new();
-    let mut as_of = None;
-    let mut epoch = 0;
-
-    loop {
-        let request = json!({ "orgId": org_id, "kind": DOCUMENTS, "pageToken": page_token });
-
-        let page: Bootstrap = cloud.call("SyncService/SyncBootstrap", request).await?;
-
-        if as_of.is_none() {
-            as_of = Some(number(&page.sync_id));
-            epoch = number(&page.epoch);
-        }
-
-        documents.extend(
-            page.changes
-                .into_iter()
-                .filter_map(|change| change.get("document").cloned()),
-        );
-
-        page_token = page.next_page_token.unwrap_or_default();
-
-        if page_token.is_empty() {
-            break;
-        }
-    }
-
-    Ok((documents, as_of.unwrap_or(0), epoch))
+    Ok(documents)
 }
 
 /// A `DocumentEdit`, in protobuf's JSON form, as the store keeps one. None

@@ -527,22 +527,17 @@ mod tests {
         assert!(interactive_only(
             &find_method("OrgService/RemoveMember").unwrap()
         ));
-        assert!(
-            find_method("SyncService/WatchChanges")
-                .unwrap()
-                .is_server_streaming()
-        );
     }
 
     #[test]
     fn checks_a_request_and_names_the_organisation() {
         let list = find_method("DocumentService/ListDocuments").unwrap();
-        let sync = find_method("SyncService/SyncChanges").unwrap();
+        let push = find_method("PushService/PushDocuments").unwrap();
 
         let checked =
             checked_request(&list, r#"{"pageSize": 5, "query": "slack"}"#, "org-1").unwrap();
-        let named = checked_request(&sync, r#"{"since": "4"}"#, "org-1").unwrap();
-        let given = checked_request(&sync, r#"{"orgId": "org-2"}"#, "org-1").unwrap();
+        let named = checked_request(&push, r#"{"documents": []}"#, "org-1").unwrap();
+        let given = checked_request(&push, r#"{"orgId": "org-2"}"#, "org-1").unwrap();
 
         assert_eq!(checked["pageSize"], 5);
         assert_eq!(checked.get("orgId"), None);

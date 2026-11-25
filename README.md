@@ -149,11 +149,10 @@ The cloud's whole API by its contract, compiled in, for what no command
 covers yet, for scripts and coding agents:
 
 ```bash
-spendyard api list --service sync          # the methods, with the permission each takes
-spendyard api describe SyncChanges         # what it does, its request and answer field by field
+spendyard api list --service documents     # the methods, with the permission each takes
+spendyard api describe ListDocuments       # what it does, its request and answer field by field
 spendyard api call DocumentService/ListDocuments '{"pageSize": 5}'
-echo '{"since": "0", "epoch": "1"}' | spendyard api call SyncChanges -   # orgId is this machine's
-spendyard api call WatchChanges            # a stream: each message until Ctrl-C
+echo '{"filter": "DOCUMENT_FILTER_TO_REVIEW"}' | spendyard api call ListDocuments -   # the request from stdin
 ```
 
 ### Coming later
