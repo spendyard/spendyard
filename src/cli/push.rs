@@ -11,9 +11,11 @@
 //! keeps nothing.
 
 use std::collections::HashMap;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use futures_util::StreamExt;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -26,6 +28,9 @@ use crate::cli::store::Store;
 /// Documents a call: the contract takes up to 200, and a reading's JSON is a
 /// few kilobytes.
 const BATCH: usize = 100;
+
+/// Originals put at once: most are small, and each waits on the network.
+const ORIGINALS_AT_ONCE: usize = 8;
 
 /// The largest original the cloud takes.
 const LARGEST_ORIGINAL: i64 = 25 * 1024 * 1024;
@@ -111,6 +116,76 @@ struct Tally {
     missing: Vec<String>,
 }
 
+/// A line on stderr that says how far a push has got, rewritten in place;
+/// only in a terminal, so a script or a pipe gets the summary alone.
+struct Progress {
+    shown: bool,
+    org: String,
+    total: usize,
+    dry_run: bool,
+}
+
+impl Progress {
+    fn new(org: &str, total: usize, dry_run: bool) -> Progress {
+        Progress {
+            shown: std::io::stderr().is_terminal(),
+            org: org.to_string(),
+            total,
+            dry_run,
+        }
+    }
+
+    /// `Pushing to Testing AS: 300 of 1884 documents, 250 originals`.
+    fn show(&self, documents: usize, originals: usize) {
+        if !self.shown {
+            return;
+        }
+
+        let verb = if self.dry_run { "Asking" } else { "Pushing to" };
+        let line = if self.dry_run {
+            format!(
+                "{verb} {}: {documents} of {} documents",
+                self.org, self.total
+            )
+        } else {
+            format!(
+                "{verb} {}: {documents} of {} documents, {originals} originals",
+                self.org, self.total
+            )
+        };
+
+        let mut stderr = std::io::stderr();
+
+        let _ = write!(stderr, "\r\x1b[2K{line}");
+        let _ = stderr.flush();
+    }
+
+    /// A line of its own, above the progress.
+    fn note(&self, line: &str) {
+        self.clear();
+
+        eprintln!("{line}");
+    }
+
+    fn clear(&self) {
+        if !self.shown {
+            return;
+        }
+
+        let mut stderr = std::io::stderr();
+
+        let _ = write!(stderr, "\r\x1b[2K");
+        let _ = stderr.flush();
+    }
+}
+
+/// A push that stops on an error leaves no half line before it.
+impl Drop for Progress {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
 /// `spendyard cloud push`.
 pub async fn push(options: PushOptions) -> Result<()> {
     let cloud = Cloud::connect()?;
@@ -139,6 +214,10 @@ pub async fn push(options: PushOptions) -> Result<()> {
     }
 
     let mut tally = Tally::default();
+    let progress = Progress::new(&signed_in.org.name, due.len(), options.dry_run);
+    let mut done = 0;
+
+    progress.show(done, 0);
 
     for batch in due.chunks(BATCH) {
         let pushed = push_batch(&cloud, batch, options.dry_run).await?;
@@ -151,7 +230,10 @@ pub async fn push(options: PushOptions) -> Result<()> {
         let originals = if options.dry_run {
             Vec::new()
         } else {
-            send_originals(&cloud, &store, &pushed, &by_sha, &mut tally).await?
+            send_originals(
+                &cloud, &store, &pushed, &by_sha, &mut tally, &progress, done,
+            )
+            .await?
         };
 
         for result in &pushed.documents {
@@ -164,7 +246,13 @@ pub async fn push(options: PushOptions) -> Result<()> {
                 sent_db.mark(&place, document, result.document_id, original)?;
             }
         }
+
+        done += batch.len();
+
+        progress.show(done, tally.originals);
     }
+
+    progress.clear();
 
     report(&tally, &signed_in.org.name, options.dry_run);
 
@@ -278,9 +366,11 @@ async fn send_originals(
     pushed: &Pushed,
     by_sha: &HashMap<&str, &Local>,
     tally: &mut Tally,
+    progress: &Progress,
+    done: usize,
 ) -> Result<Vec<String>> {
-    let client = reqwest::Client::new();
-    let mut put = Vec::new();
+    // Where each wanted original is, one at a time: finding one may keep it beside the store.
+    let mut sending = Vec::new();
 
     for result in pushed
         .documents
@@ -293,38 +383,47 @@ async fn send_originals(
             continue;
         };
 
+        let name = document
+            .name
+            .clone()
+            .unwrap_or_else(|| document.sha256.clone());
+
         let Some(path) = original_of(store, document)? else {
-            tally.missing.push(
-                document
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| document.sha256.clone()),
-            );
+            tally.missing.push(name);
 
             continue;
         };
 
-        let bytes = std::fs::read(&path)?;
+        sending.push((result.sha256.clone(), name, path, upload));
+    }
 
-        let mut request = client.put(&upload.url).body(bytes);
+    // Then put, several at once.
+    let client = reqwest::Client::new();
 
-        for (name, value) in &upload.headers {
-            request = request.header(name, value);
+    let mut puts = futures_util::stream::iter(sending)
+        .map(|(sha256, name, path, upload)| {
+            let client = client.clone();
+
+            async move {
+                let taken = put_original(&client, &path, upload).await;
+
+                (sha256, name, taken)
+            }
+        })
+        .buffer_unordered(ORIGINALS_AT_ONCE);
+
+    let mut put = Vec::new();
+
+    while let Some((sha256, name, taken)) = puts.next().await {
+        match taken {
+            Ok(()) => put.push(sha256),
+
+            Err(error) => progress.note(&format!(
+                "spendyard: the cloud didn't take the original of {name} ({error})"
+            )),
         }
 
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            eprintln!(
-                "spendyard: the cloud didn't take the original of {} ({})",
-                document.name.as_deref().unwrap_or(&document.sha256),
-                response.status()
-            );
-
-            continue;
-        }
-
-        put.push(result.sha256.clone());
+        progress.show(done, tally.originals + put.len());
     }
 
     if put.is_empty() {
@@ -339,6 +438,27 @@ async fn send_originals(
     tally.originals += confirmed.kept.len();
 
     Ok(confirmed.kept)
+}
+
+/// Puts one original where the cloud said.
+async fn put_original(
+    client: &reqwest::Client,
+    path: &Path,
+    upload: &OriginalUpload,
+) -> Result<()> {
+    let bytes = std::fs::read(path)?;
+
+    let mut request = client.put(&upload.url).body(bytes);
+
+    for (name, value) in &upload.headers {
+        request = request.header(name, value);
+    }
+
+    let response = request.send().await?;
+
+    anyhow::ensure!(response.status().is_success(), "{}", response.status());
+
+    Ok(())
 }
 
 /// Where a document's original is: kept beside the store, or, for one read
