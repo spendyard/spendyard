@@ -114,9 +114,17 @@ impl Prompt {
     }
 }
 
-/// Builds the prompt for `document`. PDFs with a text layer go as text;
-/// PDFs without one and images go as files, when the extractor takes them.
-/// Inline images (logos) are left out.
+/// The most pages a PDF may have to go as a file. Past it, its text goes,
+/// to keep long documents cheap and under the providers' page limits.
+pub const MAX_PDF_PAGES: u32 = 20;
+
+/// Builds the prompt for `document`. PDFs go as files when the extractor
+/// takes them, even with a text layer: the layer loses the layout, so a
+/// table's columns run together, and often minus signs and dashes too
+/// (Metabase's receipts: a credit of -$10.27 comes out as "$10.27").
+/// Otherwise, and past [`MAX_PDF_PAGES`], a PDF goes as its text. Images go
+/// as files when the extractor takes them. Inline images (logos) are left
+/// out.
 pub fn build(document: &Document, accepts: Accepts) -> Prompt {
     let mut blocks = vec![Block::Text(overview(document))];
 
@@ -130,6 +138,21 @@ pub fn build(document: &Document, accepts: Accepts) -> Prompt {
             format!("{:?}", part.kind).to_lowercase(),
         );
 
+        let short_enough = part.pages.is_none_or(|pages| pages <= MAX_PDF_PAGES);
+
+        let pdf_as_file = part.kind == PartKind::Pdf && accepts.pdf && short_enough;
+
+        if pdf_as_file {
+            blocks.push(Block::Text(format!("{opening}(the PDF follows)</part>")));
+
+            blocks.push(Block::Pdf {
+                label: part.label.clone(),
+                bytes: part.bytes.clone(),
+            });
+
+            continue;
+        }
+
         if let Some(text) = &part.text {
             blocks.push(Block::Text(format!("{opening}\n{text}\n</part>")));
 
@@ -137,15 +160,6 @@ pub fn build(document: &Document, accepts: Accepts) -> Prompt {
         }
 
         match part.kind {
-            PartKind::Pdf if accepts.pdf => {
-                blocks.push(Block::Text(format!("{opening}(the PDF follows)</part>")));
-
-                blocks.push(Block::Pdf {
-                    label: part.label.clone(),
-                    bytes: part.bytes.clone(),
-                });
-            }
-
             PartKind::Image if part.inline => {}
 
             PartKind::Image if accepts.images.contains(&part.mime.as_str()) => {
@@ -264,6 +278,57 @@ mod tests {
 
         assert!(matches!(prompt.blocks[2], Block::Pdf { .. }));
         assert!(prompt.warnings.is_empty());
+    }
+
+    #[test]
+    fn pdf_with_text_goes_as_a_file_when_accepted() {
+        let doc = document(vec![part(
+            0,
+            "receipt.pdf",
+            PartKind::Pdf,
+            Some("Total $5"),
+        )]);
+
+        let prompt = build(&doc, ALL);
+
+        let Block::Text(opening) = &prompt.blocks[1] else {
+            panic!("expected the part's opening");
+        };
+
+        assert!(opening.ends_with("(the PDF follows)</part>"));
+        assert!(matches!(prompt.blocks[2], Block::Pdf { .. }));
+        assert_eq!(prompt.blocks.len(), 3);
+    }
+
+    #[test]
+    fn pdf_with_text_goes_as_text_for_text_only_extractors() {
+        let doc = document(vec![part(
+            0,
+            "receipt.pdf",
+            PartKind::Pdf,
+            Some("Total $5"),
+        )]);
+
+        let prompt = build(&doc, Accepts::TEXT_ONLY);
+
+        let Block::Text(text) = &prompt.blocks[1] else {
+            panic!("expected text");
+        };
+
+        assert!(text.contains("Total $5"));
+        assert!(prompt.warnings.is_empty());
+    }
+
+    #[test]
+    fn long_pdf_goes_as_text() {
+        let mut long = part(0, "contract.pdf", PartKind::Pdf, Some("Total $5"));
+
+        long.pages = Some(MAX_PDF_PAGES + 1);
+
+        let prompt = build(&document(vec![long]), ALL);
+
+        assert_eq!(prompt.blocks.len(), 2);
+        assert!(matches!(&prompt.blocks[1], Block::Text(text) if text.contains("Total $5")));
     }
 
     #[test]
