@@ -96,7 +96,7 @@ password (Gmail: turn on 2-Step Verification, then create one at
 myaccount.google.com/apppasswords):
 
 ```bash
-spendyard mailbox login imap you@gmail.com        # asks for the app password, keeps it in the keychain
+spendyard mailbox login imap you@gmail.com        # asks for the app password, keeps it in ~/.spendyard/tokens.json
 spendyard mailbox scan imap --dry-run
 spendyard mailbox scan imap -d clef-flash
 ```

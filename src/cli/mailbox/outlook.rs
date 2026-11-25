@@ -80,7 +80,6 @@ pub async fn login(client_id: &str, tenant: &str) -> Result<Account> {
         client_id: client_id.to_string(),
         tenant: Some(tenant.to_string()),
         server: None,
-        token_store: String::new(),
     };
 
     accounts::add(account, &refresh_token)

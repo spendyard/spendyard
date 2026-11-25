@@ -1,6 +1,6 @@
 //! Signed-in mailboxes. What isn't secret (provider, address, app) lives in
-//! `~/.spendyard/accounts.json`; refresh tokens are kept by `secrets`, in the
-//! OS keychain or, where there is none, a file readable only by you.
+//! `~/.spendyard/accounts.json`; refresh tokens are kept by `secrets`, in
+//! `~/.spendyard/tokens.json`, readable only by you.
 
 use std::path::PathBuf;
 
@@ -28,9 +28,6 @@ pub struct Account {
     /// `host:port`, for IMAP.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<String>,
-
-    /// Where the refresh token is: `keychain` or `file`.
-    pub token_store: String,
 }
 
 impl Account {
@@ -68,8 +65,8 @@ fn save(accounts: &[Account]) -> Result<()> {
 }
 
 /// Adds or replaces an account and stores its refresh token.
-pub fn add(mut account: Account, refresh_token: &str) -> Result<Account> {
-    account.token_store = secrets::store(&account.key(), refresh_token)?;
+pub fn add(account: Account, refresh_token: &str) -> Result<Account> {
+    secrets::store(&account.key(), refresh_token)?;
 
     let mut accounts = load()?;
 
@@ -118,10 +115,10 @@ pub fn find(provider: &str, address: Option<&str>) -> Result<Account> {
 }
 
 pub fn token(account: &Account) -> Result<String> {
-    secrets::read(&account.key(), &account.token_store)
+    secrets::read(&account.key())
 }
 
 /// Stores a (new) refresh token. Microsoft rotates them on every use.
 pub fn update_token(account: &Account, refresh_token: &str) -> Result<()> {
-    secrets::update(&account.key(), &account.token_store, refresh_token)
+    secrets::store(&account.key(), refresh_token)
 }

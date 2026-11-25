@@ -401,7 +401,7 @@ enum StoreAction {
 #[derive(Subcommand)]
 enum CloudAction {
     /// Sign this machine in: a code to approve in the browser, for one of
-    /// your organisations. The token goes to the OS keychain.
+    /// your organisations. The token is kept in ~/.spendyard/tokens.json.
     Login {
         /// The server. Default: SPENDYARD_CLOUD_URL, then
         /// https://app.spendyard.com.
@@ -563,7 +563,7 @@ enum CloudDocumentsAction {
 #[derive(Subcommand)]
 enum MailboxAction {
     /// Sign in to a mailbox. Outlook signs in with a code you enter in the
-    /// browser; the token goes to the OS keychain.
+    /// browser; the token is kept in ~/.spendyard/tokens.json.
     Login {
         /// outlook or imap (Gmail, iCloud, Fastmail, Yahoo and others, with
         /// an app password)

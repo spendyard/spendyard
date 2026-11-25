@@ -155,7 +155,7 @@ pub async fn push(options: PushOptions) -> Result<()> {
         };
 
         for result in &pushed.documents {
-            count(&mut tally, result, &by_sha, options.dry_run);
+            count(&mut tally, &store, result, &by_sha, options.dry_run);
 
             if !options.dry_run {
                 let document = by_sha[result.sha256.as_str()];
@@ -368,7 +368,13 @@ fn original_of(store: &Store, document: &Local) -> Result<Option<PathBuf>> {
     store.keep_original(&bytes).map(Some)
 }
 
-fn count(tally: &mut Tally, result: &PushedResult, by_sha: &HashMap<&str, &Local>, dry_run: bool) {
+fn count(
+    tally: &mut Tally,
+    store: &Store,
+    result: &PushedResult,
+    by_sha: &HashMap<&str, &Local>,
+    dry_run: bool,
+) {
     match result.outcome.as_str() {
         "PUSH_OUTCOME_ADDED" => tally.added += 1,
         "PUSH_OUTCOME_UPDATED" => tally.updated += 1,
@@ -376,7 +382,11 @@ fn count(tally: &mut Tally, result: &PushedResult, by_sha: &HashMap<&str, &Local
     }
 
     // On a dry run nothing is put: an original wanted counts as one that would go, when it's here.
-    if dry_run && result.original_wanted && by_sha.contains_key(result.sha256.as_str()) {
+    let here = by_sha
+        .get(result.sha256.as_str())
+        .is_some_and(|document| could_send_original(store, document));
+
+    if dry_run && result.original_wanted && here {
         tally.originals += 1;
     }
 }

@@ -4,7 +4,7 @@
 //! Signing in is a device code (the server's `cli/device.ts`): the CLI shows
 //! a code and a link, the person approves it in the browser for one of their
 //! organisations, and the CLI's poll gets a token for this machine. The token
-//! is kept by `secrets` (the keychain); what isn't secret (the server, who,
+//! is kept by `secrets` (`~/.spendyard/tokens.json`); what isn't secret (the server, who,
 //! which organisation) in `~/.spendyard/cloud.json`. The token acts in one
 //! organisation at a time, until `cloud switch` moves it.
 
@@ -32,9 +32,6 @@ pub struct SignedIn {
 
     /// The organisation it acts in, as last seen.
     pub org: Org,
-
-    /// Where the token is: `keychain` or `file`.
-    pub token_store: String,
 }
 
 /// An organisation, as the server names it.
@@ -148,13 +145,12 @@ pub async fn login(server: Option<String>, open_browser: bool) -> Result<()> {
         sign_out(&before).await;
     }
 
-    let token_store = secrets::store(&secret_key(&server), &granted.access_token)?;
+    secrets::store(&secret_key(&server), &granted.access_token)?;
 
     let signed_in = SignedIn {
         server,
         email: granted.email,
         org: granted.org,
-        token_store,
     };
 
     save(&signed_in)?;
@@ -241,7 +237,7 @@ impl Cloud {
         let signed_in = signed_in()?
             .context("not signed in to Spendyard Cloud; run `spendyard cloud login`")?;
 
-        let token = secrets::read(&secret_key(&signed_in.server), &signed_in.token_store)?;
+        let token = secrets::read(&secret_key(&signed_in.server))?;
 
         Ok(Cloud {
             client: reqwest::Client::new(),
@@ -273,10 +269,12 @@ impl Cloud {
             return Ok(response.json().await?);
         }
 
+        let status = response.status();
         let error: Value = response.json().await.unwrap_or_default();
 
         let code = error["code"].as_str().unwrap_or("unknown");
-        let message = error["message"].as_str().unwrap_or("no reason given");
+        let fallback = format!("the cloud answered {status}, with no reason given");
+        let message = error["message"].as_str().unwrap_or(&fallback);
 
         if code == "unauthenticated" {
             bail!("this machine was signed out of Spendyard Cloud; run `spendyard cloud login`");
@@ -312,8 +310,11 @@ impl Cloud {
             .with_context(|| format!("reaching {}", self.signed_in.server))?;
 
         if !response.status().is_success() {
+            let status = response.status();
             let error: Value = response.json().await.unwrap_or_default();
-            let message = error["message"].as_str().unwrap_or("no reason given");
+
+            let fallback = format!("the cloud answered {status}, with no reason given");
+            let message = error["message"].as_str().unwrap_or(&fallback);
 
             bail!("{method}: {message}");
         }
@@ -417,7 +418,9 @@ pub async fn status() -> Result<bool> {
 
     println!(
         "Signed in to {} as {} (token in {})",
-        signed_in.server, account.account.user.email, signed_in.token_store
+        signed_in.server,
+        account.account.user.email,
+        secrets::kept_in()
     );
 
     let active = orgs
@@ -553,7 +556,7 @@ pub async fn logout() -> Result<()> {
 async fn sign_out(signed_in: &SignedIn) {
     let key = secret_key(&signed_in.server);
 
-    if let Ok(token) = secrets::read(&key, &signed_in.token_store) {
+    if let Ok(token) = secrets::read(&key) {
         let revoked = reqwest::Client::new()
             .post(format!("{}/cli/logout", signed_in.server))
             .bearer_auth(token)

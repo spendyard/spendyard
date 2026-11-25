@@ -8,6 +8,7 @@ use super::config::{self, Config};
 use super::mailbox::{self, ScanOptions, accounts};
 use super::models::Models;
 use super::pretty;
+use super::secrets;
 use super::store::Store;
 
 /// The Outlook app and tenant to sign in with: flags first, then
@@ -72,8 +73,9 @@ pub async fn login(options: LoginOptions) -> Result<()> {
             let account = mailbox::outlook::login(&client_id, &tenant).await?;
 
             println!(
-                "signed in as {} (token in the {})",
-                account.address, account.token_store
+                "signed in as {} (token in {})",
+                account.address,
+                secrets::kept_in()
             );
 
             Ok(())
@@ -96,7 +98,7 @@ pub async fn login(options: LoginOptions) -> Result<()> {
 }
 
 /// Signs in to an IMAP mailbox: asks for the (app) password, checks it by
-/// signing in, and keeps it in the keychain.
+/// signing in, and keeps it with the other tokens (`secrets`).
 async fn login_imap(address: &str, server: Option<String>, username: Option<String>) -> Result<()> {
     let server = match server {
         Some(server) => server,
@@ -119,14 +121,14 @@ async fn login_imap(address: &str, server: Option<String>, username: Option<Stri
         client_id: String::new(),
         tenant: None,
         server: Some(server.clone()),
-        token_store: String::new(),
     };
 
     let account = accounts::add(account, &password)?;
 
     println!(
-        "signed in to {} at {server} (password in the {})",
-        account.address, account.token_store
+        "signed in to {} at {server} (password in {})",
+        account.address,
+        secrets::kept_in()
     );
 
     Ok(())
@@ -181,12 +183,11 @@ pub fn list_accounts() -> Result<()> {
         return Ok(());
     }
 
-    for account in accounts {
-        println!(
-            "{:<8} {:<40} token in {}",
-            account.provider, account.address, account.token_store
-        );
+    for account in &accounts {
+        println!("{:<8} {}", account.provider, account.address);
     }
+
+    println!("\nTheir tokens are in {}", secrets::kept_in());
 
     Ok(())
 }
