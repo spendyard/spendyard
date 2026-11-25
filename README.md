@@ -120,6 +120,7 @@ The store as a whole:
 ```bash
 spendyard store info                       # where it is, what it holds, originals, scans, what's left to push
 spendyard store backup                     # the store and its originals in one .tar.gz, here
+spendyard store upgrade                    # a store an older spendyard made, brought up to this one
 spendyard store wipe                       # delete it all to start again, after asking; --backup first
 ```
 

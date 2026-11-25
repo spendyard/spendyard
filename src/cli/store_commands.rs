@@ -1,6 +1,7 @@
 //! `spendyard store …`: the local store as a whole, `~/.spendyard`'s
 //! `spendyard.db` with the originals beside it: what's in it, a backup of it,
-//! and wiping it to start again.
+//! bringing one another version made up to this one, and wiping it to start
+//! again.
 //!
 //! None of them opens the store as `Store::open` does, upgrading or refusing
 //! it: `info` and `backup` work on a store another version made too, which is
@@ -22,7 +23,7 @@ use serde::Serialize;
 use serde_json::json;
 
 use crate::cli::config;
-use crate::cli::store::{SCHEMA_VERSION, Store, now};
+use crate::cli::store::{Brought, BroughtReading, SCHEMA_VERSION, Store, now};
 
 /// The files of the store, in its home folder.
 struct Files {
@@ -298,7 +299,7 @@ fn describe(info: &Info) -> Vec<String> {
 
     let Some(contents) = &info.contents else {
         out.push(format!(
-            "  Made by another version of spendyard (this one reads version {SCHEMA_VERSION}): `spendyard store backup` keeps it, `spendyard store wipe` starts a new one"
+            "  Made by another version of spendyard (this one reads version {SCHEMA_VERSION}): `spendyard store upgrade` brings it up to this one, `spendyard store wipe` starts a new one"
         ));
 
         return out;
@@ -486,6 +487,292 @@ pub fn backup(path: Option<PathBuf>) -> Result<()> {
         archive.display(),
         size_in_words(size)
     );
+
+    Ok(())
+}
+
+// --- upgrade -------------------------------------------------------------------------------------
+
+/// What an upgrade brought.
+#[derive(Debug)]
+pub(crate) struct Upgraded {
+    pub from: i64,
+    pub documents: usize,
+    pub readings: usize,
+    pub corrected: i64,
+}
+
+/// The tables copied as they are, by the columns both stores have: what's
+/// decided by hand or kept for later, not made from the readings.
+const COPIED: &[&str] = &[
+    "edits",
+    "scans",
+    "rates",
+    "payment_evidence",
+    "payment_moves",
+];
+
+/// Brings the store at `home`, made by another version, up to this one: a
+/// new store built beside it from what every version keeps the same way
+/// (documents and their readings, the core's JSON), its rows made again by
+/// this version's core; corrections, scans, rates and payment numbers
+/// copied; then swapped in. The originals and cloud.db stay as they are.
+/// Backed up first, to `backup`.
+pub(crate) async fn upgrade_at(home: &Path, backup: &Path) -> Result<Upgraded> {
+    let files = Files::of(home);
+    let database = files.database();
+
+    let info = info_of(home)?.context("no store to upgrade")?;
+
+    if info.version == SCHEMA_VERSION {
+        bail!("the store is this version's already ({SCHEMA_VERSION})");
+    }
+
+    if info.version > SCHEMA_VERSION {
+        bail!(
+            "a newer spendyard made the store (version {}, this one reads {SCHEMA_VERSION}): upgrade spendyard",
+            info.version
+        );
+    }
+
+    backup_to(home, backup)?;
+
+    let building = home.join(format!(".upgrade-{}.db", std::process::id()));
+
+    for path in Files::with_journal(&building) {
+        let _ = std::fs::remove_file(path);
+    }
+
+    let built = build(&database, &building).await;
+
+    let upgraded = match built {
+        Ok(upgraded) => upgraded,
+
+        Err(error) => {
+            for path in Files::with_journal(&building) {
+                let _ = std::fs::remove_file(path);
+            }
+
+            return Err(error.context("not upgraded: the store is as it was"));
+        }
+    };
+
+    // The old one out, the new one in: the backup has the old one.
+    for path in Files::with_journal(&database) {
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+    }
+
+    std::fs::rename(&building, &database)?;
+
+    for path in Files::with_journal(&building) {
+        let _ = std::fs::remove_file(path);
+    }
+
+    Ok(Upgraded {
+        from: info.version,
+        ..upgraded
+    })
+}
+
+/// The new store at `building`, from the old one at `old`.
+async fn build(old: &Path, building: &Path) -> Result<Upgraded> {
+    let reader = Connection::open(old).with_context(|| format!("opening {}", old.display()))?;
+
+    let mut store = Store::open_at(building)?;
+
+    let mut readings = readings_of(&reader)?;
+    let documents = documents_of(&reader)?;
+
+    let mut brought = 0;
+    let mut kept_readings = 0;
+
+    for mut document in documents {
+        document.readings = readings.remove(&document.id).unwrap_or_default();
+        document.fallback_date = fallback_date(&store, &document);
+
+        kept_readings += document.readings.len();
+
+        store.bring(&document)?;
+
+        brought += 1;
+    }
+
+    copy_tables(&store, old)?;
+
+    // Statements' lines matched to their receipts again, as `transactions match` does.
+    crate::cli::transactions::match_all(&store).await?;
+
+    let corrected: i64 = store
+        .connection
+        .query_row("SELECT count(*) FROM edits", [], |row| row.get(0))?;
+
+    // All of it in the database file, nothing left in its journal, before it's moved.
+    store
+        .connection
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+
+    drop(store);
+
+    Ok(Upgraded {
+        from: 0,
+        documents: brought,
+        readings: kept_readings,
+        corrected,
+    })
+}
+
+/// The old store's documents, oldest first, without their readings yet.
+fn documents_of(reader: &Connection) -> Result<Vec<Brought>> {
+    let mut statement = reader.prepare(
+        "SELECT id, sha256, message_id, source, name, sender, received, format, size, first_seen
+         FROM documents ORDER BY id",
+    )?;
+
+    let documents = statement
+        .query_map([], |row| {
+            Ok(Brought {
+                id: row.get(0)?,
+                sha256: row.get(1)?,
+                message_id: row.get(2)?,
+                source: row.get(3)?,
+                name: row.get(4)?,
+                sender: row.get(5)?,
+                received: row.get(6)?,
+                format: row.get(7)?,
+                size: row.get(8)?,
+                first_seen: row.get(9)?,
+                readings: Vec::new(),
+                fallback_date: None,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+
+    Ok(documents)
+}
+
+/// Every reading of the old store, by document, oldest first.
+fn readings_of(reader: &Connection) -> Result<std::collections::HashMap<i64, Vec<BroughtReading>>> {
+    let mut statement = reader.prepare(
+        "SELECT document_id, created, spendyard_version, schema_version, decider, extractor, model, json
+         FROM results ORDER BY id",
+    )?;
+
+    let mut by_document: std::collections::HashMap<i64, Vec<BroughtReading>> = Default::default();
+
+    let rows = statement.query_map([], |row| {
+        let reading = BroughtReading {
+            created: row.get(1)?,
+            spendyard_version: row.get(2)?,
+            schema_version: row.get(3)?,
+            decider: row.get(4)?,
+            extractor: row.get(5)?,
+            model: row.get(6)?,
+            json: row.get(7)?,
+        };
+
+        Ok((row.get::<_, i64>(0)?, reading))
+    })?;
+
+    for row in rows {
+        let (document_id, reading) = row?;
+
+        by_document.entry(document_id).or_default().push(reading);
+    }
+
+    Ok(by_document)
+}
+
+/// When a document arrived, for a reading that doesn't say when it was
+/// issued, as `save` takes it: its `received`, else an email's own date,
+/// from its original (kept, or where it was read from).
+fn fallback_date(store: &Store, document: &Brought) -> Option<String> {
+    if document.received.is_some() {
+        return document.received.clone();
+    }
+
+    if document.format.as_deref() != Some("email") {
+        return None;
+    }
+
+    let original = store.original(&document.sha256).or_else(|| {
+        document
+            .source
+            .strip_prefix("file:")
+            .map(PathBuf::from)
+            .filter(|path| path.exists())
+    })?;
+
+    let bytes = std::fs::read(original).ok()?;
+    let read = spendyard_core::read(&bytes, None).ok()?;
+
+    read.headers.and_then(|headers| headers.date)
+}
+
+/// The tables decided by hand or kept for later, copied from the old store
+/// by the columns both have.
+fn copy_tables(store: &Store, old: &Path) -> Result<()> {
+    store
+        .connection
+        .execute("ATTACH DATABASE ?1 AS old", [old.to_string_lossy()])?;
+
+    for table in COPIED {
+        let ours = columns_of(&store.connection, "main", table)?;
+        let theirs = columns_of(&store.connection, "old", table)?;
+
+        let both: Vec<&String> = ours
+            .iter()
+            .filter(|column| theirs.contains(column))
+            .collect();
+
+        if both.is_empty() {
+            continue;
+        }
+
+        let list = both
+            .iter()
+            .map(|column| format!("\"{column}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        store.connection.execute_batch(&format!(
+            "INSERT OR IGNORE INTO main.{table} ({list}) SELECT {list} FROM old.{table};"
+        ))?;
+    }
+
+    store.connection.execute_batch("DETACH DATABASE old;")?;
+
+    Ok(())
+}
+
+/// A table's columns in one of the attached databases; none when it hasn't the table.
+fn columns_of(connection: &Connection, schema: &str, table: &str) -> Result<Vec<String>> {
+    let mut statement = connection.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
+
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<_>>()?;
+
+    Ok(columns)
+}
+
+/// `spendyard store upgrade`: a store another version made, brought up to this one.
+pub async fn upgrade() -> Result<()> {
+    let home = config::home();
+    let backup = Files::of(&home).backups().join(backup_name());
+
+    let upgraded = upgrade_at(&home, &backup).await?;
+
+    println!(
+        "Upgraded the store from version {} to {SCHEMA_VERSION}: {} with {}, {} corrected by hand; its rows made again by this version",
+        upgraded.from,
+        plural(upgraded.documents as i64, "document"),
+        plural(upgraded.readings as i64, "reading"),
+        upgraded.corrected
+    );
+
+    println!("The store as it was is backed up to {}", backup.display());
 
     Ok(())
 }
@@ -748,6 +1035,61 @@ mod tests {
 
         // Not twice to the same file.
         assert!(backup_to(&home, &archive).is_err());
+
+        std::fs::remove_dir_all(home).ok();
+    }
+
+    #[test]
+    fn upgrades_an_older_store_keeping_its_readings_and_corrections() {
+        let home = home_with_a_store("upgrade");
+        let database = home.join("spendyard.db");
+
+        // Its receipts row as this version makes it, to compare with what the upgrade makes again.
+        let row_of = |path: &Path| -> String {
+            Connection::open(path)
+                .unwrap()
+                .query_row("SELECT json_array(type, status, vendor_name, date, total, currency) FROM receipts", [], |row| row.get(0))
+                .unwrap()
+        };
+
+        let before = row_of(&database);
+
+        // As version 7 had it: statements' lines in `charges`.
+        let old = Connection::open(&database).unwrap();
+
+        old.execute_batch("ALTER TABLE transactions RENAME TO charges;")
+            .unwrap();
+        old.pragma_update(None, "user_version", 7).unwrap();
+
+        drop(old);
+
+        let backup = home.join("backups").join("before-upgrade.tar.gz");
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        let upgraded = runtime.block_on(upgrade_at(&home, &backup)).unwrap();
+
+        assert_eq!(upgraded.from, 7);
+        assert_eq!(upgraded.documents, 1);
+        assert_eq!(upgraded.readings, 1);
+        assert_eq!(upgraded.corrected, 1);
+        assert!(backup.exists());
+
+        let info = info_of(&home).unwrap().unwrap();
+
+        assert_eq!(info.version, SCHEMA_VERSION);
+        assert_eq!(info.contents.unwrap().corrected, 1);
+        assert_eq!(row_of(&database), before);
+
+        // Once is enough: this version's store isn't upgraded again.
+        let again = runtime
+            .block_on(upgrade_at(
+                &home,
+                &home.join("backups").join("again.tar.gz"),
+            ))
+            .unwrap_err();
+
+        assert!(again.to_string().contains("this version's already"));
+        assert!(!home.join(".upgrade-0.db").exists());
 
         std::fs::remove_dir_all(home).ok();
     }

@@ -205,6 +205,38 @@ pub struct Store {
     originals: PathBuf,
 }
 
+/// A document of another store, as `spendyard store upgrade` brings it:
+/// what's known of it, under its own number, and every reading of it,
+/// oldest first.
+pub(crate) struct Brought {
+    pub id: i64,
+    pub sha256: String,
+    pub message_id: Option<String>,
+    pub source: String,
+    pub name: Option<String>,
+    pub sender: Option<String>,
+    pub received: Option<String>,
+    pub format: Option<String>,
+    pub size: Option<i64>,
+    pub first_seen: String,
+    pub readings: Vec<BroughtReading>,
+
+    /// When it arrived, for a reading that doesn't say when it was issued:
+    /// its `received`, or an email's date.
+    pub fallback_date: Option<String>,
+}
+
+/// One reading of a brought document, as its store kept it.
+pub(crate) struct BroughtReading {
+    pub created: String,
+    pub spendyard_version: Option<String>,
+    pub schema_version: Option<String>,
+    pub decider: Option<String>,
+    pub extractor: Option<String>,
+    pub model: Option<String>,
+    pub json: String,
+}
+
 /// Where a document came from.
 pub struct Source<'a> {
     /// `file:<path>` or `outlook:<account>`.
@@ -263,7 +295,7 @@ impl Store {
 
         if version != 0 {
             bail!(
-                "{} is a store of another spendyard (version {version}, this one reads {SCHEMA_VERSION}): `spendyard store backup` keeps it, `spendyard store wipe` starts a new one",
+                "{} is a store of another spendyard (version {version}, this one reads {SCHEMA_VERSION}): `spendyard store upgrade` brings it up to this one, `spendyard store wipe` starts a new one",
                 path.display()
             );
         }
@@ -343,6 +375,72 @@ impl Store {
         self.keep_original(bytes)?;
 
         Ok(document_id)
+    }
+
+    /// Keeps a document brought from another store: under its own number,
+    /// every reading as it was kept, and the rows of the newest made by this
+    /// version's core from its JSON (by way of the contract's `Reading`, which
+    /// reads any version's), as `save` makes them for one read here.
+    pub(crate) fn bring(&mut self, brought: &Brought) -> Result<()> {
+        let transaction = self.connection.transaction()?;
+
+        transaction.execute(
+            "INSERT INTO documents (id, sha256, message_id, source, name, sender, received, format, size, first_seen)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                brought.id,
+                brought.sha256,
+                brought.message_id,
+                brought.source,
+                brought.name,
+                brought.sender,
+                brought.received,
+                brought.format,
+                brought.size,
+                brought.first_seen,
+            ],
+        )?;
+
+        let mut newest = None;
+
+        for reading in &brought.readings {
+            transaction.execute(
+                "INSERT INTO results (document_id, created, spendyard_version, schema_version, decider, extractor, model, json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    brought.id,
+                    reading.created,
+                    reading.spendyard_version,
+                    reading.schema_version,
+                    reading.decider,
+                    reading.extractor,
+                    reading.model,
+                    reading.json,
+                ],
+            )?;
+
+            newest = Some((transaction.last_insert_rowid(), &reading.json));
+        }
+
+        if let Some((result_id, json)) = newest {
+            let stored: serde_json::Value = serde_json::from_str(json)
+                .with_context(|| format!("document {}'s reading isn't JSON", brought.id))?;
+
+            let reading = spendyard_core::reading::reading_of(&stored, None);
+            let result = spendyard_core::reading::result_of(&reading);
+
+            let rows = rows::rows(&result, brought.fallback_date.as_deref());
+
+            write_receipt(&transaction, brought.id, result_id, &rows)?;
+
+            if let Some(charges) = &rows.charges {
+                write_charges(&transaction, brought.id, charges)?;
+            }
+        }
+
+        transaction.commit()?;
+
+        Ok(())
     }
 
     /// Keeps a document's bytes as `originals/<sha256>`, unless they're

@@ -379,6 +379,11 @@ enum StoreAction {
     /// current folder, or at PATH.
     Backup { path: Option<PathBuf> },
 
+    /// Bring a store another version of spendyard made up to this one,
+    /// keeping every reading and correction: its rows are made again by this
+    /// version. Backs it up to ~/.spendyard/backups/ first.
+    Upgrade,
+
     /// Delete the store, its originals and what was pushed, for good, after
     /// saying what goes and asking. The config, model keys, sign-ins and
     /// backups stay.
@@ -1203,6 +1208,7 @@ async fn store(action: StoreAction) -> anyhow::Result<ExitCode> {
     match action {
         StoreAction::Info { json } => cli::store_commands::info(json).await,
         StoreAction::Backup { path } => cli::store_commands::backup(path),
+        StoreAction::Upgrade => cli::store_commands::upgrade().await,
         StoreAction::Wipe { yes, backup } => cli::store_commands::wipe(yes, backup).await,
     }
     .map(|()| ExitCode::SUCCESS)
